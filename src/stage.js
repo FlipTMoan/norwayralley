@@ -1,0 +1,820 @@
+import * as THREE from 'three';
+import { clamp, smoothstep } from './geo.js';
+
+/* ------------------------------------------------------------------ *
+ *  A very small binary heap — A*'s open set.                         *
+ * ------------------------------------------------------------------ */
+class MinHeap {
+  constructor() {
+    this.items = [];
+  }
+  get size() { return this.items.length; }
+  push(priority, value) {
+    const item = { priority, value };
+    const a = this.items;
+    a.push(item);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p].priority <= a[i].priority) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+  pop() {
+    const a = this.items;
+    if (!a.length) return null;
+    const top = a[0];
+    const last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && a[l].priority < a[m].priority) m = l;
+        if (r < a.length && a[r].priority < a[m].priority) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]];
+        i = m;
+      }
+    }
+    return top.value;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Route object: smoothed, terrain-snapped, with a quick proximity     *
+ *  query used for road grip, progress and the HUD.                     *
+ * ------------------------------------------------------------------ */
+export class StageRoute {
+  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = 4.2 } = {}) {
+    this.terrain = terrain;
+    this.name = name;
+    this.source = source;
+    this.roadWidth = roadWidth;
+    this.points = points;
+    this.samples = this.prepareSamples(points);
+    this.length = this.samples[this.samples.length - 1]?.s || 0;
+    this.start = this.samples[0];
+    this.finish = this.samples[this.samples.length - 1];
+  }
+
+  prepareSamples(points) {
+    const out = [];
+    let s = 0;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      if (i > 0) {
+        const q = points[i - 1];
+        s += Math.hypot(p.x - q.x, p.z - q.z);
+      }
+      out.push({ x: p.x, z: p.z, y: this.terrain.sample(p.x, p.z), s });
+    }
+    return out;
+  }
+
+  at(index) {
+    return this.samples[clamp(index, 0, this.samples.length - 1)];
+  }
+
+  /** Re-read every sample's height from the terrain (after a start pad carve). */
+  snapToTerrain() {
+    let s = 0;
+    for (let i = 0; i < this.samples.length; i++) {
+      const p = this.samples[i];
+      if (i > 0) {
+        const q = this.samples[i - 1];
+        s += Math.hypot(p.x - q.x, p.z - q.z);
+      }
+      p.y = this.terrain.sample(p.x, p.z);
+      p.s = s;
+    }
+    this.length = s;
+    this.start = this.samples[0];
+    this.finish = this.samples[this.samples.length - 1];
+    return this;
+  }
+
+  /** Nearest route sample to a world position. */
+  nearest(x, z) {
+    let best = Infinity;
+    let bi = 0;
+    const a = this.samples;
+    for (let i = 0; i < a.length; i++) {
+      const dx = a[i].x - x;
+      const dz = a[i].z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < best) {
+        best = d2;
+        bi = i;
+      }
+    }
+    const p = a[bi];
+    const next = a[Math.min(bi + 1, a.length - 1)];
+    const prev = a[Math.max(bi - 1, 0)];
+    let tx = next.x - prev.x;
+    let tz = next.z - prev.z;
+    const tl = Math.hypot(tx, tz) || 1;
+    tx /= tl; tz /= tl;
+    return {
+      distance: Math.sqrt(best),
+      index: bi,
+      progress: this.length > 0 ? p.s / this.length : 0,
+      point: p,
+      tangent: { x: tx, z: tz },
+    };
+  }
+
+  distanceTo(x, z) {
+    return this.nearest(x, z).distance;
+  }
+
+  sampleAtDistance(distance) {
+    const s = clamp(distance, 0, this.length);
+    let lo = 0;
+    let hi = this.samples.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (this.samples[mid].s < s) lo = mid;
+      else hi = mid;
+    }
+    const a = this.samples[lo];
+    const b = this.samples[hi];
+    const t = (s - a.s) / Math.max(0.0001, b.s - a.s);
+    return {
+      x: a.x + (b.x - a.x) * t,
+      z: a.z + (b.z - a.z) * t,
+      y: a.y + (b.y - a.y) * t,
+      angle: Math.atan2(b.x - a.x, b.z - a.z),
+    };
+  }
+
+  startPose() {
+    const p = this.samples[0];
+    const q = this.samples[Math.min(4, this.samples.length - 1)];
+    return {
+      x: p.x,
+      z: p.z,
+      y: this.terrain.sample(p.x, p.z),
+      yaw: Math.atan2(q.x - p.x, q.z - p.z),
+    };
+  }
+}
+
+function chaikin(points, iterations = 2) {
+  let p = points.map((v) => ({ x: v.x, z: v.z }));
+  for (let k = 0; k < iterations; k++) {
+    if (p.length < 3) break;
+    const q = [p[0]];
+    for (let i = 0; i < p.length - 1; i++) {
+      const a = p[i];
+      const b = p[i + 1];
+      q.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 });
+      q.push({ x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
+    }
+    q.push(p[p.length - 1]);
+    p = q;
+  }
+  return p;
+}
+
+function resample(points, spacing) {
+  if (points.length < 2) return points;
+  const out = [{ x: points[0].x, z: points[0].z }];
+  let carry = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.0001) continue;
+    let t = (spacing - carry) / len;
+    while (t <= 1) {
+      out.push({ x: a.x + dx * t, z: a.z + dz * t });
+      t += spacing / len;
+    }
+    carry = (carry + len) % spacing;
+  }
+  const last = points[points.length - 1];
+  if (Math.hypot(last.x - out[out.length - 1].x, last.z - out[out.length - 1].z) > 1) {
+    out.push({ x: last.x, z: last.z });
+  }
+  return out;
+}
+
+function simplify(points, epsilon = 2.5) {
+  if (points.length < 3) return points;
+  const sq = epsilon * epsilon;
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1;
+  keep[points.length - 1] = 1;
+  const stack = [[0, points.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    let maxD = 0;
+    let index = -1;
+    const a = points[first];
+    const b = points[last];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len2 = dx * dx + dz * dz;
+    for (let i = first + 1; i < last; i++) {
+      const p = points[i];
+      let d;
+      if (len2 === 0) {
+        d = (p.x - a.x) ** 2 + (p.z - a.z) ** 2;
+      } else {
+        const t = clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / len2, 0, 1);
+        d = (p.x - (a.x + dx * t)) ** 2 + (p.z - (a.z + dz * t)) ** 2;
+      }
+      if (d > maxD) {
+        maxD = d;
+        index = i;
+      }
+    }
+    if (maxD > sq && index > 0) {
+      keep[index] = 1;
+      stack.push([first, index], [index, last]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
+}
+
+function makeRoute(points, terrain, options = {}) {
+  const smoothIterations = options.smooth ?? 2;
+  const spacing = options.spacing ?? 4;
+  const simplified = options.simplify === false ? points : simplify(points, options.simplifyEpsilon ?? 2.5);
+  const smoothed = chaikin(simplified, smoothIterations);
+  const sampled = resample(smoothed, spacing);
+  return new StageRoute(sampled, terrain, options);
+}
+
+/* ------------------------------------------------------------------ *
+ *  A* over a drivability grid. It is not a road router — it is a       *
+ *  rally-stage router: it prefers gentle ground and refuses to go      *
+ *  straight down a cliff.                                              *
+ * ------------------------------------------------------------------ */
+function buildCostGrid(terrain, cells = 248) {
+  const cell = terrain.sizeX / cells;
+  const n = cells + 1;
+  const heights = new Float32Array(n * n);
+  const slopes = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) {
+    const z = -terrain.sizeZ / 2 + (j / cells) * terrain.sizeZ;
+    for (let i = 0; i < n; i++) {
+      const x = -terrain.sizeX / 2 + (i / cells) * terrain.sizeX;
+      heights[j * n + i] = terrain.sample(x, z);
+    }
+  }
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const il = Math.max(0, i - 1);
+      const ir = Math.min(n - 1, i + 1);
+      const jl = Math.max(0, j - 1);
+      const jr = Math.min(n - 1, j + 1);
+      const gx = (heights[j * n + ir] - heights[j * n + il]) / ((ir - il) * cell);
+      const gz = (heights[jr * n + i] - heights[jl * n + i]) / ((jr - jl) * cell);
+      slopes[j * n + i] = Math.hypot(gx, gz);
+    }
+  }
+  return { cell, n, heights, slopes };
+}
+
+/**
+ * A rally start should be a flat, dry little shelf, not the side of a cliff.
+ * Look for the gentlest nearby spot, with a small preference for staying put.
+ */
+export function findFlatSpot(terrain, x, z, radius = 55) {
+  let best = { x, z, slope: terrain.slope(x, z), score: terrain.slope(x, z) };
+  for (let ring = 0; ring <= radius; ring += 4) {
+    const steps = ring === 0 ? 1 : 20;
+    for (let k = 0; k < steps; k++) {
+      const angle = (k / steps) * Math.PI * 2;
+      const px = x + Math.cos(angle) * ring;
+      const pz = z + Math.sin(angle) * ring;
+      if (!terrain.inside(px, pz, 20)) continue;
+      if (terrain.sample(px, pz) < 6) continue;
+      const slope = terrain.slope(px, pz);
+      const score = slope + (ring / Math.max(1, radius)) * 0.11;
+      if (score < best.score) best = { x: px, z: pz, slope, score };
+    }
+  }
+  return { x: best.x, z: best.z, slope: best.slope };
+}
+
+export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage', cells = 248, maxSlope = 0.78 } = {}) {
+  // Snap the start to a natural flat shelf so the car does not spawn on a
+  // 35° sideways slope. The finish is snapped less aggressively.
+  start = findFlatSpot(terrain, start.x, start.z, 65);
+  finish = findFlatSpot(terrain, finish.x, finish.z, 24);
+  const grid = buildCostGrid(terrain, cells);
+  const { cell, n, heights, slopes } = grid;
+  const toIndex = (x, z) => ({
+    i: clamp(Math.round((x + terrain.sizeX / 2) / cell), 0, n - 1),
+    j: clamp(Math.round((z + terrain.sizeZ / 2) / cell), 0, n - 1),
+  });
+  // A click can land a metre or two off the drivable grid cell because of the
+  // flat-spot snap or the 8 m A* cell. Find the nearest cell a rally car can
+  // actually use instead of failing on the first sample.
+  const nearestDrivable = (i0, j0) => {
+    for (let r = 0; r <= 40; r++) {
+      let best = -1;
+      let bestD = Infinity;
+      for (let dj = -r; dj <= r; dj++) {
+        for (let di = -r; di <= r; di++) {
+          if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
+          const i = i0 + di;
+          const j = j0 + dj;
+          if (i < 0 || j < 0 || i >= n || j >= n) continue;
+          const idx = j * n + i;
+          if (heights[idx] < 1.5 || slopes[idx] > maxSlope) continue;
+          const d = di * di + dj * dj;
+          if (d < bestD) {
+            bestD = d;
+            best = idx;
+          }
+        }
+      }
+      if (best >= 0) return best;
+    }
+    return -1;
+  };
+  const si = toIndex(start.x, start.z);
+  const fi = toIndex(finish.x, finish.z);
+  const startIdx = nearestDrivable(si.i, si.j);
+  const finishIdx = nearestDrivable(fi.i, fi.j);
+  if (startIdx < 0 || finishIdx < 0) {
+    throw new Error('No gentle, dry ground near one of those points. Pick a spot further from the cliff edge.');
+  }
+  if (startIdx === finishIdx) {
+    throw new Error('Those two points are practically the same place. Pick a finish further away.');
+  }
+  const total = n * n;
+  const gScore = new Float32Array(total).fill(Infinity);
+  const cameFrom = new Int32Array(total).fill(-1);
+  const closed = new Uint8Array(total);
+  const open = new MinHeap();
+  gScore[startIdx] = 0;
+  open.push(0, startIdx);
+
+  const dirs = [
+    [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
+    [1, 1, Math.SQRT2], [-1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, -1, Math.SQRT2],
+  ];
+
+  let iterations = 0;
+  let found = false;
+  while (open.size && iterations++ < 240000) {
+    const current = open.pop();
+    if (closed[current]) continue;
+    closed[current] = 1;
+    if (current === finishIdx) {
+      found = true;
+      break;
+    }
+    const ci = current % n;
+    const cj = (current / n) | 0;
+    for (const [di, dj, mult] of dirs) {
+      const ni = ci + di;
+      const nj = cj + dj;
+      if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+      const next = nj * n + ni;
+      if (closed[next]) continue;
+      const h = heights[next];
+      if (h < 1.5) continue; // the fjord is not part of the stage
+      const slope = slopes[next];
+      if (slope > maxSlope) continue;
+      // A rubber-band penalty for nasty ground, and a mild dislike of summits.
+      let penalty = 1 + slope * slope * 13 + (slope > 0.34 ? 9 : 0) + (slope > 0.58 ? 22 : 0);
+      if (h > 640) penalty += 4;
+      const step = mult * cell * penalty;
+      const tentative = gScore[current] + step;
+      if (tentative < gScore[next]) {
+        gScore[next] = tentative;
+        cameFrom[next] = current;
+        const dx = ni - fi.i;
+        const dz = nj - fi.j;
+        const heuristic = Math.hypot(dx, dz) * cell;
+        open.push(tentative + heuristic, next);
+      }
+    }
+  }
+
+  if (!found) {
+    throw new Error('No drivable link between those points. Try two spots on gentler ground.');
+  }
+
+  const raw = [];
+  let p = finishIdx;
+  while (p >= 0) {
+    const i = p % n;
+    const j = (p / n) | 0;
+    raw.push({
+      x: -terrain.sizeX / 2 + i * cell,
+      z: -terrain.sizeZ / 2 + j * cell,
+    });
+    p = cameFrom[p];
+  }
+  raw.reverse();
+
+  return makeRoute(raw, terrain, {
+    name,
+    source: 'generated',
+    smooth: 3,
+    spacing: 4,
+    simplifyEpsilon: 2.2,
+    roadWidth: 4.2,
+  });
+}
+
+const STAGE_NAMES = [
+  'Preikestolen Climb',
+  'Fjord Rim Special',
+  'Nervevarden Pass',
+  'Hengjane Hairpins',
+  'Lysefjord Drop',
+  'Neravadalen Sprint',
+  'The Pulpit Run',
+  'Kjerag Approach',
+];
+
+/** Picks a random connected pair of gentle points and builds a stage. */
+export function randomRallyRoute(terrain, random = Math.random) {
+  const halfX = terrain.sizeX / 2 - 120;
+  const halfZ = terrain.sizeZ / 2 - 120;
+  let fallback = null;
+  for (let attempt = 0; attempt < 34; attempt++) {
+    const start = {
+      x: (random() * 2 - 1) * halfX,
+      z: (random() * 2 - 1) * halfZ,
+    };
+    const sh = terrain.sample(start.x, start.z);
+    if (sh < 120 || sh > 610 || terrain.slope(start.x, start.z) > 0.42) continue;
+    const angle = random() * Math.PI * 2;
+    const distance = 700 + random() * 750;
+    const finish = {
+      x: clamp(start.x + Math.cos(angle) * distance, -halfX, halfX),
+      z: clamp(start.z + Math.sin(angle) * distance, -halfZ, halfZ),
+    };
+    const fh = terrain.sample(finish.x, finish.z);
+    if (fh < 80 || fh > 620 || terrain.slope(finish.x, finish.z) > 0.42) continue;
+    try {
+      const route = generateRallyRoute(terrain, start, finish, {
+        name: STAGE_NAMES[Math.floor(random() * STAGE_NAMES.length)],
+      });
+      if (route.length > 650 && route.length < 4200) return route;
+      fallback = route;
+    } catch {
+      // Keep looking for a connected pair.
+    }
+  }
+  if (fallback) return fallback;
+  // The hand-tuned route across the plateau, used if the random search has a bad day.
+  return generateRallyRoute(terrain, { x: -710, z: 288 }, { x: 104, z: -245 }, {
+    name: 'Preikestolen Climb',
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ *  OSRM: real roads from the Open Source Routing Machine.             *
+ * ------------------------------------------------------------------ */
+const OSRM_ENDPOINTS = {
+  driving: 'https://router.project-osrm.org/route/v1/driving',
+  foot: 'https://routing.openstreetmap.de/routed-foot/route/v1/foot',
+  cycling: 'https://routing.openstreetmap.de/routed-bike/route/v1/bike',
+};
+
+function haversine(a, b) {
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const la = a.lat * Math.PI / 180;
+  const lb = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la) * Math.cos(lb) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export async function fetchOsrmRoute(terrain, { a, b, profile = 'driving' }) {
+  const base = OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving;
+  const url = `${base}/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=false`;
+  let response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('OSRM took too long to answer. Use OFF-ROAD ROUTE, or try again.');
+    }
+    throw new Error('OSRM could not be reached. Check the connection, or use OFF-ROAD ROUTE.');
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(`OSRM did not answer (HTTP ${response.status}).`);
+  const data = await response.json();
+  if (data.code !== 'Ok' || !data.routes?.length) {
+    throw new Error(data.message || 'OSRM found no route between those coordinates.');
+  }
+
+  const routeData = data.routes[0];
+  const snappedA = data.waypoints?.[0]?.distance ?? null;
+  const snappedB = data.waypoints?.[1]?.distance ?? null;
+  const snapText = snappedA != null && snappedB != null
+    ? ` Snapped ${Math.round(snappedA)} m / ${Math.round(snappedB)} m from the picked points.`
+    : '';
+
+  // A 30 m route from two points 300 m apart means OSRM snapped both picks to
+  // the same trailhead or road stub. Preikestolen's hiking paths do this a lot.
+  const straight = haversine(a, b);
+  if (routeData.distance < 25 || (straight > 80 && routeData.distance < straight * 0.35)) {
+    throw new Error(
+      `OSRM snapped both points to the same road or trail (${Math.round(routeData.distance)} m route for a ${Math.round(straight)} m gap).${snapText} Pick points on a mapped road/trail, or use OFF-ROAD ROUTE.`,
+    );
+  }
+  // A public road two kilometres outside the tile is not a rally stage. Foot
+  // trails are more forgiving: their nearest mapped node can be several
+  // hundred metres from the point you tapped.
+  const snapLimit = profile === 'driving' ? 400 : 750;
+  if ((snappedA != null && snappedA > snapLimit) || (snappedB != null && snappedB > snapLimit)) {
+    throw new Error(
+      `OSRM snapped a point ${Math.round(Math.max(snappedA ?? 0, snappedB ?? 0))} m away from where you picked, too far to make a fair stage.${snapText} Pick points nearer to a mapped road/trail, or use OFF-ROAD ROUTE.`,
+    );
+  }
+
+  const coordinates = routeData.geometry.coordinates;
+  const points = [];
+  let outside = 0;
+  for (const [lon, lat] of coordinates) {
+    const p = terrain.worldFromLatLon(lat, lon);
+    if (!terrain.inside(p.x, p.z, 4)) outside++;
+    points.push(p);
+  }
+  if (outside > 0) {
+    throw new Error(`That road leaves the 2 km demo terrain (${outside} of ${points.length} points outside). Pick start and finish inside the Preikestolen tile.`);
+  }
+  if (points.length < 2) throw new Error('OSRM returned an empty geometry.');
+
+  const route = makeRoute(points, terrain, {
+    name: `${profile === 'foot' ? 'Footpath' : profile === 'cycling' ? 'Bike trail' : 'OSRM road'} stage`,
+    source: 'osrm',
+    smooth: 1,
+    spacing: 5,
+    simplifyEpsilon: 2,
+    roadWidth: profile === 'driving' ? 4.8 : 3.4,
+  });
+  if (route.length < 20) {
+    throw new Error(`That road is too short to make a stage (${Math.round(route.length)} m).${snapText}`);
+  }
+  return {
+    route,
+    distance: routeData.distance,
+    duration: routeData.duration,
+    profile,
+    snapped: { a: snappedA, b: snappedB },
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Visuals: gravel ribbon, marker posts, start and finish gates.       *
+ * ------------------------------------------------------------------ */
+function createGateTexture(label, accent = '#f2c14e') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 192;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(18,22,20,0.92)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 10;
+  ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 112px "Arial Black", Impact, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 6);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createCheckerTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 16; x++) {
+      ctx.fillStyle = (x + y) % 2 ? '#131716' : '#e8e7db';
+      ctx.fillRect(x * 8, y * 8, 8, 8);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.NearestFilter;
+  return tex;
+}
+
+function buildGate(route, terrain, atStart) {
+  const gateIndex = atStart
+    ? Math.min(3, route.samples.length - 1)
+    : Math.max(0, route.samples.length - 1);
+  const sample = route.samples[gateIndex];
+  const near = atStart
+    ? route.samples[Math.min(gateIndex + 3, route.samples.length - 1)]
+    : route.samples[Math.max(0, gateIndex - 3)];
+  const yaw = Math.atan2(near.x - sample.x, near.z - sample.z);
+  const group = new THREE.Group();
+  group.position.set(sample.x, terrain.sample(sample.x, sample.z) + 0.1, sample.z);
+  group.rotation.y = yaw;
+
+  const width = route.roadWidth * 2 + 2.6;
+  const postMat = new THREE.MeshLambertMaterial({ color: atStart ? 0x2f8f5b : 0xc94f3d });
+  const postGeo = new THREE.CylinderGeometry(0.22, 0.28, 5.4, 6);
+  for (const x of [-width / 2, width / 2]) {
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(x, 2.7, 0);
+    post.castShadow = true;
+    group.add(post);
+  }
+
+  const beam = new THREE.Mesh(
+    new THREE.BoxGeometry(width + 0.7, 0.45, 0.5),
+    new THREE.MeshLambertMaterial({ color: atStart ? 0x2f8f5b : 0xc94f3d }),
+  );
+  beam.position.y = 5.25;
+  beam.castShadow = true;
+  group.add(beam);
+
+  // Two one-sided banners back to back, so the lettering reads correctly from
+  // either side of the gate instead of being mirrored on one of them.
+  const bannerTexture = createGateTexture(atStart ? 'START' : 'FINISH', atStart ? '#7fe6a8' : '#ffd75e');
+  const bannerGeo = new THREE.PlaneGeometry(width * 0.86, 1.55);
+  const bannerFront = new THREE.Mesh(
+    bannerGeo,
+    new THREE.MeshBasicMaterial({ map: bannerTexture, side: THREE.FrontSide, toneMapped: false }),
+  );
+  bannerFront.position.set(0, 4.35, 0.03);
+  const bannerBack = new THREE.Mesh(
+    bannerGeo,
+    new THREE.MeshBasicMaterial({ map: bannerTexture, side: THREE.FrontSide, toneMapped: false }),
+  );
+  bannerBack.position.set(0, 4.35, -0.03);
+  bannerBack.rotation.y = Math.PI;
+  group.add(bannerFront, bannerBack);
+
+  const line = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, 2.8),
+    new THREE.MeshBasicMaterial({
+      map: createCheckerTexture(),
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+    }),
+  );
+  line.rotation.x = -Math.PI / 2;
+  line.position.y = 0.3;
+  group.add(line);
+
+  group.userData.line = line;
+  return group;
+}
+
+export function buildRoadVisuals(route, terrain) {
+  const samples = route.samples;
+  const count = samples.length;
+  const half = route.roadWidth;
+  const shoulder = 0.9;
+  const ROWS = 6;
+  const positions = new Float32Array(count * ROWS * 3);
+  const colors = new Float32Array(count * ROWS * 3);
+  const indices = [];
+
+  const cGravel = new THREE.Color(0x7d7769);
+  const cGravelDark = new THREE.Color(0x625d52);
+  const cShoulder = new THREE.Color(0x4d5146);
+  const cEdge = new THREE.Color(0x8f8877);
+  const cSkirt = new THREE.Color(0x333a35);
+  const tmp = new THREE.Color();
+
+  // A rally ribbon must not tip over sideways or sink into a crest between two
+  // cross sections. Every edge height is clamped against the centre line and
+  // the whole slab is lifted a hair above the terrain, with a short skirt
+  // hanging off both shoulders so the road reads as a solid ribbon.
+  const tiltLimit = Math.max(0.5, half * 1.15);
+  for (let i = 0; i < count; i++) {
+    const p = samples[i];
+    const prev = samples[Math.max(0, i - 1)];
+    const next = samples[Math.min(count - 1, i + 1)];
+    let tx = next.x - prev.x;
+    let tz = next.z - prev.z;
+    const tl = Math.hypot(tx, tz) || 1;
+    tx /= tl; tz /= tl;
+    const nx = -tz;
+    const nz = tx;
+    const fun = i < 3 || i > count - 4 ? 1 : 0.55;
+    const centerY = terrain.sample(p.x, p.z);
+    const lift = 0.16;
+    for (let k = 0; k < ROWS; k++) {
+      const offset = k <= 2
+        ? -(k === 0 ? half + shoulder : k === 1 ? half + shoulder : half)
+        : (k === 3 ? half : k === 4 ? half + shoulder : half + shoulder);
+      const x = p.x + nx * offset;
+      const z = p.z + nz * offset;
+      let edgeY = terrain.sample(x, z);
+      if (k === 0 || k === 1 || k === 4 || k === 5) {
+        edgeY = centerY + clamp(edgeY - centerY, -tiltLimit, tiltLimit);
+      }
+      const crown = k === 2 || k === 3 ? 0.06 : 0;
+      const drop = k === 0 || k === 5 ? 0.55 : 0;
+      const vi = (i * ROWS + k) * 3;
+      positions[vi] = x;
+      positions[vi + 1] = edgeY + lift + crown - drop;
+      positions[vi + 2] = z;
+
+      if (k === 0 || k === 5) tmp.copy(cSkirt);
+      else if (k === 1 || k === 4) tmp.copy(cShoulder);
+      else if (i % 17 === 0) tmp.copy(cEdge);
+      else tmp.copy(i % 5 === 0 ? cGravelDark : cGravel);
+      tmp.multiplyScalar(0.92 + fun * 0.08);
+      colors[vi] = tmp.r;
+      colors[vi + 1] = tmp.g;
+      colors[vi + 2] = tmp.b;
+    }
+    if (i < count - 1) {
+      const a = i * ROWS;
+      const b = (i + 1) * ROWS;
+      for (let k = 0; k < ROWS - 1; k++) {
+        indices.push(a + k, b + k, a + k + 1);
+        indices.push(a + k + 1, b + k, b + k + 1);
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    flatShading: true,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.name = 'road';
+
+  const group = new THREE.Group();
+  group.add(mesh);
+
+  // Red-and-white rally marker posts along the right-hand edge.
+  const postGeo = new THREE.CylinderGeometry(0.065, 0.085, 1.15, 5);
+  const whiteMat = new THREE.MeshBasicMaterial({ color: 0xf4efe1 });
+  const redMat = new THREE.MeshBasicMaterial({ color: 0xcf3e32 });
+  const posts = [];
+  const step = 26;
+  for (let d = 18; d < route.length - 12; d += step) {
+    const p = route.sampleAtDistance(d);
+    const prev = route.sampleAtDistance(d - 3);
+    const next = route.sampleAtDistance(d + 3);
+    const tx = next.x - prev.x;
+    const tz = next.z - prev.z;
+    const tl = Math.hypot(tx, tz) || 1;
+    const nx = -tz / tl;
+    const nz = tx / tl;
+    const side = Math.round(d / step) % 2 ? 1 : -1;
+    const x = p.x + nx * (half + 1.2) * side;
+    const z = p.z + nz * (half + 1.2) * side;
+    posts.push({ x, z, y: terrain.sample(x, z) + 0.55, red: side > 0 });
+  }
+  const whitePosts = posts.filter((p) => !p.red);
+  const redPosts = posts.filter((p) => p.red);
+  const makePosts = (list, mat) => {
+    const inst = new THREE.InstancedMesh(postGeo, mat, Math.max(1, list.length));
+    const m = new THREE.Matrix4();
+    list.forEach((p, i) => {
+      m.makeTranslation(p.x, p.y, p.z);
+      inst.setMatrixAt(i, m);
+    });
+    inst.count = list.length;
+    inst.instanceMatrix.needsUpdate = true;
+    return inst;
+  };
+  group.add(makePosts(whitePosts, whiteMat), makePosts(redPosts, redMat));
+
+  const startGate = buildGate(route, terrain, true);
+  const finishGate = buildGate(route, terrain, false);
+  group.add(startGate, finishGate);
+  group.userData.startGate = startGate;
+  group.userData.finishGate = finishGate;
+
+  return group;
+}

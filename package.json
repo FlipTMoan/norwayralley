@@ -1,0 +1,19 @@
+{
+  "name": "retro-norway-rally",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A retro arcade rally game on a real 1 m Norwegian terrain model, with OSRM road routing.",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "scene": "python3 scripts/build-scene.py"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.7"
+  }
+}
