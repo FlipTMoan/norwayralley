@@ -45,6 +45,13 @@ export function spawnOffset(slot) {
   return { back: row * 6, side };
 }
 
+/** One paint per grid slot, the same on every screen in the room. */
+export const PLAYER_COLORS = [0xd34a31, 0x2f6fd6, 0xf0c020, 0x3aa655, 0xe9e6dc, 0xe2673c, 0x8a4fd6, 0x2bb3b0];
+export function paintForSlot(slot) {
+  const i = Number.isInteger(slot) && slot >= 0 ? slot : 0;
+  return PLAYER_COLORS[i % PLAYER_COLORS.length];
+}
+
 /** Compact car state for the wire (about 90 bytes as JSON). */
 export function encodeState(car, { name, kind }) {
   return {

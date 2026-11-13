@@ -18,7 +18,7 @@ import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { buildCorridorGeometry, corridorMesh } from './corridor.js';
-import { Session, encodeState, makeCallsign, spawnOffset } from './multiplayer.js';
+import { Session, encodeState, makeCallsign, spawnOffset, paintForSlot } from './multiplayer.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -196,6 +196,7 @@ function swapCar() {
   car = new Car(scene, terrain, carKind);
   car.autoShift = gearboxAuto;
   car.slideMode = slideMode;
+  applyPaint();
   if (route) car.setRoute(route); else car.reset(pose);
   if (phase === 'racing' || phase === 'countdown' || phase === 'finished') resetStage({ countdownNow: true });
 }
@@ -465,6 +466,11 @@ async function applySharedRoute(shared) {
   }
 }
 
+/** My paint: the room slot's colour, or the car's own when alone. */
+function applyPaint() {
+  car?.setPaint(session ? paintForSlot(session.slot) : null);
+}
+
 /** Where my car starts: the route's start pose, moved to my grid slot in a room. */
 function spawnPose() {
   const base = route.startPose();
@@ -498,6 +504,7 @@ function bindSession(s) {
   s.addEventListener('peer-leave', (e) => { disposeGhost(e.detail.id); updatePlayersBadge(); });
   s.addEventListener('route', (e) => applySharedRoute(e.detail.route));
   s.addEventListener('slot', () => {
+    applyPaint();
     // Move to my grid slot unless I am already driving.
     if (car && route && (phase !== 'racing' || car.speed < 0.5)) car.reset(spawnPose());
   });
@@ -528,6 +535,7 @@ async function hostRoom() {
     $('friendsCodeOut').textContent = code;
     $('friendsRoom').classList.remove('hidden');
     friendsStatus(`You are in. Friends press JOIN and type ${code}. Close this panel and START ENGINE whenever you like.`, 'ok');
+    applyPaint();
     updatePlayersBadge();
   } catch (error) {
     friendsStatus(error.message, 'err');
@@ -568,6 +576,7 @@ function leaveRoom() {
   for (const id of [...ghosts.keys()]) disposeGhost(id);
   $('friendsRoom')?.classList.add('hidden');
   updatePlayersBadge();
+  applyPaint();
   if ($('friendsJoin')) syncFriendsButtons();
 }
 
@@ -616,8 +625,12 @@ function updateGhosts(now, dt) {
       const ghostCar = new Car(scene, terrain, peer.kind);
       const label = makeLabel(peer.name);
       scene.add(label);
-      g = { car: ghostCar, label, kind: peer.kind, spin: 0 };
+      g = { car: ghostCar, label, kind: peer.kind, spin: 0, slot: undefined };
       ghosts.set(id, g);
+    }
+    if (g.slot !== peer.slot) {
+      g.slot = peer.slot;
+      g.car.setPaint(paintForSlot(peer.slot ?? 1));
     }
     const pose = peer.track.sample(now);
     const stale = now - peer.track.lastSeen > 6000;
@@ -716,6 +729,7 @@ async function enterStreamingWorld(geometry) {
     car = new Car(scene, terrain, carKind);
     car.autoShift = gearboxAuto;
     car.slideMode = slideMode;
+    applyPaint();
     water = buildWater(terrain);
     scene.add(water);
     vegetation = null;
@@ -793,6 +807,7 @@ async function enterFreeDrive(center) {
     car = new Car(scene, terrain, carKind);
     car.autoShift = gearboxAuto;
     car.slideMode = slideMode;
+    applyPaint();
     water = buildWater(terrain);
     scene.add(water);
     vegetation = null;
@@ -2103,6 +2118,8 @@ async function boot() {
     car.autoShift = gearboxAuto;
 
     car.slideMode = slideMode;
+
+    applyPaint();
 
     setRoute(initialRoute, { pad: false });
 

@@ -55,7 +55,7 @@ export const CARS = {
     gears: [-6.0, 6.77, 4.05, 2.90, 2.26, 1.85], finalDrive: 3.9, idle: 1200, redline: 12000,
     torque: 380, power: 224000, upshift: 11000, downshift: 4200, driveLoad: 0.62,
     gripBonus: { asphalt: 1, gravel: 1, offroad: 1 },
-    eye: { x: -0.36, y: 1.1, z: 0.12 }, shadow: [2.8, 4.6],
+    eye: { x: -0.36, y: 1.1, z: 0.12 }, shadow: [2.8, 4.6], paint: 0xd34a31,
   },
   buggy: {
     key: 'buggy', name: 'Formula Offroad', mass: 1500, wheelbase: 2.9, track: 2.1, wheelRadius: 0.62, frontAxle: 1.45,
@@ -64,7 +64,7 @@ export const CARS = {
     gears: [-6.0, 9.0, 5.4, 3.6, 2.6], finalDrive: 3.4, idle: 1000, redline: 8000,
     torque: 1500, power: 895000, upshift: 7600, downshift: 3200, driveLoad: 1.0,
     gripBonus: { asphalt: 0.85, gravel: 1.25, offroad: 1.4 },
-    eye: { x: 0, y: 1.6, z: -0.1 }, shadow: [3.6, 4.8],
+    eye: { x: 0, y: 1.6, z: -0.1 }, shadow: [3.6, 4.8], paint: 0xf0c020,
   },
 };
 
@@ -375,6 +375,15 @@ export class Car {
     );
     roof.castShadow = true;
     g.add(roof);
+    // Repainting: the body material plus the roof's painted vertices.
+    this.paintMaterials = [paint];
+    this.roofColors = roof.geometry.getAttribute('color');
+    this.paintedVerts = [];
+    for (let i = 0; i < this.roofColors.count; i++) {
+      if (Math.abs(this.roofColors.getX(i) - paintC.r) < 1e-3 && Math.abs(this.roofColors.getY(i) - paintC.g) < 1e-3 && Math.abs(this.roofColors.getZ(i) - paintC.b) < 1e-3) {
+        this.paintedVerts.push(i);
+      }
+    }
 
     // Headlamps sit in the front face of each fender crown, tilted up the
     // way the 911's do, with a chrome bezel around the lens.
@@ -498,6 +507,7 @@ export class Car {
     const g = this.group;
     const R = this.spec.wheelRadius;
     const paint = new THREE.MeshLambertMaterial({ color: 0xf0c020, flatShading: true });
+    this.paintMaterials = [paint];
     const dark = new THREE.MeshLambertMaterial({ color: 0x1c1f21, flatShading: true });
     const tubeMat = new THREE.MeshLambertMaterial({ color: 0xd8d4c8, flatShading: true });
     const chrome = new THREE.MeshLambertMaterial({ color: 0xcfcac0, flatShading: true });
@@ -619,6 +629,17 @@ export class Car {
     g.add(blob);
     this.blobShadow = blob;
     this.tmpV = new THREE.Vector3();
+  }
+
+  /** Repaint the body (null = the car's own colour). Used for room players. */
+  setPaint(hex) {
+    const c = new THREE.Color(hex ?? this.spec.paint);
+    this.paint = c.getHex();
+    for (const m of this.paintMaterials || []) m.color.copy(c);
+    if (this.roofColors && this.paintedVerts?.length) {
+      for (const i of this.paintedVerts) this.roofColors.setXYZ(i, c.r, c.g, c.b);
+      this.roofColors.needsUpdate = true;
+    }
   }
 
   createDust() {

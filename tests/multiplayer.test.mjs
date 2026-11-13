@@ -1,7 +1,9 @@
 import './browser-stubs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRoomCode, normaliseCode, encodeState, GhostTrack, Session, spawnOffset } from '../src/multiplayer.js';
+import { makeRoomCode, normaliseCode, encodeState, GhostTrack, Session, spawnOffset, paintForSlot, PLAYER_COLORS } from '../src/multiplayer.js';
+import { Car } from '../src/car.js';
+import * as THREE from 'three';
 
 test('room codes avoid ambiguous characters and normalise user input', () => {
   for (let i = 0; i < 50; i++) assert.match(makeRoomCode(), /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/);
@@ -81,4 +83,24 @@ test('joiners get a grid slot and learn everyone else\'s', () => {
   guest.onGuestData({ t: 'join', id: 'b', name: 'b', kind: 'buggy', slot: 2 });
   assert.equal(guest.slot, 3);
   assert.deepEqual([...guest.peers.entries()].map(([id, p]) => [id, p.slot]), [['host', 0], ['a', 1], ['b', 2]]);
+});
+
+test('every room slot gets its own paint and the cars repaint body and roof', () => {
+  assert.equal(new Set(PLAYER_COLORS).size, PLAYER_COLORS.length);
+  assert.equal(paintForSlot(0), PLAYER_COLORS[0]);
+  assert.equal(paintForSlot(9), PLAYER_COLORS[1]);
+  const terrain = { sample: () => 0, sampleBase: () => 0, gradient: () => ({ gx: 0, gz: 0 }), slope: () => 0, inside: () => true };
+  for (const kind of ['porsche', 'buggy']) {
+    const car = new Car({ add() {}, remove() {} }, terrain, kind);
+    car.setPaint(0x2f6fd6);
+    assert.equal(car.paintMaterials[0].color.getHex(), 0x2f6fd6, `${kind} body repainted`);
+    if (kind === 'porsche') {
+      assert.ok(car.paintedVerts.length > 50, 'roof skin vertices found');
+      const i = car.paintedVerts[0];
+      const linearBlue = new THREE.Color(0x2f6fd6).b; // vertex colours live in the working colour space
+      assert.ok(Math.abs(car.roofColors.getZ(i) - linearBlue) < 1e-3, 'roof repainted');
+    }
+    car.setPaint(null);
+    assert.equal(car.paintMaterials[0].color.getHex(), car.spec.paint, `${kind} back to its own colour`);
+  }
 });
