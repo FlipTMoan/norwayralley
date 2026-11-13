@@ -1103,8 +1103,8 @@ export class Car {
     if (this.grounded) {
       pitchTarget = Math.atan2(hBack - hFront, e);
       rollTarget = Math.atan2(hRight - hLeft, e * 0.54);
-      pitchTarget = clamp(pitchTarget, -0.55, 0.55);
-      rollTarget = clamp(rollTarget, -0.4, 0.4);
+      pitchTarget = clamp(pitchTarget, -0.7, 0.7);
+      rollTarget = clamp(rollTarget, -0.6, 0.6);
     } else {
       pitchTarget = clamp(-this.verticalVel * 0.035, -0.4, 0.4);
       rollTarget = this.roll * 0.98;
@@ -1138,17 +1138,43 @@ export class Car {
     // Each wheel drops or lifts to meet the ground beneath it (in car space),
     // so the tyres follow ruts and crests instead of hovering or clipping.
     this.group.updateMatrixWorld(true);
+    const R = this.spec.wheelRadius;
+    const maxUp = R + this.spec.travel.down;
+    let lift = 0;
     for (const w of this.wheels) {
       const wx = this.pos.x + f.x * w.z + r.x * w.x;
       const wz = this.pos.z + f.z * w.z + r.z * w.x;
       this.tmpV.set(wx, this.groundAt(wx, wz), wz);
       this.group.worldToLocal(this.tmpV);
+      const want = this.tmpV.y + R;
+      // Ground higher than the suspension can absorb: lift the whole body.
+      if (this.grounded && want > maxUp) lift = Math.max(lift, want - maxUp);
       const rest = this.grounded
-        ? clamp(this.tmpV.y + this.spec.wheelRadius, this.spec.wheelRadius - this.spec.travel.up, this.spec.wheelRadius + this.spec.travel.down)
-        : this.spec.wheelRadius - this.spec.travel.up * 0.6;
-      w.pivot.position.y = damp(w.pivot.position.y, rest, 22, dt);
+        ? clamp(want, R - this.spec.travel.up, maxUp)
+        : R - this.spec.travel.up * 0.6;
+      // Compression is instant (the ground pushes the wheel up); rebound is damped.
+      w.pivot.position.y = rest >= w.pivot.position.y ? rest : damp(w.pivot.position.y, rest, 22, dt);
       w.spin.rotation.x = w.front ? this.wheelSpin : this.rearSpin;
       if (w.front) w.pivot.rotation.y = this.steerVisual;
+    }
+    if (lift > 0) {
+      this.group.position.y += lift;
+      this.group.updateMatrixWorld(true);
+    }
+    // Final guarantee in world space: no wheel's lowest point under the
+    // ground at its own position, whatever the body's pitch and roll did.
+    if (this.grounded) {
+      let deficit = 0;
+      for (const w of this.wheels) {
+        this.tmpV.copy(w.pivot.position);
+        this.group.localToWorld(this.tmpV);
+        const bottom = this.tmpV.y - R;
+        deficit = Math.max(deficit, this.groundAt(this.tmpV.x, this.tmpV.z) - bottom);
+      }
+      if (deficit > 0.005) {
+        this.group.position.y += deficit;
+        this.group.updateMatrixWorld(true);
+      }
     }
 
     this.blobShadow.material.opacity = clamp(1 - this.airTime * 1.4, 0, 1);

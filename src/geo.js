@@ -120,6 +120,15 @@ export function haversine(a, b) {
 }
 
 export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+/**
+ * Height inside a grid cell on the same two triangles the terrain meshes
+ * draw (split along the b–c anti-diagonal: a=(i,j) b=(i+1,j) c=(i,j+1)
+ * d=(i+1,j+1)). Bilinear interpolation would differ from the drawn surface
+ * by up to the cell's twist, which is what let wheels sink through slopes.
+ */
+export const triSample = (a, b, c, d, fx, fz) => (fx + fz <= 1
+  ? a + (b - a) * fx + (c - a) * fz
+  : d + (c - d) * (1 - fx) + (b - d) * (1 - fz));
 export const lerp = (a, b, t) => a + (b - a) * t;
 export const smoothstep = (t) => t * t * (3 - 2 * t);
 export const damp = (current, target, lambda, dt) => lerp(current, target, 1 - Math.exp(-lambda * dt));

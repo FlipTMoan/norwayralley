@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, hash2, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
+import { clamp, hash2, lerp, smoothstep, triSample, utmForward, utmInverse } from './geo.js';
 import { carveProfile } from './corridor.js';
 
 const GRID = 512;                 // height samples per side in the game
@@ -153,7 +153,7 @@ export function createTerrainModel({
       const b = heights[j * grid + i + 1];
       const c = heights[(j + 1) * grid + i];
       const d = heights[(j + 1) * grid + i + 1];
-      return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+      return triSample(a, b, c, d, fx, fz);
     },
     gradient(x, z, e = 4) {
       const gx = (this.sample(x + e, z) - this.sample(x - e, z)) / (2 * e);
@@ -190,7 +190,7 @@ export function createTerrainModel({
       const b = baseHeights[j * grid + i + 1];
       const c = baseHeights[(j + 1) * grid + i];
       const d = baseHeights[(j + 1) * grid + i + 1];
-      return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+      return triSample(a, b, c, d, fx, fz);
     },
     /**
      * Carve the engineered road profile (flat carriageway, embankments and

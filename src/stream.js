@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, hash2, lerp, smoothstep, localProjection } from './geo.js';
+import { clamp, hash2, lerp, smoothstep, triSample, localProjection } from './geo.js';
 import { terrainColor } from './terrain.js';
 import { fetchDem } from './worldgen.js';
 import { makeRoute, buildRoadVisuals, buildRouteIndex } from './stage.js';
@@ -638,7 +638,7 @@ export async function createStreamingWorld({
       const fx = clamp(u - i, 0, 1);
       const fz = clamp(v - j, 0, 1);
       const h = chunk.baseHeights;
-      return lerp(lerp(h[j * GSIZE + i], h[j * GSIZE + i + 1], fx), lerp(h[(j + 1) * GSIZE + i], h[(j + 1) * GSIZE + i + 1], fx), fz);
+      return triSample(h[j * GSIZE + i], h[j * GSIZE + i + 1], h[(j + 1) * GSIZE + i], h[(j + 1) * GSIZE + i + 1], fx, fz);
     },
 
     /** Land-cover tint of the chunk under (x, z), if it has arrived (minimap). */
@@ -672,7 +672,7 @@ export async function createStreamingWorld({
         const b = h[j * GSIZE + i + 1];
         const c = h[(j + 1) * GSIZE + i];
         const d = h[(j + 1) * GSIZE + i + 1];
-        return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+        return triSample(a, b, c, d, fx, fz);
       }
       const ch = corridorSample(x, z);
       if (ch != null) return ch;
