@@ -89,6 +89,24 @@ export class StageRoute {
     return this.samples[clamp(index, 0, this.samples.length - 1)];
   }
 
+  /**
+   * Smooth the natural ground along the route into a carriageway height
+   * (`roadY`) — ±`window` samples of running mean — so the road rides over
+   * dips on embankments and through crests in cuttings instead of following
+   * every bump.
+   */
+  assignRoadY(terrain, window = 7) {
+    const s = this.samples;
+    const raw = s.map((p) => terrain.sampleBase ? terrain.sampleBase(p.x, p.z) : terrain.sample(p.x, p.z));
+    for (let i = 0; i < s.length; i++) {
+      let sum = 0;
+      let n = 0;
+      for (let k = Math.max(0, i - window); k <= Math.min(s.length - 1, i + window); k++) { sum += raw[k]; n++; }
+      s[i].roadY = sum / n;
+    }
+    return this;
+  }
+
   /** Re-read every sample's height from the terrain (after a start pad carve). */
   snapToTerrain() {
     let s = 0;
@@ -130,17 +148,24 @@ export class StageRoute {
     tx /= tl; tz /= tl;
     // Perpendicular distance to the two segments meeting at the nearest
     // sample: the sample spacing would otherwise add up to half a step.
+    // The road height is interpolated along the same segment.
     let distance = Math.sqrt(best);
+    let roadY = p.roadY ?? p.y;
     for (const [p0, p1] of [[prev, p], [p, next]]) {
       const dx = p1.x - p0.x;
       const dz = p1.z - p0.z;
       const l2 = dx * dx + dz * dz;
       if (l2 < 1e-6) continue;
       const t = clamp(((x - p0.x) * dx + (z - p0.z) * dz) / l2, 0, 1);
-      distance = Math.min(distance, Math.hypot(x - (p0.x + dx * t), z - (p0.z + dz * t)));
+      const d = Math.hypot(x - (p0.x + dx * t), z - (p0.z + dz * t));
+      if (d <= distance) {
+        distance = d;
+        roadY = (p0.roadY ?? p0.y) + ((p1.roadY ?? p1.y) - (p0.roadY ?? p0.y)) * t;
+      }
     }
     return {
       distance,
+      roadY,
       index: bi,
       progress: this.length > 0 ? p.s / this.length : 0,
       point: p,

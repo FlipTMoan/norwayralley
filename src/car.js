@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, damp, lerp, wrapAngle } from './geo.js';
 import { ROAD_RIBBON_LIFT, ROAD_CROWN, ROAD_SHOULDER } from './stage.js';
+import { profileHeight, corridorReach, ROAD_LIFT } from './corridor.js';
 
 // Porsche 911 (classic rally spec) proportions, metres.
 const WHEELBASE = 2.45;
@@ -536,8 +537,20 @@ export class Car {
     return lerp(ROAD_RIBBON_LIFT, 0, clamp((distance - half - ROAD_SHOULDER) / 0.6, 0, 1));
   }
 
-  /** Height of whatever the tyres are standing on: ground, or ground + ribbon. */
+  /**
+   * Height of whatever the tyres are standing on. Inside the road corridor
+   * that is the engineered profile (carriageway, embankment or cutting) plus
+   * the ribbon; elsewhere the natural ground.
+   */
   groundAt(x, z) {
+    if (this.route) {
+      const q = this.route.nearest(x, z);
+      const half = q.width ?? this.route.roadWidth;
+      if (q.roadY != null && Number.isFinite(q.distance) && q.distance <= corridorReach(half)) {
+        const ground = this.terrain.sampleBase ? this.terrain.sampleBase(x, z) : this.terrain.sample(x, z);
+        return profileHeight(q.roadY + ROAD_LIFT, ground, q.distance, half) + this.surfaceLift(q.distance, half);
+      }
+    }
     return this.terrain.sample(x, z) + this.roadLift;
   }
 
@@ -896,10 +909,10 @@ export class Car {
     const f = this.forward();
     const r = this.right();
     const e = 3.2;
-    const hFront = this.terrain.sample(this.pos.x + f.x * 1.4, this.pos.z + f.z * 1.4);
-    const hBack = this.terrain.sample(this.pos.x - f.x * 1.4, this.pos.z - f.z * 1.4);
-    const hRight = this.terrain.sample(this.pos.x + r.x * 0.85, this.pos.z + r.z * 0.85);
-    const hLeft = this.terrain.sample(this.pos.x - r.x * 0.85, this.pos.z - r.z * 0.85);
+    const hFront = this.groundAt(this.pos.x + f.x * 1.4, this.pos.z + f.z * 1.4);
+    const hBack = this.groundAt(this.pos.x - f.x * 1.4, this.pos.z - f.z * 1.4);
+    const hRight = this.groundAt(this.pos.x + r.x * 0.85, this.pos.z + r.z * 0.85);
+    const hLeft = this.groundAt(this.pos.x - r.x * 0.85, this.pos.z - r.z * 0.85);
 
     let pitchTarget;
     let rollTarget;

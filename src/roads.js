@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
+import { carveProfile } from './corridor.js';
 
 /**
  * Real roads from OpenStreetMap for the streamed world.
@@ -98,47 +99,10 @@ function finishRun(points, road, half, terrain) {
  * (nearest segment wins), exactly like the stage-road carve.
  * `grid` = { heights, x0, z0, cell, n } with `n` the stored grid side.
  */
-export function carvePolylines(grid, polylines, { lift = 0.12, blend = 6 } = {}) {
-  const { heights, x0, z0, cell, n } = grid;
-  const bestD = new Float32Array(heights.length).fill(Infinity);
-  const targets = new Float32Array(heights.length);
-  for (const line of polylines) {
-    const reach = line.half + 1.0 + blend;
-    const s = line.samples;
-    for (let k = 0; k + 1 < s.length; k++) {
-      const a = s[k];
-      const b = s[k + 1];
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const len2 = dx * dx + dz * dz || 1;
-      const gi0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - x0) / cell) - 1);
-      const gi1 = Math.min(n - 1, Math.ceil((Math.max(a.x, b.x) + reach - x0) / cell) + 1);
-      const gj0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - z0) / cell) - 1);
-      const gj1 = Math.min(n - 1, Math.ceil((Math.max(a.z, b.z) + reach - z0) / cell) + 1);
-      for (let j = gj0; j <= gj1; j++) {
-        const z = z0 + j * cell;
-        for (let i = gi0; i <= gi1; i++) {
-          const x = x0 + i * cell;
-          const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
-          const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t)) - (line.half + 1.0);
-          const idx = j * n + i;
-          if (d > blend || d >= bestD[idx]) continue;
-          bestD[idx] = d;
-          targets[idx] = lerp(a.roadY, b.roadY, t) + lift;
-        }
-      }
-    }
-  }
-  let touched = 0;
-  for (let idx = 0; idx < heights.length; idx++) {
-    const d = bestD[idx];
-    if (d > blend) continue;
-    const w = d <= 0 ? 1 : 1 - smoothstep(d / blend);
-    if (w <= 0.001) continue;
-    heights[idx] = lerp(heights[idx], targets[idx], w);
-    touched++;
-  }
-  return touched;
+export function carvePolylines(grid, polylines, { lift = 0.12 } = {}) {
+  // Engineered profile (embankments / cuttings) from the grid's base heights.
+  const base = grid.base || grid.heights.slice();
+  return carveProfile({ ...grid, base }, polylines, { lift });
 }
 
 /** Ribbon meshes for prepared roads (call after the carve, heights settled). */
@@ -187,7 +151,7 @@ export class RoadNetwork {
     for (const line of polylines) {
       const s = line.samples;
       for (let k = 0; k + 1 < s.length; k++) {
-        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, half: line.half, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
+        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, half: line.half, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
         const bx = Math.floor(((seg.ax + seg.bx) / 2) / this.cell);
         const bz = Math.floor(((seg.az + seg.bz) / 2) / this.cell);
         const key = this.key(bx, bz);
@@ -238,7 +202,7 @@ export class RoadNetwork {
       }
     }
     if (!best) {
-      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, paved: false, surface: 'gravel' };
+      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, paved: false, surface: 'gravel', roadY: null };
     }
     const dx = best.bx - best.ax;
     const dz = best.bz - best.az;
@@ -252,6 +216,7 @@ export class RoadNetwork {
       width: best.half,
       paved: best.paved,
       surface: best.surface,
+      roadY: best.ay + (best.by - best.ay) * bestT,
     };
   }
 

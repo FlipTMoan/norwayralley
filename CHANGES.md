@@ -69,6 +69,14 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Engineered road corridor** (`corridor.js`): the road is a flat
+  carriageway with a 1 m shoulder, carried on a 1:1.5 embankment where the
+  ground is lower and cut 1:1 into the hillside where it is higher. The coarse
+  terrain is carved to that profile from the untouched DEM, a 1 m corridor
+  mesh draws the embankments and cuttings (rock faces in deep cuts, bare
+  earth on fills) on the demo stage and on near chunks of streamed worlds,
+  and the car's wheels evaluate the same profile, so visuals and physics
+  agree and the car no longer dips with the ground under a road.
 - Phones / touch screens: the stage panel folds to its title tab when the
   drive starts (tap to open, tap again to fold), the brand badge hides and
   the progress bar shrinks, leaving the road visible.

@@ -31,20 +31,21 @@ test('prepareChunkRoads cuts out the stretch that duplicates the stage route', (
   assert.ok(lines.every((l) => l.samples.every((p) => p.x <= 800 || p.x >= 1200)));
 });
 
-test('carvePolylines flattens the ground along a road and blends out', () => {
+test('carvePolylines carves the engineered profile into a grid', () => {
   const n = 65;
   const cell = 4;
   const heights = new Float32Array(n * n);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) heights[j * n + i] = 50 + i * 0.5; // slope across x
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) heights[j * n + i] = 50 + i * 0.5; // ground 66 under the road
   const samples = [];
-  for (let z = -10; z <= 270; z += 5) samples.push({ x: 128, z, roadY: 66 });
-  const touched = carvePolylines({ heights, x0: 0, z0: 0, cell, n }, [{ half: 3, samples }], { lift: 0.12, blend: 6 });
+  for (let z = -10; z <= 270; z += 5) samples.push({ x: 128, z, roadY: 70 }); // road 4 m above the ground: on fill
+  const touched = carvePolylines({ heights, x0: 0, z0: 0, cell, n }, [{ half: 3, samples }], { lift: 0.12 });
   assert.ok(touched > 0);
   const at = (x, z) => heights[(z / cell) * n + x / cell];
-  assert.ok(Math.abs(at(128, 100) - 66.12) < 1e-4, 'centre at road height');
-  assert.ok(Math.abs(at(132, 100) - 66.12) < 1e-4, 'inside half width + shoulder');
-  assert.ok(at(136, 100) > 66.2 && at(136, 100) < 50 + 34 * 0.5, 'blend zone is between road and hillside');
-  assert.equal(at(160, 100), 50 + 40 * 0.5, 'untouched beyond the blend');
+  assert.ok(Math.abs(at(128, 100) - 70.12) < 1e-4, 'centre at road height');
+  const fill = 70.12 - 4 / 1.5 - 0.3; // 4 m beyond the shoulder, minus the carve margin
+  assert.ok(Math.abs(at(120, 100) - fill) < 1e-3, `embankment low side ${at(120, 100)}`);
+  assert.ok(Math.abs(at(136, 100) - fill) < 1e-3, `embankment high side ${at(136, 100)}`);
+  assert.equal(at(200, 100), 50 + 50 * 0.5, 'untouched beyond the reach');
 });
 
 test('RoadNetwork answers nearest segment and spawn poses, and forgets chunks', () => {

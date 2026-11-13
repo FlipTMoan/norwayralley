@@ -16,6 +16,7 @@ import { Car, ENGINE } from './car.js';
 import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
+import { buildCorridorGeometry, corridorMesh } from './corridor.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -137,6 +138,7 @@ let water = null;
 let car = null;
 let route = null;
 let roadGroup = null;
+let corridorGroup = null;  // 1 m embankment / cutting mesh along the baked stage
 let vegetation = null;
 let minimapBase = null;
 let basemapTexture = null;
@@ -343,6 +345,7 @@ function teardownWorld() {
     terrain.dispose();
   }
   if (roadGroup) { disposeGroup(roadGroup); roadGroup = null; }
+  if (corridorGroup) { disposeGroup(corridorGroup); corridorGroup = null; }
   if (vegetation) { disposeGroup(vegetation); vegetation = null; }
   if (distantPeaks) { disposeGroup(distantPeaks); distantPeaks = null; }
   if (water) { disposeGroup(water); water = null; }
@@ -631,11 +634,12 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
     terrain.flattenPad(nextRoute.start.x, nextRoute.start.z, 18, 34);
     nextRoute.snapToTerrain();
   }
-  // Carve the road into the shared height field *before* rebuilding the mesh,
-  // so the visible surface, the road ribbon and the car physics agree.
+  // Smooth a carriageway height along the route, then carve the engineered
+  // profile (embankments / cuttings) into the shared height field *before*
+  // rebuilding the mesh, so the visible surface, the ribbon and the car agree.
+  nextRoute.assignRoadY(terrain, 7);
   const carved = log.time('carve road', () => terrain.carveRoad(nextRoute.samples, {
     halfWidth: nextRoute.roadWidth + 1.2,
-    blend: 8,
   }));
   nextRoute.snapToTerrain();
   log.debug(`carved ${carved} height samples for ${nextRoute.name}`);
@@ -648,6 +652,14 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
   if (roadGroup) disposeGroup(roadGroup);
   roadGroup = buildRoadVisuals(route, terrain);
   scene.add(roadGroup);
+  if (corridorGroup) { disposeGroup(corridorGroup); corridorGroup = null; }
+  const corridor = corridorMesh(buildCorridorGeometry([{ half: route.roadWidth, samples: route.samples, length: route.length }], {
+    sampleBase: (x, z) => terrain.sampleBase(x, z),
+  }));
+  if (corridor) {
+    corridorGroup = corridor;
+    scene.add(corridorGroup);
+  }
 
   if (vegetation) disposeGroup(vegetation);
   vegetation = buildVegetation(terrain, route, mulberry32(0x1f2e3d4c));

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp, hash2, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
+import { carveProfile } from './corridor.js';
 
 const GRID = 512;                 // height samples per side in the game
 const MINIMAP_SIZE = 320;
@@ -177,52 +178,36 @@ export function createTerrainModel({
      * minimap and `sample()` all read the same modified heights, so the car
      * never floats above or sinks into the road.
      */
-    carveRoad(samples, { halfWidth = 5.4, blend = 7, lift = 0.12 } = {}) {
+    /** Natural (uncarved) ground height. */
+    sampleBase(x, z) {
+      const u = ((x + sizeX / 2) / sizeX) * (grid - 1);
+      const v = ((z + sizeZ / 2) / sizeZ) * (grid - 1);
+      const i = clamp(Math.floor(u), 0, grid - 2);
+      const j = clamp(Math.floor(v), 0, grid - 2);
+      const fx = clamp(u - i, 0, 1);
+      const fz = clamp(v - j, 0, 1);
+      const a = baseHeights[j * grid + i];
+      const b = baseHeights[j * grid + i + 1];
+      const c = baseHeights[(j + 1) * grid + i];
+      const d = baseHeights[(j + 1) * grid + i + 1];
+      return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+    },
+    /**
+     * Carve the engineered road profile (flat carriageway, embankments and
+     * cuttings — see corridor.js) into the height field from the untouched
+     * survey heights, so the visible ground, the ribbon and the car agree.
+     */
+    carveRoad(samples, { halfWidth = 5.4, lift = 0.12 } = {}) {
       if (!samples || samples.length < 2) return 0;
-      const halfX = sizeX / 2;
-      const halfZ = sizeZ / 2;
-      const reach = halfWidth + blend;
-      const stepX = sizeX / (grid - 1);
-      const stepZ = sizeZ / (grid - 1);
-      // Nearest-segment carve: every cell takes the height interpolated along
-      // the route segment it is closest to, so the ground is the same ruled
-      // surface the road ribbon is drawn as. (Snapping to the nearest sample
-      // instead produced a staircase of one step per sample on every grade.)
-      const bestD = new Float32Array(grid * grid).fill(Infinity);
-      const targets = new Float32Array(grid * grid);
-      for (let k = 0; k + 1 < samples.length; k++) {
-        const a = samples[k];
-        const b = samples[k + 1];
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const len2 = dx * dx + dz * dz || 1;
-        const minI = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach + halfX) / stepX) - 1);
-        const maxI = Math.min(grid - 1, Math.ceil((Math.max(a.x, b.x) + reach + halfX) / stepX) + 1);
-        const minJ = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach + halfZ) / stepZ) - 1);
-        const maxJ = Math.min(grid - 1, Math.ceil((Math.max(a.z, b.z) + reach + halfZ) / stepZ) + 1);
-        for (let j = minJ; j <= maxJ; j++) {
-          const z = -halfZ + j * stepZ;
-          for (let i = minI; i <= maxI; i++) {
-            const x = -halfX + i * stepX;
-            const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
-            const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
-            const idx = j * grid + i;
-            if (d > reach || d >= bestD[idx]) continue;
-            bestD[idx] = d;
-            targets[idx] = lerp(a.y, b.y, t) + lift;
-          }
-        }
-      }
-      let touched = 0;
-      for (let idx = 0; idx < heights.length; idx++) {
-        const d = bestD[idx];
-        if (d > reach) continue;
-        const w = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
-        if (w <= 0.001) continue;
-        heights[idx] = lerp(heights[idx], targets[idx], w);
-        touched++;
-      }
-      return touched;
+      const half = Math.max(1.5, halfWidth - 1.2);
+      return carveProfile({
+        heights,
+        base: baseHeights,
+        x0: -sizeX / 2,
+        z0: -sizeZ / 2,
+        cell: sizeX / (grid - 1),
+        n: grid,
+      }, [{ half, samples }], { lift });
     },
 
     /**

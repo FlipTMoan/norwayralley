@@ -7,7 +7,8 @@ import { fetchOsmChunk, overpassBlocked, buildChunkHouses } from './buildings.js
 import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './landcover.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
-import { prepareChunkRoads, carvePolylines, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
+import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
+import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach } from './corridor.js';
 import { logger } from './log.js';
 
 /**
@@ -626,6 +627,20 @@ export async function createStreamingWorld({
     worldFromLatLon: (lat, lon) => projection.worldFromLatLon(lat, lon),
     latLonFromWorld: (x, z) => projection.latLonFromWorld(x, z),
 
+    /** Natural (uncarved) ground height; falls back to the carved sample. */
+    sampleBase(x, z) {
+      const chunk = chunks.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
+      if (!chunk || chunk.state !== 'ready' || !chunk.baseHeights) return this.sample(x, z);
+      const u = (x - chunk.x0) / CELL;
+      const v = (z - chunk.z0) / CELL;
+      const i = clamp(Math.floor(u), 0, SAMPLES - 1);
+      const j = clamp(Math.floor(v), 0, SAMPLES - 1);
+      const fx = clamp(u - i, 0, 1);
+      const fz = clamp(v - j, 0, 1);
+      const h = chunk.baseHeights;
+      return lerp(lerp(h[j * GSIZE + i], h[j * GSIZE + i + 1], fx), lerp(h[(j + 1) * GSIZE + i], h[(j + 1) * GSIZE + i + 1], fx), fz);
+    },
+
     /** Land-cover tint of the chunk under (x, z), if it has arrived (minimap). */
     tintAt(x, z, color) {
       const chunk = chunks.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
@@ -813,73 +828,51 @@ export async function createStreamingWorld({
     });
   }
 
-  /** Carve this chunk's slice of the road (and the start pad) into its heights. */
+  /** Route samples (with a margin) that can reach into this chunk, as runs. */
+  function routeLinesFor(chunk, route, margin) {
+    const inside = (p) => p.x >= chunk.x0 - margin && p.x <= chunk.x0 + CHUNK + margin
+      && p.z >= chunk.z0 - margin && p.z <= chunk.z0 + CHUNK + margin;
+    const lines = [];
+    let run = [];
+    for (const p of route.samples) {
+      if (inside(p)) run.push(p);
+      else if (run.length) { if (run.length >= 2) lines.push({ half: route.roadWidth, samples: run }); run = []; }
+    }
+    if (run.length >= 2) lines.push({ half: route.roadWidth, samples: run });
+    return lines;
+  }
+
+  /**
+   * Carve the engineered profile of the stage road and this chunk's OSM
+   * roads into the chunk heights, always starting from the untouched DEM so
+   * a route change never carves on top of an old carve.
+   */
   function carveChunk(chunk) {
+    if (!chunk.baseHeights) return;
+    chunk.heights.set(chunk.baseHeights);
     const route = world.route;
-    if (!route) return;
-    const halfWidth = route.roadWidth + 1.2;
-    const blend = 8;
-    const reach = halfWidth + blend;
-    const halfX = CHUNK / 2;
-
-    // carveWeights doubles as "distance to the nearest route segment" here;
-    // the blend weight is derived from it once every segment has been seen.
-    carveWeights.fill(Infinity);
-    carveTargets.fill(0);
-
-    // Samples from this chunk and its neighbours can all reach inside it.
-    const list = [];
-    for (let dj = -1; dj <= 1; dj++) {
-      for (let di = -1; di <= 1; di++) {
-        const b = world.buckets.get(chunkKey(chunk.ci + di, chunk.cj + dj));
-        if (b) list.push(...b);
-      }
-    }
-    // Nearest-segment carve (see terrain.carveRoad): the ground under the
-    // road is the ruled surface between consecutive samples, not a staircase.
-    for (const idx of list) {
-      if (idx + 1 >= route.samples.length) continue;
-      const a = route.samples[idx];
-      const b = route.samples[idx + 1];
-      const ya = (a.roadY ?? a.y) + ROAD_LIFT;
-      const yb = (b.roadY ?? b.y) + ROAD_LIFT;
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const len2 = dx * dx + dz * dz || 1;
-      const gx0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - chunk.x0) / CELL) - 1);
-      const gx1 = Math.min(SAMPLES, Math.ceil((Math.max(a.x, b.x) + reach - chunk.x0) / CELL) + 1);
-      const gz0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - chunk.z0) / CELL) - 1);
-      const gz1 = Math.min(SAMPLES, Math.ceil((Math.max(a.z, b.z) + reach - chunk.z0) / CELL) + 1);
-      for (let j = gz0; j <= gz1; j++) {
-        const z = chunk.z0 + j * CELL;
-        for (let i = gx0; i <= gx1; i++) {
-          const x = chunk.x0 + i * CELL;
-          const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
-          const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
-          const gidx = j * GSIZE + i;
-          if (d > reach || d >= carveWeights[gidx]) continue;
-          carveWeights[gidx] = d;
-          carveTargets[gidx] = lerp(ya, yb, t);
-        }
-      }
-    }
+    const lines = [];
+    if (route) lines.push(...routeLinesFor(chunk, route, 80));
+    if (chunk.osmRoads?.length) lines.push(...chunk.osmRoads);
     let touched = 0;
-    for (let idx = 0; idx < chunk.heights.length; idx++) {
-      const d = carveWeights[idx];
-      if (d > reach) continue;
-      const wgt = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
-      if (wgt <= 0.001) continue;
-      chunk.heights[idx] = lerp(chunk.heights[idx], carveTargets[idx], wgt);
-      touched++;
+    if (lines.length) {
+      touched = carveProfile(
+        { heights: chunk.heights, base: chunk.baseHeights, x0: chunk.x0, z0: chunk.z0, cell: CELL, n: GSIZE },
+        lines,
+        { lift: ROAD_LIFT },
+      );
     }
     chunk.carved = touched > 0;
 
     // The start shelf: the first sample gets the same levelled disc the baked
     // world gives every stage, so the car never spawns on a sideways slope.
-    const sp = route.samples[0];
-    if (Math.abs(sp.x - (chunk.x0 + halfX)) < CHUNK / 2 + 60
-      && Math.abs(sp.z - (chunk.z0 + halfX)) < CHUNK / 2 + 60) {
-      applyPad(chunk, sp.x, sp.z, 18, 34, sp.roadY + ROAD_LIFT);
+    if (route) {
+      const sp = route.samples[0];
+      const halfX = CHUNK / 2;
+      if (Math.abs(sp.x - (chunk.x0 + halfX)) < CHUNK / 2 + 60
+        && Math.abs(sp.z - (chunk.z0 + halfX)) < CHUNK / 2 + 60) {
+        applyPad(chunk, sp.x, sp.z, 18, 34, (sp.roadY ?? sp.y) + ROAD_LIFT);
+      }
     }
 
     let lo = Infinity;
@@ -893,8 +886,32 @@ export async function createStreamingWorld({
     chunk.maxH = hi;
     minH = Math.min(minH, lo);
     maxH = Math.max(maxH, hi);
-    world.minH = minH;
-    world.maxH = maxH;
+  }
+
+  /** The 1 m corridor mesh (embankments / cuttings) for near chunks. */
+  function refreshChunkCorridor(chunk) {
+    if (chunk.corridorMesh) {
+      chunk.corridorMesh.geometry.dispose();
+      chunk.group.remove(chunk.corridorMesh);
+      chunk.corridorMesh = null;
+    }
+    if (chunk.state !== 'ready' || chunk.level !== 0) return;
+    const route = world.route;
+    const lines = [];
+    if (route) lines.push(...routeLinesFor(chunk, route, 40));
+    if (chunk.osmRoads?.length) lines.push(...chunk.osmRoads.filter((l) => l.kind !== 'service' && l.kind !== 'track'));
+    if (!lines.length) return;
+    const geometry = buildCorridorGeometry(lines, {
+      sampleBase: (x, z) => world.sampleBase(x, z),
+      tint: chunk.cover ? (x, z, c) => tintByCover(chunk.cover, x, z, c) : null,
+      lift: ROAD_LIFT,
+      maxVertices: 140000,
+    });
+    const mesh = corridorMesh(geometry);
+    if (mesh) {
+      chunk.corridorMesh = mesh;
+      chunk.group.add(mesh);
+    }
   }
 
   function applyPad(chunk, cx, cz, radius, blend, target) {
@@ -944,10 +961,12 @@ export async function createStreamingWorld({
     let use = target;
     if (!chunk.geos[use]) use = chunk.geos[0] ? 0 : chunk.geos[1] ? 1 : 2;
     if (!chunk.geos[use] || chunk.level === use) return;
+    const wasNear = chunk.level === 0;
     chunk.level = use;
     chunk.mesh.geometry = chunk.geos[use];
     chunk.mesh.castShadow = use <= 1;
     chunk.mesh.visible = true;
+    if ((use === 0) !== wasNear) refreshChunkCorridor(chunk);
   }
 
   /** Rebuild every cached geometry after the heights changed (re-carve). */
@@ -974,6 +993,8 @@ export async function createStreamingWorld({
       priority,
       attempts: 0,
       heights: null,
+      baseHeights: null,
+      corridorMesh: null,
       minH: 0,
       maxH: 0,
       geos: [null, null, null],
@@ -1025,6 +1046,7 @@ export async function createStreamingWorld({
     // the DEM request was in flight — never resurrect it into the scene.
     if (disposed || chunk.state === 'disposed' || !chunks.has(chunk.key)) return;
     chunk.heights = dem.heights;
+    chunk.baseHeights = dem.heights.slice();
     chunk.state = 'ready';
     onChunkReady(chunk);
   }
@@ -1081,6 +1103,7 @@ export async function createStreamingWorld({
       rebuildChunkGeometries(c);
       drawChunkMinimap(world, c);
       rescatter(c);
+      refreshChunkCorridor(c);
     },
   };
 
@@ -1150,23 +1173,9 @@ export async function createStreamingWorld({
     if (chunk.surfaces?.length) surfaceOsmLines(roads, chunk.surfaces);
     world.roads.setChunk(chunk.key, roads);
     if (!roads.length) return;
-    const touched = carvePolylines(
-      { heights: chunk.heights, x0: chunk.x0, z0: chunk.z0, cell: CELL, n: GSIZE },
-      roads,
-      { lift: ROAD_LIFT, blend: 6 },
-    );
-    if (touched) {
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (let i = 0; i < chunk.heights.length; i++) {
-        const h = chunk.heights[i];
-        if (h < lo) lo = h;
-        if (h > hi) hi = h;
-      }
-      chunk.minH = lo;
-      chunk.maxH = hi;
-      rebuildChunkGeometries(chunk);
-    }
+    carveChunk(chunk);
+    rebuildChunkGeometries(chunk);
+    refreshChunkCorridor(chunk);
     chunk.osmRoadGroup = buildRoadMeshes(roads, world);
     if (chunk.osmRoadGroup) chunk.group.add(chunk.osmRoadGroup);
     if (world.freeDrive && !world.roads.snapped) {
@@ -1261,6 +1270,7 @@ export async function createStreamingWorld({
     treeCount = Math.max(0, treeCount - (chunk.trees || 0));
     houseCount = Math.max(0, houseCount - (chunk.buildingGroup?.userData.count || 0));
     world.roads.removeChunk(chunk.key);
+    chunk.corridorMesh = null;
     chunks.delete(chunk.key);
     triangles = 0;
     for (const c of chunks.values()) {
@@ -1462,6 +1472,7 @@ export async function createStreamingWorld({
       if (chunk.state !== 'ready') continue;
       carveChunk(chunk);
       rebuildChunkGeometries(chunk);
+      refreshChunkCorridor(chunk);
       // Regrow the forest (the 6 m clearance rule applies to the new road)
       // and re-place the houses from their cached footprints.
       rescatter(chunk);
