@@ -1,7 +1,7 @@
 import './browser-stubs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRoomCode, normaliseCode, encodeState, GhostTrack, Session } from '../src/multiplayer.js';
+import { makeRoomCode, normaliseCode, encodeState, GhostTrack, Session, spawnOffset } from '../src/multiplayer.js';
 
 test('room codes avoid ambiguous characters and normalise user input', () => {
   for (let i = 0; i < 50; i++) assert.match(makeRoomCode(), /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/);
@@ -45,4 +45,40 @@ test('session relays guest state and routes without a network (fake connections)
   b.handlers.close();
   assert.equal(host.playerCount, 2);
   assert.ok(sent.a.some((m) => m.t === 'leave' && m.id === 'b'));
+});
+
+test('starting grid keeps every player apart and on the road', () => {
+  const seen = new Set();
+  for (let slot = 0; slot < 8; slot++) {
+    const { back, side } = spawnOffset(slot);
+    assert.ok(Math.abs(side) <= 1.8, 'inside a 3.2 m half-width road');
+    const key = `${back}:${side}`;
+    assert.ok(!seen.has(key), `slot ${slot} collides`);
+    seen.add(key);
+  }
+  assert.deepEqual(spawnOffset(0), { back: 0, side: 0 });
+  assert.deepEqual(spawnOffset(1), { back: 6, side: 1.7 });
+  assert.deepEqual(spawnOffset(2), { back: 6, side: -1.7 });
+  assert.deepEqual(spawnOffset(3), { back: 12, side: 1.7 });
+});
+
+test('joiners get a grid slot and learn everyone else\'s', () => {
+  const host = new Session({ name: 'HOST' });
+  host.isHost = true;
+  const sent = { a: [], b: [] };
+  const fake = (id) => ({ peer: id, open: true, metadata: { name: id, kind: 'porsche' }, send: (m) => sent[id].push(m), handlers: {}, on(ev, fn) { this.handlers[ev] = fn; } });
+  const a = fake('a'); const b = fake('b');
+  host.acceptGuest(a); a.handlers.open();
+  host.acceptGuest(b); b.handlers.open();
+  const helloA = sent.a.find((m) => m.t === 'hello');
+  const helloB = sent.b.find((m) => m.t === 'hello');
+  assert.equal(helloA.slot, 1);
+  assert.equal(helloB.slot, 2);
+  assert.deepEqual(helloB.peers.map((p) => [p.id, p.slot]), [['a', 1]]);
+  // A guest session applying hello/join learns the full grid.
+  const guest = new Session({ name: 'C' });
+  guest.onGuestData({ t: 'hello', slot: 3, host: { name: 'HOST', kind: 'porsche', slot: 0 }, peers: [{ id: 'a', name: 'a', kind: 'porsche', slot: 1 }] });
+  guest.onGuestData({ t: 'join', id: 'b', name: 'b', kind: 'buggy', slot: 2 });
+  assert.equal(guest.slot, 3);
+  assert.deepEqual([...guest.peers.entries()].map(([id, p]) => [id, p.slot]), [['host', 0], ['a', 1], ['b', 2]]);
 });

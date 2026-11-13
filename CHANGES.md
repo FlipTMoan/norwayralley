@@ -69,6 +69,9 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- Rooms: a starting grid (host on the line, joiners in pairs 6 m apart) so
+  nobody spawns inside another car; car swaps travel with the packets; other
+  players show as dots on the minimap.
 - Friends panel: the host is in the room as soon as it opens — typing your
   own code into JOIN no longer destroys the room, JOIN is disabled while
   hosting, HOST again shows the existing code, and CLOSE AND DRIVE returns

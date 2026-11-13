@@ -33,6 +33,18 @@ export function makeCallsign(random = Math.random) {
   return `${CALLSIGNS[Math.floor(random() * CALLSIGNS.length)]}-${10 + Math.floor(random() * 90)}`;
 }
 
+/**
+ * Starting grid: slot 0 on the line, then pairs side by side every 6 m back
+ * (1 right, 2 left, 3 right…), so nobody spawns inside anybody else.
+ * Returns the offset in metres: `back` along the road, `side` to the right.
+ */
+export function spawnOffset(slot) {
+  if (!slot || slot < 0) return { back: 0, side: 0 };
+  const row = Math.floor((slot + 1) / 2);
+  const side = slot % 2 ? 1.7 : -1.7;
+  return { back: row * 6, side };
+}
+
 /** Compact car state for the wire (about 90 bytes as JSON). */
 export function encodeState(car, { name, kind }) {
   return {
@@ -116,6 +128,8 @@ export class Session extends EventTarget {
     this.conns = new Map();      // host: guest id → DataConnection; guest: 'host' → conn
     this.peers = new Map();      // id → { name, kind, track }
     this.routeMessage = null;    // host: the current stage, re-sent to joiners
+    this.slot = 0;               // my place on the starting grid (host = 0)
+    this.nextSlot = 1;
     this.lastSent = 0;
     this.closed = false;
   }
@@ -153,13 +167,19 @@ export class Session extends EventTarget {
     conn.on('open', () => {
       this.conns.set(conn.peer, conn);
       const name = conn.metadata?.name || 'guest';
-      this.peers.set(conn.peer, { name, kind: conn.metadata?.kind || 'porsche', track: new GhostTrack() });
+      const slot = this.nextSlot++;
+      this.peers.set(conn.peer, { name, kind: conn.metadata?.kind || 'porsche', slot, track: new GhostTrack() });
       this.emit('peer-join', { id: conn.peer, name });
       this.emit('status', { text: `${name} joined (${this.conns.size} in the room).` });
-      // Tell the newcomer who is here and what we are driving.
-      conn.send({ t: 'hello', peers: [...this.peers.entries()].filter(([id]) => id !== conn.peer).map(([id, p]) => ({ id, name: p.name, kind: p.kind })), host: { name: this.name, kind: this.kind } });
+      // Tell the newcomer who is here, its grid slot, and what we are driving.
+      conn.send({
+        t: 'hello',
+        slot,
+        peers: [...this.peers.entries()].filter(([id]) => id !== conn.peer).map(([id, p]) => ({ id, name: p.name, kind: p.kind, slot: p.slot })),
+        host: { name: this.name, kind: this.kind, slot: 0 },
+      });
       if (this.routeMessage) conn.send(this.routeMessage);
-      this.broadcast({ t: 'join', id: conn.peer, name, kind: conn.metadata?.kind }, conn.peer);
+      this.broadcast({ t: 'join', id: conn.peer, name, kind: conn.metadata?.kind, slot }, conn.peer);
     });
     conn.on('data', (msg) => this.onHostData(conn.peer, msg));
     const drop = () => this.dropPeer(conn.peer);
@@ -170,7 +190,8 @@ export class Session extends EventTarget {
   onHostData(id, msg) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 's') {
-      this.peers.get(id)?.track.push(msg, performance.now());
+      const peer = this.peers.get(id);
+      if (peer) { peer.track.push(msg, performance.now()); if (msg.k) peer.kind = msg.k; }
       this.emit('state', { id, state: msg });
       this.broadcast({ ...msg, from: id }, id);
     }
@@ -219,15 +240,17 @@ export class Session extends EventTarget {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'hello':
-        this.peers.set('host', { name: msg.host?.name || 'host', kind: msg.host?.kind || 'porsche', track: new GhostTrack() });
+        this.slot = msg.slot || 0;
+        this.peers.set('host', { name: msg.host?.name || 'host', kind: msg.host?.kind || 'porsche', slot: 0, track: new GhostTrack() });
         this.emit('peer-join', { id: 'host', name: msg.host?.name || 'host' });
         for (const p of msg.peers || []) {
-          this.peers.set(p.id, { name: p.name, kind: p.kind, track: new GhostTrack() });
+          this.peers.set(p.id, { name: p.name, kind: p.kind, slot: p.slot, track: new GhostTrack() });
           this.emit('peer-join', { id: p.id, name: p.name });
         }
+        this.emit('slot', { slot: this.slot });
         break;
       case 'join':
-        this.peers.set(msg.id, { name: msg.name, kind: msg.kind || 'porsche', track: new GhostTrack() });
+        this.peers.set(msg.id, { name: msg.name, kind: msg.kind || 'porsche', slot: msg.slot, track: new GhostTrack() });
         this.emit('peer-join', { id: msg.id, name: msg.name });
         this.emit('status', { text: `${msg.name} joined.` });
         break;
@@ -237,8 +260,9 @@ export class Session extends EventTarget {
         break;
       case 's': {
         const id = msg.from || 'host';
-        if (!this.peers.has(id)) this.peers.set(id, { name: msg.n || id, kind: msg.k || 'porsche', track: new GhostTrack() });
+        if (!this.peers.has(id)) this.peers.set(id, { name: msg.n || id, kind: msg.k || 'porsche', slot: null, track: new GhostTrack() });
         this.peers.get(id).track.push(msg, performance.now());
+        if (msg.k) this.peers.get(id).kind = msg.k;
         this.emit('state', { id, state: msg });
         break;
       }

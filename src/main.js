@@ -18,7 +18,7 @@ import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { buildCorridorGeometry, corridorMesh } from './corridor.js';
-import { Session, encodeState, makeCallsign } from './multiplayer.js';
+import { Session, encodeState, makeCallsign, spawnOffset } from './multiplayer.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -190,7 +190,7 @@ function setCarKind(kind, { announce = true } = {}) {
 }
 /** Replace the car in place (keeps the route; restarts the stage if racing). */
 function swapCar() {
-  const pose = route ? route.startPose() : { x: car.pos.x, z: car.pos.z, yaw: car.yaw };
+  const pose = route ? spawnPose() : { x: car.pos.x, z: car.pos.z, yaw: car.yaw };
   disposeGroup(car.group);
   disposeGroup(car.dust.points);
   car = new Car(scene, terrain, carKind);
@@ -465,6 +465,18 @@ async function applySharedRoute(shared) {
   }
 }
 
+/** Where my car starts: the route's start pose, moved to my grid slot in a room. */
+function spawnPose() {
+  const base = route.startPose();
+  const { back, side } = spawnOffset(session?.slot || 0);
+  if (!back && !side) return base;
+  const fx = Math.sin(base.yaw);
+  const fz = Math.cos(base.yaw);
+  const rx = Math.cos(base.yaw);
+  const rz = -Math.sin(base.yaw);
+  return { x: base.x - fx * back + rx * side, z: base.z - fz * back + rz * side, yaw: base.yaw };
+}
+
 function friendsStatus(text, kind = '') {
   const el = $('friendsStatus');
   if (el) { el.textContent = text; el.className = `map-status ${kind}`.trim(); }
@@ -485,6 +497,10 @@ function bindSession(s) {
   s.addEventListener('peer-join', () => { updatePlayersBadge(); shareRoute(); });
   s.addEventListener('peer-leave', (e) => { disposeGhost(e.detail.id); updatePlayersBadge(); });
   s.addEventListener('route', (e) => applySharedRoute(e.detail.route));
+  s.addEventListener('slot', () => {
+    // Move to my grid slot unless I am already driving.
+    if (car && route && (phase !== 'racing' || car.speed < 0.5)) car.reset(spawnPose());
+  });
 }
 
 function syncFriendsButtons() {
@@ -952,7 +968,7 @@ function resetStage({ countdownNow = hasStarted } = {}) {
   topSpeed = 0;
   driftTime = 0;
   airTimeTotal = 0;
-  car.reset(route.startPose());
+  car.reset(spawnPose());
   $('resultScreen').classList.add('hidden');
   $('wrongWay').classList.remove('show');
   $('timer').textContent = '00:00.000';
@@ -1546,6 +1562,23 @@ function drawMinimap() {
     mmCtx.strokeStyle = '#101513';
     mmCtx.lineWidth = 1.5;
     mmCtx.stroke();
+  }
+
+  // Other players in the room.
+  if (session) {
+    for (const [, peer] of session.peers) {
+      const pose = peer.track.sample(performance.now());
+      if (!pose) continue;
+      const p = worldToMap(pose.x, pose.z);
+      if (p.x < -6 || p.y < -6 || p.x > MM_SIZE + 6 || p.y > MM_SIZE + 6) continue;
+      mmCtx.fillStyle = '#ff7a5c';
+      mmCtx.beginPath();
+      mmCtx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+      mmCtx.fill();
+      mmCtx.strokeStyle = '#101513';
+      mmCtx.lineWidth = 1;
+      mmCtx.stroke();
+    }
   }
 
   // The car, always at the centre, pointing its way.
