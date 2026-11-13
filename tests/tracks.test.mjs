@@ -42,3 +42,18 @@ test('the ring buffer wraps instead of growing', () => {
   assert.equal(tracks.mesh.geometry.attributes.position.count, 700 * 4 * 4);
   assert.ok(tracks.state[0].next < 700);
 });
+
+test('track quads face upward', () => {
+  const { car, tracks } = setup('gravel');
+  const drive = { throttle: 1, brake: 0, steer: 0, handbrake: false, jump: false };
+  for (let i = 0; i < 60 * 3; i++) { car.update(1 / 60, drive); tracks.update(); }
+  const p = tracks.mesh.geometry.attributes.position;
+  const idx = tracks.mesh.geometry.index.array;
+  const a = [p.getX(idx[0]), p.getY(idx[0]), p.getZ(idx[0])];
+  const b = [p.getX(idx[1]), p.getY(idx[1]), p.getZ(idx[1])];
+  const c = [p.getX(idx[2]), p.getY(idx[2]), p.getZ(idx[2])];
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const ny = ab[2] * ac[0] - ab[0] * ac[2]; // y component of ab × ac
+  assert.ok(ny > 0, `first triangle normal y = ${ny}`);
+});

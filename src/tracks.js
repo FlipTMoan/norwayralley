@@ -25,7 +25,7 @@ export class TrackMarks {
     const index = new Uint32Array(quads * 6);
     for (let q = 0; q < quads; q++) {
       const v = q * 4;
-      index.set([v, v + 2, v + 1, v + 1, v + 2, v + 3], q * 6);
+      index.set([v, v + 1, v + 2, v + 2, v + 1, v + 3], q * 6); // wound to face +y
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
@@ -34,8 +34,9 @@ export class TrackMarks {
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6); // never culled
     this.mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
       vertexColors: true,
+      side: THREE.DoubleSide,   // visible on any slope, whichever way a quad ends up facing
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.6,
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -4,
@@ -63,7 +64,7 @@ export class TrackMarks {
   update(car = this.car) {
     const color = this.markFor(car);
     car.group.updateMatrixWorld(true);
-    const width = car.spec.wheelRadius > 0.5 ? 0.46 : 0.26;
+    const width = car.spec.wheelRadius > 0.5 ? 0.5 : 0.3;
     for (let w = 0; w < this.wheelCount; w++) {
       const st = this.state[w];
       if (!color) { st.open = false; continue; }
