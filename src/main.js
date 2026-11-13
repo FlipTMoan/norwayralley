@@ -506,9 +506,10 @@ function bindSession(s) {
 function syncFriendsButtons() {
   const hosting = Boolean(session?.isHost);
   const joined = Boolean(session && !session.isHost);
-  $('friendsJoin').disabled = hosting;
-  $('friendsCode').disabled = hosting;
-  $('friendsHost').textContent = hosting ? `HOSTING ${session.code}` : joined ? 'HOST A NEW ROOM' : 'HOST A ROOM';
+  // In a room (either role) only the room line is shown; the host and join
+  // controls come back after LEAVE.
+  $('friendsHostRow').classList.toggle('hidden', hosting || joined);
+  $('friendsJoinRow').classList.toggle('hidden', hosting || joined);
   $('friendsRoomRole').textContent = hosting ? 'YOU HOST ROOM' : joined ? 'YOU ARE IN ROOM' : 'ROOM';
 }
 

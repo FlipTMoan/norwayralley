@@ -994,3 +994,4 @@ kbd {
 #friendsRoom.hidden { display: none; }
 #players { margin-top: 4px; font-size: 9px; letter-spacing: .14em; color: var(--paper); background: rgba(0,0,0,.5); padding: 3px 8px; border: 1px solid var(--line); }
 #players.hidden { display: none; }
+#friendsHostRow.hidden, #friendsJoinRow.hidden { display: none; }
