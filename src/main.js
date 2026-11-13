@@ -8,10 +8,14 @@ import {
   fetchOsrmGeometry,
   fetchOsrmGeometrySegmented,
   fetchOsrmNearest,
+  buildRouteIndex,
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
 import { Car, ENGINE } from './car.js';
+import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
+import { buildChunkWater } from './water.js';
+import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -142,6 +146,8 @@ let showBasemap = false;
 let loaded = false;
 let hasStarted = false;
 let freeDrive = false; // streaming world without a stage: no finish, no timer goal
+let bakedFeatures = null;   // OSM houses/water + NVDB signs on the baked demo tile
+let bakedSignData = null;
 // Gearbox preference (start-card toggle or G); remembered between visits.
 let gearboxAuto = (() => { try { return localStorage.getItem('rally.gearbox') !== 'manual'; } catch { return true; } })();
 function setGearbox(auto, { announce = true } = {}) {
@@ -335,6 +341,8 @@ function teardownWorld() {
   if (vegetation) { disposeGroup(vegetation); vegetation = null; }
   if (distantPeaks) { disposeGroup(distantPeaks); distantPeaks = null; }
   if (water) { disposeGroup(water); water = null; }
+  if (bakedFeatures) { disposeGroup(bakedFeatures); bakedFeatures = null; }
+  bakedSignData = null;
   if (car) {
     disposeGroup(car.group);
     disposeGroup(car.dust.points);
@@ -349,6 +357,55 @@ function teardownWorld() {
   if (basemapTexture) { basemapTexture.dispose?.(); basemapTexture = null; }
   minimapBase = null;
   route = null;
+}
+
+/**
+ * The baked demo tile gets the same real-world dressing as a streamed chunk:
+ * OpenStreetMap buildings and water, and NVDB road signs along the stage.
+ */
+async function addBakedFeatures() {
+  if (!terrain || terrain.streaming) return;
+  const t = terrain;
+  const a = t.latLonFromWorld(-t.sizeX / 2, -t.sizeZ / 2);
+  const b = t.latLonFromWorld(t.sizeX / 2, t.sizeZ / 2);
+  const bbox = {
+    minLat: Math.min(a.lat, b.lat), maxLat: Math.max(a.lat, b.lat),
+    minLon: Math.min(a.lon, b.lon), maxLon: Math.max(a.lon, b.lon),
+  };
+  const group = new THREE.Group();
+  group.name = 'bakedFeatures';
+  scene.add(group);
+  bakedFeatures = group;
+
+  fetchRoadSigns(bbox).then((data) => {
+    if (terrain !== t) return;
+    bakedSignData = data;
+    refreshBakedSigns();
+  }).catch((error) => log.warn(`demo signs skipped: ${error.message}`));
+
+  try {
+    const osm = await fetchOsmChunk(bbox);
+    if (terrain !== t || !osm) return;
+    const houses = buildChunkHouses(osm.buildings, t, route ? buildRouteIndex(route) : null, 11);
+    if (houses) group.add(houses);
+    const water = buildChunkWater(osm, t, { x0: -t.sizeX / 2, z0: -t.sizeZ / 2, size: Math.max(t.sizeX, t.sizeZ) });
+    if (water) group.add(water);
+    log.info(`demo tile: ${houses?.userData.count || 0} buildings, ${water?.userData.rivers || 0} waterways, ${water?.userData.lakes || 0} lakes`);
+  } catch (error) {
+    log.warn(`demo map features skipped: ${error.message}`);
+  }
+}
+
+function refreshBakedSigns() {
+  if (!bakedFeatures) return;
+  const old = bakedFeatures.getObjectByName('signs');
+  if (old) {
+    disposeGroup(old);
+    bakedFeatures.remove(old);
+  }
+  if (!bakedSignData || !route || !terrain || terrain.streaming) return;
+  const signs = buildChunkSigns(bakedSignData, terrain, route, { seed: 5 });
+  if (signs) bakedFeatures.add(signs);
 }
 
 /**
@@ -545,6 +602,7 @@ function updateRouteHud() {
 
 function setRoute(nextRoute, { announce = false, pad = true } = {}) {
   freeDrive = false;
+  queueMicrotask(() => refreshBakedSigns());
   $('progressWrap').classList.remove('hidden');
   if (terrain?.streaming) {
     // The streamed world carves the road per chunk, rebuilds the meshes,
@@ -1740,6 +1798,7 @@ async function boot() {
 
     document.title = `Retro Norway Rally — ${entry.title || 'Preikestolen'}`;
     loaded = true;
+    addBakedFeatures();
     phase = 'intro';
     setLoading(1, 'Ready.');
     $('startBtn').disabled = false;

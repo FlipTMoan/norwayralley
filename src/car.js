@@ -282,6 +282,8 @@ export class Car {
     this.bodyRoll = 0;
     this.bodyPitch = 0;
     this.wheelSpin = 0;
+    this.rearSpin = 0;        // rear wheels stop turning on the handbrake
+    this.slideGrip = 1;       // 0 right after a handbrake slide, recovers to 1
     this.wheelCompression = [0, 0, 0, 0];
 
     // Drivetrain state.
@@ -654,6 +656,7 @@ export class Car {
     // fine step is what stops a fast car from falling through the ground
     // (Phase 3, "anti-tunneling": the cannon-es advice applied to the raycast
     // vehicle — smaller dt, stiffer suspension).
+    this.handbrakeOn = Boolean(input.handbrake);
     const steps = clamp(Math.ceil(dt / (1 / 120)), 1, MAX_SUBSTEPS);
     const h = dt / steps;
     this.surfaceKind = this.onRoad ? (this.roadQuery?.surface || 'gravel') : 'offroad';
@@ -711,7 +714,8 @@ export class Car {
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 21 * drivetrain.brake) * h;
       }
       if (input.handbrake) {
-        vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 5.0) * h;
+        // Locked rear wheels: sliding friction on the rear axle, no more.
+        vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 4.2 * surface.mu) * h;
       }
       vF += (drivetrain.engineBrake / MASS) * h;
 
@@ -734,9 +738,15 @@ export class Car {
       // Slip-based lateral tyre force. The peak grip happens at a small slip
       // angle, then falls away: that is what lets the tail step out on gravel
       // and on the handbrake without the car feeling like it is on ice.
+      // Handbrake: the locked rear axle has almost no sideways grip, so the
+      // tail steps out like a drift car; after release the grip comes back
+      // over ~0.7 s instead of snapping the car straight.
+      this.slideGrip = input.handbrake ? 0 : Math.min(1, this.slideGrip + h / 0.7);
+      const sliding = input.handbrake || this.slideGrip < 1;
       const slip = Math.atan2(Math.abs(vR), Math.max(1.2, Math.abs(vF)));
-      const shape = Math.sin(1.55 * Math.atan(surface.slipK * slip));
-      const handbrake = input.handbrake ? 0.38 - surface.loose * 0.12 : 1;
+      const curveC = 1.55 + surface.loose * 0.3 + (sliding ? 0.35 : 0); // more fall-off past the peak
+      const shape = Math.sin(curveC * Math.atan(surface.slipK * slip));
+      const handbrake = input.handbrake ? 0.2 - surface.loose * 0.06 : lerp(0.35, 1, this.slideGrip);
       const mu = surface.mu * handbrake;
       const maxLat = mu * 9.81 * surface.peak;
       const latForce = -Math.sign(vR) * maxLat * clamp(shape, 0, 1) * clamp(Math.abs(vR) / 0.35, 0, 1);
@@ -754,19 +764,21 @@ export class Car {
       const absV = Math.abs(vF);
       const delta = this.steer * lerp(MAX_STEER_LOW, MAX_STEER_HIGH, clamp(absV / 50, 0, 1));
       const kinematic = (vF * Math.tan(delta)) / WHEELBASE;
-      const yawCap = ((surface.mu * 9.81 * 1.1) / Math.max(absV, 4)) * (1 + surface.loose * 0.6);
+      const yawCap = ((surface.mu * 9.81 * 1.1) / Math.max(absV, 4)) * (1 + surface.loose * 0.6) * (sliding ? 2.4 : 1);
       const targetYawVel = clamp(kinematic, -yawCap, yawCap) * clamp(absV / 1.5, 0, 1);
-      const gripResponse = input.handbrake ? 4.0 : 8.0 - surface.loose * 3;
+      const gripResponse = input.handbrake ? 2.6 : sliding ? 4.5 : 8.0 - surface.loose * 3;
       this.yawVel = damp(this.yawVel, targetYawVel, gripResponse, h);
-      if (input.handbrake && absV > 6) {
-        this.yawVel += this.steer * (1.5 + surface.loose * 1.5) * clamp(absV / 20, 0, 1) * h;
+      if (input.handbrake && absV > 5) {
+        // Initiation: yank the tail round in the steered direction.
+        this.yawVel += this.steer * (2.4 + surface.loose * 1.2) * clamp(absV / 15, 0, 1) * h;
+        vR -= this.steer * (1.6 + surface.loose) * clamp(absV / 15, 0, 1) * h;
       }
       // Power oversteer on loose ground: a rear-engined car swings its tail.
       if (surface.loose > 0 && drivetrain.throttle > 0.6 && absV > 6) {
         this.yawVel += this.steer * drivetrain.throttle * surface.loose * 1.6 * clamp(absV / 15, 0, 1) * h;
         vR -= this.steer * drivetrain.throttle * surface.loose * 2.2 * h;
       }
-      this.drifting = Math.abs(vR) > (3.2 - surface.loose * 1.2) && Math.hypot(vF, vR) > 7;
+      this.drifting = Math.abs(vR) > (2.6 - surface.loose * 1.0) && Math.hypot(vF, vR) > 6;
 
       // Jump: a vertical impulse off the springs. Only from a grounded stance.
       if (jump && this.airTime < 0.15) {
@@ -790,10 +802,18 @@ export class Car {
       this.yawVel += this.airControl * h;
     }
 
+    // Momentum lives in the world frame: the body turns *under* the velocity,
+    // so yawing faster than the tyres can bend the path leaves the car
+    // travelling sideways (slip) until the lateral grip pulls it back. This
+    // is what makes a handbrake turn or a gravel slide actually slide.
+    const vx = f.x * vF + r.x * vR;
+    const vz = f.z * vF + r.z * vR;
     this.yaw = wrapAngle(this.yaw + this.yawVel * h);
     const f2 = this.forward();
     const r2 = this.right();
-    this.vel.set(f2.x * vF + r2.x * vR, f2.z * vF + r2.z * vR);
+    vF = vx * f2.x + vz * f2.z;
+    vR = vx * r2.x + vz * r2.z;
+    this.vel.set(vx, vz);
 
     const nx = this.pos.x + this.vel.x * h;
     const nz = this.pos.z + this.vel.y * h;
@@ -917,6 +937,7 @@ export class Car {
 
     this.steerVisual = damp(this.steerVisual, this.steer * 0.48, 12, dt);
     this.wheelSpin += (this.vF / WHEEL_RADIUS) * dt;
+    if (!this.handbrakeOn) this.rearSpin += (this.vF / WHEEL_RADIUS) * dt; // locked rears stand still
     // Each wheel drops or lifts to meet the ground beneath it (in car space),
     // so the tyres follow ruts and crests instead of hovering or clipping.
     this.group.updateMatrixWorld(true);
@@ -929,7 +950,7 @@ export class Car {
         ? clamp(this.tmpV.y + WHEEL_RADIUS, WHEEL_RADIUS - WHEEL_TRAVEL.up, WHEEL_RADIUS + WHEEL_TRAVEL.down)
         : WHEEL_RADIUS - WHEEL_TRAVEL.up * 0.6;
       w.pivot.position.y = damp(w.pivot.position.y, rest, 22, dt);
-      w.spin.rotation.x = this.wheelSpin;
+      w.spin.rotation.x = w.front ? this.wheelSpin : this.rearSpin;
       if (w.front) w.pivot.rotation.y = this.steerVisual;
     }
 
@@ -940,8 +961,11 @@ export class Car {
     const d = this.dust;
     d.clock += dt;
     const surface = SURFACES[this.surfaceKind] || SURFACES.gravel;
-    // Asphalt stays clean; gravel and open ground throw a plume at speed.
-    const wantDust = this.grounded && speed > 5 && surface.dust && (!this.onRoad || this.drifting || throttle > 0.9 || speed > 12);
+    // Asphalt stays clean unless the tyres are sliding (then it is smoke);
+    // gravel and open ground throw a plume at speed.
+    const sliding = this.drifting || this.handbrakeOn;
+    const wantDust = this.grounded && speed > 5 && ((surface.dust && (!this.onRoad || sliding || throttle > 0.9 || speed > 12)) || (!surface.dust && sliding));
+    d.points.material.color.setHex(surface.dust ? 0xcfc3a1 : 0xd9d9d6);
     if (wantDust && d.clock > 0.035) {
       d.clock = 0;
       const f = this.forward();

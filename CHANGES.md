@@ -69,6 +69,13 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Handbrake (SHIFT) drifts**: the rear wheels lock (they visibly stop
+  turning), the rear axle loses almost all sideways grip, the tail is thrown
+  in the steered direction, and the slide carries on for ~0.7 s after release
+  instead of snapping straight. Tyre smoke on asphalt while sliding.
+- The baked Preikestolen demo now also fetches OpenStreetMap buildings and
+  water and NVDB road signs for its 2 km tile (houses were previously only
+  placed in streamed worlds).
 - **Minimap** is now a north-up window that follows the car (1.4–2.3 km
   across, wider at speed) with live hillshade, land-cover tints, the loaded
   OSM roads, the stage route, a scale bar, and the car always at the centre.
