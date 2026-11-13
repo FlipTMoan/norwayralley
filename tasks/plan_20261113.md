@@ -85,4 +85,10 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] `createStreamingWorld({ center, freeDrive })`, car rides the network, spawn snaps to the first road.
 - [x] Map picker button FREE DRIVE HERE; HUD hides progress; no finish.
 - [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
-- [ ] Verify live in the browser (Overpass mirrors unreachable from this machine at the time of writing).
+- [x] Verified live: SR16 forests + NVDB signs on a streamed stage; OSM houses/water/roads via mocked Overpass and, later, live on the demo tile through the openstreetmap.fr mirror.
+
+## J. Session wrap-up 2026-11-13 (late)
+- [x] Gearbox auto/manual, 911 gear spans, 12 000 rpm, RPM HUD.
+- [x] Car-centred minimap with click-to-route; NVDB Vegdekke surfaces; surface-aware handling; bicycle steering.
+- [x] Handbrake drift (locked rears, inertial velocity), demo tile gets OSM houses/water + NVDB signs.
+- [ ] Open: Overpass public mirrors are the weak link (rate limits / outages); consider a self-hosted or cached tile source if it keeps failing.
