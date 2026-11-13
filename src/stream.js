@@ -3,7 +3,7 @@ import { clamp, hash2, lerp, smoothstep, localProjection } from './geo.js';
 import { terrainColor } from './terrain.js';
 import { fetchDem } from './worldgen.js';
 import { makeRoute, buildRoadVisuals, buildRouteIndex } from './stage.js';
-import { fetchBuildings, buildChunkHouses } from './buildings.js';
+import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { logger } from './log.js';
 
 /**
@@ -281,8 +281,10 @@ async function addChunkBuildings(world, chunk) {
     maxLon: Math.max(a.lon, b.lon),
   };
   try {
-    const placements = await fetchBuildings(bbox);
+    const osm = await fetchOsmChunk(bbox);
     if (world.disposed || chunk.state !== 'ready') return;
+    chunk.osm = osm;                       // areas + waterways for the land cover pass
+    const placements = osm.buildings;
     chunk.buildingPlacements = placements;
     const houses = buildChunkHouses(placements, world, world.routeIndex, (hash2(chunk.ci, chunk.cj, 23) * 4294967296) >>> 0);
     if (houses) {
@@ -638,7 +640,9 @@ export async function createStreamingWorld({
     const reach = halfWidth + blend;
     const halfX = CHUNK / 2;
 
-    carveWeights.fill(0);
+    // carveWeights doubles as "distance to the nearest route segment" here;
+    // the blend weight is derived from it once every segment has been seen.
+    carveWeights.fill(Infinity);
     carveTargets.fill(0);
 
     // Samples from this chunk and its neighbours can all reach inside it.
@@ -649,31 +653,39 @@ export async function createStreamingWorld({
         if (b) list.push(...b);
       }
     }
+    // Nearest-segment carve (see terrain.carveRoad): the ground under the
+    // road is the ruled surface between consecutive samples, not a staircase.
     for (const idx of list) {
-      const p = route.samples[idx];
-      const target = (p.roadY ?? p.y) + ROAD_LIFT;
-      const gx0 = Math.max(0, Math.floor((p.x - reach - chunk.x0) / CELL) - 1);
-      const gx1 = Math.min(SAMPLES, Math.ceil((p.x + reach - chunk.x0) / CELL) + 1);
-      const gz0 = Math.max(0, Math.floor((p.z - reach - chunk.z0) / CELL) - 1);
-      const gz1 = Math.min(SAMPLES, Math.ceil((p.z + reach - chunk.z0) / CELL) + 1);
+      if (idx + 1 >= route.samples.length) continue;
+      const a = route.samples[idx];
+      const b = route.samples[idx + 1];
+      const ya = (a.roadY ?? a.y) + ROAD_LIFT;
+      const yb = (b.roadY ?? b.y) + ROAD_LIFT;
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const len2 = dx * dx + dz * dz || 1;
+      const gx0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - chunk.x0) / CELL) - 1);
+      const gx1 = Math.min(SAMPLES, Math.ceil((Math.max(a.x, b.x) + reach - chunk.x0) / CELL) + 1);
+      const gz0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - chunk.z0) / CELL) - 1);
+      const gz1 = Math.min(SAMPLES, Math.ceil((Math.max(a.z, b.z) + reach - chunk.z0) / CELL) + 1);
       for (let j = gz0; j <= gz1; j++) {
         const z = chunk.z0 + j * CELL;
         for (let i = gx0; i <= gx1; i++) {
           const x = chunk.x0 + i * CELL;
-          const d = Math.hypot(x - p.x, z - p.z);
-          if (d > reach) continue;
-          const t = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
+          const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
+          const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
           const gidx = j * GSIZE + i;
-          if (t > carveWeights[gidx]) {
-            carveWeights[gidx] = t;
-            carveTargets[gidx] = target;
-          }
+          if (d > reach || d >= carveWeights[gidx]) continue;
+          carveWeights[gidx] = d;
+          carveTargets[gidx] = lerp(ya, yb, t);
         }
       }
     }
     let touched = 0;
     for (let idx = 0; idx < chunk.heights.length; idx++) {
-      const wgt = carveWeights[idx];
+      const d = carveWeights[idx];
+      if (d > reach) continue;
+      const wgt = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
       if (wgt <= 0.001) continue;
       chunk.heights[idx] = lerp(chunk.heights[idx], carveTargets[idx], wgt);
       touched++;

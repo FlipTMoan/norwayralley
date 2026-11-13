@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, damp, formatCoord, formatTime } from './geo.js';
+import { clamp, damp, formatCoord, formatTime, wrapAngle } from './geo.js';
 import { loadTerrain, buildWater, buildVegetation, buildMinimap, loadBasemapTexture, buildBasemapMesh } from './terrain.js';
 import { createTerrainLOD } from './lod.js';
 import {
@@ -149,7 +149,18 @@ let bestTime = null;
 let topSpeed = 0;
 let driftTime = 0;
 let airTimeTotal = 0;
+// 1 = straight above, 2 = chase (behind the car), 3 = driver's seat.
+const CAMERA_MODES = ['top', 'chase', 'cockpit'];
+const CAMERA_NAMES = { top: 'Overhead camera.', chase: 'Chase camera.', cockpit: "Driver's seat." };
 let cameraMode = 'chase';
+const cameraUp = new THREE.Vector3(0, 0, 1);
+
+function setCameraMode(mode) {
+  if (builderActive || !CAMERA_MODES.includes(mode)) return;
+  cameraMode = mode;
+  if (mode !== 'top') camera.up.set(0, 1, 0);
+  toast(CAMERA_NAMES[mode]);
+}
 let pickMode = null;
 let pickMarkers = [];
 let builderActive = false;
@@ -1097,28 +1108,52 @@ function updateCamera(dt) {
   const f = car.forward();
 
   if (!hasStarted || phase === 'intro') {
-    const angle = time * 0.09 + 0.6;
-    const radius = 24;
+    // Showroom: the car turns slowly on the start pad while a low
+    // three-quarter camera holds still, so the player can look it over.
+    car.yaw = wrapAngle(car.yaw + dt * 0.45);
+    const angle = (car.spawnYaw ?? 0) + 0.75;
+    const radius = 9.5;
     cameraTarget.set(
-      car.pos.x + Math.cos(angle) * radius,
-      car.pos.y + 10.5,
-      car.pos.z + Math.sin(angle) * radius,
+      car.pos.x + Math.sin(angle) * radius,
+      car.pos.y + 3.0,
+      car.pos.z + Math.cos(angle) * radius,
     );
-    const minY = terrain.sample(cameraTarget.x, cameraTarget.z) + 2.2;
+    const minY = terrain.sample(cameraTarget.x, cameraTarget.z) + 1.4;
     cameraTarget.y = Math.max(cameraTarget.y, minY);
     camera.position.lerp(cameraTarget, 1 - Math.exp(-2.2 * dt));
-    tempLook.set(car.pos.x, car.pos.y + 1.3, car.pos.z);
+    // Aim past the car so it shows to the left of the start card.
+    const dx = car.pos.x - camera.position.x;
+    const dz = car.pos.z - camera.position.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    tempLook.set(car.pos.x - (dz / dl) * 4.2, car.pos.y + 0.8, car.pos.z + (dx / dl) * 4.2);
     lookSmooth.lerp(tempLook, 1 - Math.exp(-4 * dt));
     camera.lookAt(lookSmooth);
-  } else if (cameraMode === 'hood') {
-    camera.position.set(
-      car.pos.x + f.x * 0.5,
-      car.pos.y + 1.55,
-      car.pos.z + f.z * 0.5,
+    camera.fov = damp(camera.fov, 50, 4, dt);
+    camera.updateProjectionMatrix();
+  } else if (cameraMode === 'cockpit') {
+    // Driver's seat (left-hand drive): eyes behind the windscreen, the
+    // fender humps in view. The cabin shell is back-face culled from inside.
+    const r = car.right();
+    const eye = car.group.localToWorld(new THREE.Vector3(-0.36, 1.1, 0.12));
+    camera.position.copy(eye);
+    tempLook.set(
+      car.pos.x + f.x * 30 - r.x * 0.36,
+      car.pos.y + 1.0 + car.pitch * -30 * 0.5,
+      car.pos.z + f.z * 30 - r.z * 0.36,
     );
-    tempLook.set(car.pos.x + f.x * 22, car.pos.y + 1.6, car.pos.z + f.z * 22);
     camera.lookAt(tempLook);
-    camera.fov = damp(camera.fov, 68, 4, dt);
+    camera.fov = damp(camera.fov, 74, 4, dt);
+    camera.updateProjectionMatrix();
+  } else if (cameraMode === 'top') {
+    // Straight above, heading up the screen, climbing with speed.
+    const height = 42 + Math.min(40, car.speed * 0.9);
+    cameraTarget.set(car.pos.x + f.x * 6, car.pos.y + height, car.pos.z + f.z * 6);
+    camera.position.lerp(cameraTarget, 1 - Math.exp(-6 * dt));
+    cameraUp.set(f.x, 0, f.z);
+    camera.up.lerp(cameraUp, 1 - Math.exp(-5 * dt)).normalize();
+    tempLook.set(camera.position.x, car.pos.y, camera.position.z);
+    camera.lookAt(tempLook);
+    camera.fov = damp(camera.fov, 58, 4, dt);
     camera.updateProjectionMatrix();
   } else {
     const speed = car.speed;
@@ -1211,10 +1246,10 @@ window.addEventListener('keydown', (event) => {
     }
   }
   if (event.code === 'KeyC') {
-    if (!builderActive) {
-      cameraMode = cameraMode === 'chase' ? 'hood' : 'chase';
-      toast(cameraMode === 'hood' ? 'Bonnet camera.' : 'Chase camera.');
-    }
+    setCameraMode(CAMERA_MODES[(CAMERA_MODES.indexOf(cameraMode) + 1) % CAMERA_MODES.length]);
+  }
+  if (/^Digit[123]$/.test(event.code)) {
+    setCameraMode(CAMERA_MODES[Number(event.code.slice(5)) - 1]);
   }
   if (event.code === 'KeyM') {
     audio.setMuted(!audio.muted);

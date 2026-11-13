@@ -36,7 +36,7 @@ npm run preview
 | `G` | Toggle automatic / manual gearbox |
 | `R` | Restart the stage |
 | `N` | Scout a new stage |
-| `C` | Toggle chase / bonnet camera |
+| `1` / `2` / `3` | Camera: straight above / chase / driver's seat (`C` cycles) |
 | `M` | Mute sound |
 | `F3` | Toggle the debug/performance overlay |
 | `Esc` | Close the route builder or the 2D map |

@@ -2,18 +2,18 @@ import * as THREE from 'three';
 import { logger } from './log.js';
 
 /**
- * Phase 5 (V5 plan): procedural real-world buildings.
+ * Real-world features for one terrain chunk, from the OpenStreetMap Overpass
+ * API. One request per chunk returns, with full geometry (`out geom`):
  *
- * When a terrain chunk loads, this module asks the OpenStreetMap Overpass API
- * for every building footprint inside the chunk's latitude/longitude bounds
- * and places retro low-poly houses exactly where they exist in real life.
+ *   buildings  – footprint polygons + tags → oriented low-poly houses
+ *   areas      – land use / land cover polygons (fields, forest, water, …)
+ *   waterways  – river / stream centre lines
  *
- *   way["building"](bbox); node["building"](bbox); relation["building"](bbox)
- *
- * Footprints come back with an `out center` summary: a centre coordinate plus
- * the bounds of the way/relation, which gives a good enough orientation and
- * size for a box-and-roof house. Instances are drawn with two InstancedMeshes
- * (bodies + roofs) per chunk, so a village costs a couple of draw calls.
+ * Buildings are placed exactly where they stand: the footprint's minimum-area
+ * bounding rectangle gives the house its true heading and size, and the
+ * `building=*` tag picks the family (house, barn, shed, church, industrial)
+ * that decides height, roof pitch and colours. Each chunk draws its houses
+ * with a few InstancedMeshes (walls + gabled roofs), so a village is cheap.
  */
 
 const log = logger('buildings');
@@ -23,45 +23,30 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
-const MAX_PER_CHUNK = 120;
-const REQUEST_TIMEOUT = 25000;
+const MAX_PER_CHUNK = 220;
+const REQUEST_TIMEOUT = 30000;
 
-// One shared house geometry set for every chunk; instances only carry matrices.
-let shared = null;
-
-function houseGeometry() {
-  if (shared) return shared;
-  const body = new THREE.BoxGeometry(1, 1, 1);
-  body.translate(0, 0.5, 0); // grow upward from the ground plane
-  const roof = new THREE.ConeGeometry(Math.SQRT1_2, 0.62, 4, 1);
-  roof.rotateY(Math.PI / 4);
-  roof.translate(0, 1.0 + 0.31, 0);
-  shared = { body, roof };
-  return shared;
-}
-
-const WALL_COLORS = [0xd8cab0, 0xc25a41, 0xb7845f, 0x8a9a7b, 0xdfd6c5, 0xa8b4b8];
-const ROOF_COLORS = [0x4a3a34, 0x3a4046, 0x59453c, 0x33393e];
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function rand() {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = Math.imul(t ^ (t >>> 7), 61 | t) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+const AREA_LANDUSE = ['farmland', 'meadow', 'orchard', 'farmyard', 'grass', 'forest',
+  'residential', 'industrial', 'commercial', 'retail', 'quarry', 'cemetery'];
+const AREA_NATURAL = ['wood', 'water', 'wetland', 'scrub', 'grassland', 'heath', 'bare_rock', 'scree', 'sand'];
+const WATERWAYS = ['river', 'stream', 'canal', 'drain', 'ditch'];
 
 /**
- * Ask Overpass for buildings inside a lat/lon bbox. Returns an array of
- * `{ lat, lon, width, depth }` in metres (width along longitude, depth along
- * latitude), or an empty array when the service is unreachable.
+ * Ask Overpass for every mapped feature the game renders inside a lat/lon
+ * bbox. Returns `{ buildings, areas, waterways }` (all arrays, possibly empty
+ * when the service is unreachable).
  */
-export async function fetchBuildings({ minLat, minLon, maxLat, maxLon }) {
+export async function fetchOsmChunk({ minLat, minLon, maxLat, maxLon }) {
   const bbox = `${minLat.toFixed(6)},${minLon.toFixed(6)},${maxLat.toFixed(6)},${maxLon.toFixed(6)}`;
-  const query = `[out:json][timeout:20];(way["building"](${bbox});relation["building"](${bbox});node["building"](${bbox}););out center;`;
+  const query = `[out:json][timeout:25];(`
+    + `way["building"](${bbox});`
+    + `relation["building"]["type"="multipolygon"](${bbox});`
+    + `way["landuse"~"^(${AREA_LANDUSE.join('|')})$"](${bbox});`
+    + `relation["landuse"~"^(${AREA_LANDUSE.join('|')})$"]["type"="multipolygon"](${bbox});`
+    + `way["natural"~"^(${AREA_NATURAL.join('|')})$"](${bbox});`
+    + `relation["natural"~"^(${AREA_NATURAL.join('|')})$"]["type"="multipolygon"](${bbox});`
+    + `way["waterway"~"^(${WATERWAYS.join('|')})$"](${bbox});`
+    + `);out geom;`;
   let lastError = null;
   for (const endpoint of OVERPASS_ENDPOINTS) {
     const controller = new AbortController();
@@ -83,111 +68,321 @@ export async function fetchBuildings({ minLat, minLon, maxLat, maxLon }) {
       clearTimeout(timeout);
     }
   }
-  log.warn(`buildings unavailable: ${lastError?.message || 'no endpoint answered'}`);
+  log.warn(`map features unavailable: ${lastError?.message || 'no endpoint answered'}`);
+  return { buildings: [], areas: [], waterways: [] };
+}
+
+/** Backwards-compatible helper: only the building footprints. */
+export async function fetchBuildings(bbox) {
+  return (await fetchOsmChunk(bbox)).buildings;
+}
+
+/** Rings of a way or multipolygon relation, as arrays of `{lat, lon}`. */
+function ringsOf(el) {
+  if (el.type === 'way') {
+    return el.geometry && el.geometry.length >= 3 ? [el.geometry] : [];
+  }
+  if (el.type === 'relation') {
+    const rings = [];
+    for (const m of el.members || []) {
+      if (m.type === 'way' && m.geometry && m.geometry.length >= 3 && m.role !== 'inner') rings.push(m.geometry);
+    }
+    return rings;
+  }
   return [];
 }
 
 function parseElements(elements) {
-  const out = [];
+  const buildings = [];
+  const areas = [];
+  const waterways = [];
   for (const el of elements) {
-    if (!el || el.type === 'note') continue;
-    // A footprint summary: centre + bounds. Nodes carry lat/lon directly and
-    // get a default cottage size; ways/relations carry `center` + `bounds`.
-    const center = el.type === 'node'
-      ? { lat: el.lat, lon: el.lon }
-      : el.center;
-    if (!center || !Number.isFinite(center.lat) || !Number.isFinite(center.lon)) continue;
-    let width = 9;   // metres along longitude
-    let depth = 8;   // metres along latitude
-    if (el.bounds) {
-      const b = el.bounds;
-      width = Math.max(2.5, (b.maxLon - b.minLon) * 111320 * Math.cos((center.lat * Math.PI) / 180));
-      depth = Math.max(2.5, (b.maxLat - b.minLat) * 110950);
+    const tags = el?.tags;
+    if (!tags) continue;
+    if (tags.building) {
+      const rings = ringsOf(el);
+      if (!rings.length) continue;
+      // The outer ring with the most vertices is the footprint; holes and
+      // courtyards do not change where the walls go.
+      const polygon = rings.reduce((a, b) => (b.length > a.length ? b : a));
+      buildings.push({ polygon, tags });
+      if (buildings.length >= MAX_PER_CHUNK * 2) break;
+      continue;
     }
-    out.push({ lat: center.lat, lon: center.lon, width, depth });
-    if (out.length >= MAX_PER_CHUNK * 3) break; // parse a little extra; the placer filters
+    if (tags.waterway && el.type === 'way' && el.geometry?.length >= 2) {
+      waterways.push({
+        kind: tags.waterway,
+        name: tags.name || null,
+        width: Number(tags.width) || null,
+        points: el.geometry,
+      });
+      continue;
+    }
+    const kind = tags.landuse || tags.natural;
+    if (!kind) continue;
+    const rings = ringsOf(el);
+    if (!rings.length) continue;
+    areas.push({
+      kind,
+      leaf: tags.leaf_type || null,
+      water: tags.water || null,
+      wetland: tags.wetland || null,
+      name: tags.name || null,
+      rings,
+    });
   }
-  return out;
+  return { buildings, areas, waterways };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Footprint → oriented box                                            *
+ * ------------------------------------------------------------------ */
+
+function convexHull(points) {
+  const pts = points.slice().sort((a, b) => a.x - b.x || a.z - b.z);
+  if (pts.length < 3) return pts;
+  const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  upper.pop();
+  lower.pop();
+  return lower.concat(upper);
+}
+
+/** Minimum-area bounding rectangle of a set of world-space points. */
+export function orientedRectangle(points) {
+  const hull = convexHull(points);
+  if (hull.length < 2) return null;
+  let best = null;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i];
+    const b = hull[(i + 1) % hull.length];
+    const yaw = Math.atan2(b.z - a.z, b.x - a.x);
+    const c = Math.cos(-yaw);
+    const s = Math.sin(-yaw);
+    let minU = Infinity; let maxU = -Infinity; let minV = Infinity; let maxV = -Infinity;
+    for (const p of hull) {
+      const u = p.x * c - p.z * s;
+      const v = p.x * s + p.z * c;
+      if (u < minU) minU = u;
+      if (u > maxU) maxU = u;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+    const area = (maxU - minU) * (maxV - minV);
+    if (!best || area < best.area) {
+      const cu = (minU + maxU) / 2;
+      const cv = (minV + maxV) / 2;
+      best = {
+        area,
+        yaw,
+        length: maxU - minU,
+        width: maxV - minV,
+        x: cu * Math.cos(yaw) - cv * Math.sin(yaw),
+        z: cu * Math.sin(yaw) + cv * Math.cos(yaw),
+      };
+    }
+  }
+  // The long side is the ridge line: report it as `length` along `yaw`.
+  if (best && best.width > best.length) {
+    [best.length, best.width] = [best.width, best.length];
+    best.yaw += Math.PI / 2;
+  }
+  return best;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Building families                                                   *
+ * ------------------------------------------------------------------ */
+
+const FAMILIES = {
+  // eaves height, roof pitch (rise / half-width), wall palette, roof palette
+  house: { eaves: 3.4, pitch: 0.75, walls: [0xe9e6dc, 0xf1efe6, 0xd9b35a, 0xa33a2c, 0x8d9398, 0xe5cf7a, 0x5c6b63], roofs: [0x3a3d40, 0x25282a, 0x7a3b2e, 0x4a4e52] },
+  cabin: { eaves: 2.6, pitch: 0.8, walls: [0x6b4a33, 0x8a5a3c, 0xa33a2c, 0x4f3b2a], roofs: [0x2d3a2e, 0x3a3d40, 0x5a4a3a] },
+  barn: { eaves: 4.6, pitch: 0.7, walls: [0x9a2f23, 0xa33a2c, 0x8a2a20, 0x6e6a60], roofs: [0x3a3d40, 0x4a4e52, 0x25282a] },
+  shed: { eaves: 2.5, pitch: 0.5, walls: [0x7d7467, 0x9a2f23, 0x5f6a5c, 0xcfc9b8], roofs: [0x3a3d40, 0x2a2d30] },
+  boathouse: { eaves: 2.8, pitch: 0.8, walls: [0x9a2f23, 0x6b4a33, 0x8d9398], roofs: [0x3a3d40, 0x2a2d30] },
+  church: { eaves: 6.5, pitch: 1.0, walls: [0xf1efe6, 0xe9e6dc, 0x9a2f23], roofs: [0x2a2d30, 0x3a3d40] },
+  big: { eaves: 6.5, pitch: 0.22, walls: [0xb9b4a6, 0x9fa6a8, 0xd8d2c2, 0x6f7a7c, 0xc9b79a], roofs: [0x4a4e52, 0x3a3d40, 0x5a5e62] },
+  block: { eaves: 9.0, pitch: 0.18, walls: [0xd8d2c2, 0xc8c2b2, 0xb59a7a, 0x9fa6a8], roofs: [0x3a3d40, 0x4a4e52] },
+};
+
+function familyFor(tags, length, width) {
+  const b = (tags.building || 'yes').toLowerCase();
+  const area = length * width;
+  if (/^(church|chapel|cathedral)$/.test(b) || tags.amenity === 'place_of_worship') return 'church';
+  if (/^(barn|farm_auxiliary|cowshed|stable|sty|agricultural|silo|greenhouse)$/.test(b)) return 'barn';
+  if (/^(garage|garages|shed|roof|carport|hut|service|outbuilding|storage_tank|transformer_tower)$/.test(b)) return 'shed';
+  if (/^(boathouse)$/.test(b)) return 'boathouse';
+  if (/^(cabin|bungalow)$/.test(b)) return 'cabin';
+  if (/^(apartments|dormitory|hotel|hospital|school|university|college|civic|public|office)$/.test(b)) return 'block';
+  if (/^(industrial|warehouse|commercial|retail|supermarket|factory|hangar|manufacture|sports_hall|kindergarten)$/.test(b)) return 'big';
+  if (/^(house|detached|residential|semidetached_house|terrace|farm|static_caravan)$/.test(b)) return area > 320 ? 'block' : 'house';
+  // Untyped: let the footprint decide.
+  if (area < 40) return 'shed';
+  if (area > 600) return 'big';
+  if (area > 260) return 'barn';
+  return 'house';
+}
+
+function heightFor(tags, family) {
+  const explicit = parseFloat(tags.height);
+  const levels = parseFloat(tags['building:levels']);
+  if (Number.isFinite(explicit) && explicit > 1.5) return Math.min(explicit * 0.8, 40);
+  if (Number.isFinite(levels) && levels > 0) return Math.min(levels * 2.9, 40);
+  return FAMILIES[family].eaves;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Geometry                                                            *
+ * ------------------------------------------------------------------ */
+
+let shared = null;
+
+/** Unit wall box growing upward, and a unit gable roof with its ridge along x. */
+function houseGeometry() {
+  if (shared) return shared;
+  const body = new THREE.BoxGeometry(1, 1, 1);
+  body.translate(0, 0.5, 0);
+
+  // Gable roof: a triangular prism, ridge along +x at y = 1, eaves at y = 0.
+  const v = [];
+  const push = (...pts) => { for (const p of pts) v.push(...p); };
+  const A = [-0.5, 0, -0.5]; const B = [0.5, 0, -0.5]; const C = [0.5, 0, 0.5]; const D = [-0.5, 0, 0.5];
+  const R0 = [-0.5, 1, 0]; const R1 = [0.5, 1, 0];
+  push(A, R0, R1, A, R1, B);        // back slope
+  push(D, C, R1, D, R1, R0);        // front slope
+  push(A, B, R1); push(A, R1, R0);  // keep both slopes two-sided for low poly cleanliness
+  push(B, A, R0, B, R0, R1);        // gable end -x (inside faces, cheap)
+  push(A, D, R0);                   // gable triangle -x
+  push(C, B, R1);                   // gable triangle +x
+  const roof = new THREE.BufferGeometry();
+  roof.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  roof.computeVertexNormals();
+
+  const spire = new THREE.ConeGeometry(0.5, 1, 4, 1);
+  spire.rotateY(Math.PI / 4);
+  spire.translate(0, 0.5, 0);
+  shared = { body, roof, spire };
+  return shared;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function rand() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = Math.imul(t ^ (t >>> 7), 61 | t) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 /**
- * Build the instanced retro houses for one chunk.
+ * Build the instanced houses for one chunk.
  *
- * @param placements array of `{ lat, lon, width, depth }` from fetchBuildings
+ * @param placements array of `{ polygon: [{lat, lon}], tags }` from fetchOsmChunk
  * @param terrain    the streaming terrain (needs worldFromLatLon/sample/slope)
  * @param routeIndex cheap "distance to the road" lookups
  * @param seed       deterministic per-chunk seed
  */
 export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
   const rand = mulberry32(seed);
-  const matrices = [];
-  const colors = [];
-  const roofColors = [];
+  const bodies = [];
+  const roofs = [];
+  const extras = [];
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  const yawQ = new THREE.Quaternion();
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
+  const yAxis = new THREE.Vector3(0, 1, 0);
   const color = new THREE.Color();
+  const world = [];
 
   for (const b of placements) {
-    if (matrices.length >= MAX_PER_CHUNK) break;
-    const w = terrain.worldFromLatLon(b.lat, b.lon);
-    if (!Number.isFinite(w.x) || !Number.isFinite(w.z)) continue;
+    if (bodies.length >= MAX_PER_CHUNK) break;
+    world.length = 0;
+    for (const p of b.polygon) {
+      const w = terrain.worldFromLatLon(p.lat, p.lon);
+      if (Number.isFinite(w.x) && Number.isFinite(w.z)) world.push({ x: w.x, z: w.z });
+    }
+    const rect = orientedRectangle(world);
+    if (!rect || rect.length < 2 || rect.width < 1.5) continue;
     // Keep the road clear: a house in the middle of the stage is a rally hazard.
-    if (routeIndex && routeIndex.distanceTo(w.x, w.z, 24) < 10) continue;
-    const h = terrain.sample(w.x, w.z);
-    if (h < 1.5) continue; // in the fjord
-    if (terrain.slope(w.x, w.z) > 0.35) continue; // would float off a hillside
+    if (routeIndex && routeIndex.distanceTo(rect.x, rect.z, 24) < 8) continue;
+    const h = terrain.sample(rect.x, rect.z);
+    if (h < 0.8) continue; // in the fjord
+    if (terrain.slope(rect.x, rect.z) > 0.5) continue; // would float off a hillside
 
-    // Footprint long side → house yaw; sizes squeezed into a house-like range.
-    const long = Math.max(b.width, b.depth);
-    const short = Math.min(b.width, b.depth);
-    const sx = THREE.MathUtils.clamp(long * 0.92, 5, 34);
-    const sz = THREE.MathUtils.clamp(short * 0.92, 4.5, 26);
-    const sy = THREE.MathUtils.clamp(Math.min(long, short) * 0.42, 3.2, 9.5);
-    const yaw = b.width >= b.depth ? 0 : Math.PI / 2;
+    const family = familyFor(b.tags, rect.length, rect.width);
+    const fam = FAMILIES[family];
+    const length = Math.min(rect.length, 90);
+    const width = Math.min(rect.width, 60);
+    const eaves = heightFor(b.tags, family);
+    const roofRise = Math.min(Math.max(width * 0.5 * fam.pitch, 0.6), 6.5);
+    const yaw = -rect.yaw;
 
-    pos.set(w.x, h + 0.05, w.z);
-    yawQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    q.copy(yawQ);
-    scl.set(sx, sy, sz);
+    // Sink the walls into the hillside a little so no gap shows downhill.
+    pos.set(rect.x, h - 0.4, rect.z);
+    q.setFromAxisAngle(yAxis, yaw);
+    scl.set(length, eaves + 0.4, width);
     m.compose(pos, q, scl);
-    matrices.push(m.clone());
-    color.setHex(WALL_COLORS[Math.floor(rand() * WALL_COLORS.length)]);
-    colors.push(color.clone());
-    color.setHex(ROOF_COLORS[Math.floor(rand() * ROOF_COLORS.length)]);
-    roofColors.push(color.clone());
+    color.setHex(fam.walls[Math.floor(rand() * fam.walls.length)]);
+    bodies.push({ matrix: m.clone(), color: color.clone() });
+
+    pos.set(rect.x, h + eaves - 0.02, rect.z);
+    scl.set(length * 1.06, roofRise, width * 1.12);
+    m.compose(pos, q, scl);
+    color.setHex(fam.roofs[Math.floor(rand() * fam.roofs.length)]);
+    roofs.push({ matrix: m.clone(), color: color.clone() });
+
+    if (family === 'church') {
+      // A tower with a spire at one gable end.
+      const towerW = Math.min(width * 0.8, 6);
+      const towerH = eaves + roofRise + 6;
+      const dx = Math.cos(yaw) * (length / 2 - towerW / 2);
+      const dz = -Math.sin(yaw) * (length / 2 - towerW / 2);
+      pos.set(rect.x + dx, h - 0.4, rect.z + dz);
+      scl.set(towerW, towerH + 0.4, towerW);
+      m.compose(pos, q, scl);
+      extras.push({ kind: 'body', matrix: m.clone(), color: new THREE.Color(fam.walls[0]) });
+      pos.set(rect.x + dx, h + towerH, rect.z + dz);
+      scl.set(towerW * 1.1, towerW * 1.6, towerW * 1.1);
+      m.compose(pos, q, scl);
+      extras.push({ kind: 'spire', matrix: m.clone(), color: new THREE.Color(0x2a2d30) });
+    }
   }
 
-  if (!matrices.length) return null;
+  if (!bodies.length) return null;
   const group = new THREE.Group();
   group.name = 'houses';
-  const { body, roof } = houseGeometry();
-  const bodyMesh = new THREE.InstancedMesh(
-    body,
-    new THREE.MeshLambertMaterial({ flatShading: true }),
-    matrices.length,
-  );
-  const roofMesh = new THREE.InstancedMesh(
-    roof,
-    new THREE.MeshLambertMaterial({ flatShading: true }),
-    matrices.length,
-  );
-  bodyMesh.castShadow = true;
-  bodyMesh.receiveShadow = true;
-  roofMesh.castShadow = true;
-  matrices.forEach((mat, i) => {
-    bodyMesh.setMatrixAt(i, mat);
-    roofMesh.setMatrixAt(i, mat);
-    bodyMesh.setColorAt(i, colors[i]);
-    roofMesh.setColorAt(i, roofColors[i]);
-  });
-  bodyMesh.instanceMatrix.needsUpdate = true;
-  roofMesh.instanceMatrix.needsUpdate = true;
-  if (bodyMesh.instanceColor) bodyMesh.instanceColor.needsUpdate = true;
-  if (roofMesh.instanceColor) roofMesh.instanceColor.needsUpdate = true;
-  group.add(bodyMesh, roofMesh);
-  group.userData.count = matrices.length;
+  const { body, roof, spire } = houseGeometry();
+  const instanced = (geometry, items) => {
+    const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ flatShading: true }), items.length);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    items.forEach((it, i) => {
+      mesh.setMatrixAt(i, it.matrix);
+      mesh.setColorAt(i, it.color);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    return mesh;
+  };
+  group.add(instanced(body, bodies), instanced(roof, roofs));
+  const towers = extras.filter((e) => e.kind === 'body');
+  const spires = extras.filter((e) => e.kind === 'spire');
+  if (towers.length) group.add(instanced(body, towers));
+  if (spires.length) group.add(instanced(spire, spires));
+  group.userData.count = bodies.length;
   return group;
 }

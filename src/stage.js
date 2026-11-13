@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
 
+/** How far the gravel ribbon floats above the carved ground. The car rides on
+ *  the ribbon, so car.js adds the same offsets when it is on the road. */
+export const ROAD_RIBBON_LIFT = 0.16;
+export const ROAD_CROWN = 0.06;
+export const ROAD_SHOULDER = 0.9;
+
 const log = logger('stage');
 
 /* ------------------------------------------------------------------ *
@@ -121,8 +127,19 @@ export class StageRoute {
     let tz = next.z - prev.z;
     const tl = Math.hypot(tx, tz) || 1;
     tx /= tl; tz /= tl;
+    // Perpendicular distance to the two segments meeting at the nearest
+    // sample: the sample spacing would otherwise add up to half a step.
+    let distance = Math.sqrt(best);
+    for (const [p0, p1] of [[prev, p], [p, next]]) {
+      const dx = p1.x - p0.x;
+      const dz = p1.z - p0.z;
+      const l2 = dx * dx + dz * dz;
+      if (l2 < 1e-6) continue;
+      const t = clamp(((x - p0.x) * dx + (z - p0.z) * dz) / l2, 0, 1);
+      distance = Math.min(distance, Math.hypot(x - (p0.x + dx * t), z - (p0.z + dz * t)));
+    }
     return {
-      distance: Math.sqrt(best),
+      distance,
       index: bi,
       progress: this.length > 0 ? p.s / this.length : 0,
       point: p,
@@ -883,7 +900,7 @@ function buildRibbon(route, terrain, from, to) {
   const samples = route.samples;
   const count = to - from + 1;
   const half = route.roadWidth;
-  const shoulder = 0.9;
+  const shoulder = ROAD_SHOULDER;
   const ROWS = 6;
   const positions = new Float32Array(count * ROWS * 3);
   const colors = new Float32Array(count * ROWS * 3);
@@ -914,7 +931,7 @@ function buildRibbon(route, terrain, from, to) {
     const nz = tx;
     const fun = i < 3 || i > count - 4 ? 1 : 0.55;
     const centerY = terrain.sample(p.x, p.z);
-    const lift = 0.16;
+    const lift = ROAD_RIBBON_LIFT;
     for (let k = 0; k < ROWS; k++) {
       const offset = k <= 2
         ? -(k === 0 ? half + shoulder : k === 1 ? half + shoulder : half)
@@ -925,7 +942,7 @@ function buildRibbon(route, terrain, from, to) {
       if (k === 0 || k === 1 || k === 4 || k === 5) {
         edgeY = centerY + clamp(edgeY - centerY, -tiltLimit, tiltLimit);
       }
-      const crown = k === 2 || k === 3 ? 0.06 : 0;
+      const crown = k === 2 || k === 3 ? ROAD_CROWN : 0;
       const drop = k === 0 || k === 5 ? 0.55 : 0;
       const vi = (i * ROWS + k) * 3;
       positions[vi] = x;

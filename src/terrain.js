@@ -182,32 +182,42 @@ export function createTerrainModel({
       const halfX = sizeX / 2;
       const halfZ = sizeZ / 2;
       const reach = halfWidth + blend;
-      const weights = new Float32Array(grid * grid);
+      const stepX = sizeX / (grid - 1);
+      const stepZ = sizeZ / (grid - 1);
+      // Nearest-segment carve: every cell takes the height interpolated along
+      // the route segment it is closest to, so the ground is the same ruled
+      // surface the road ribbon is drawn as. (Snapping to the nearest sample
+      // instead produced a staircase of one step per sample on every grade.)
+      const bestD = new Float32Array(grid * grid).fill(Infinity);
       const targets = new Float32Array(grid * grid);
-      for (const p of samples) {
-        const target = p.y + lift;
-        const minI = Math.max(0, Math.floor(((p.x - reach + halfX) / sizeX) * (grid - 1)) - 1);
-        const maxI = Math.min(grid - 1, Math.ceil(((p.x + reach + halfX) / sizeX) * (grid - 1)) + 1);
-        const minJ = Math.max(0, Math.floor(((p.z - reach + halfZ) / sizeZ) * (grid - 1)) - 1);
-        const maxJ = Math.min(grid - 1, Math.ceil(((p.z + reach + halfZ) / sizeZ) * (grid - 1)) + 1);
+      for (let k = 0; k + 1 < samples.length; k++) {
+        const a = samples[k];
+        const b = samples[k + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const len2 = dx * dx + dz * dz || 1;
+        const minI = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach + halfX) / stepX) - 1);
+        const maxI = Math.min(grid - 1, Math.ceil((Math.max(a.x, b.x) + reach + halfX) / stepX) + 1);
+        const minJ = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach + halfZ) / stepZ) - 1);
+        const maxJ = Math.min(grid - 1, Math.ceil((Math.max(a.z, b.z) + reach + halfZ) / stepZ) + 1);
         for (let j = minJ; j <= maxJ; j++) {
-          const z = -halfZ + (j / (grid - 1)) * sizeZ;
+          const z = -halfZ + j * stepZ;
           for (let i = minI; i <= maxI; i++) {
-            const x = -halfX + (i / (grid - 1)) * sizeX;
-            const d = Math.hypot(x - p.x, z - p.z);
-            if (d > reach) continue;
-            const t = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
+            const x = -halfX + i * stepX;
+            const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
+            const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
             const idx = j * grid + i;
-            if (t > weights[idx]) {
-              weights[idx] = t;
-              targets[idx] = target;
-            }
+            if (d > reach || d >= bestD[idx]) continue;
+            bestD[idx] = d;
+            targets[idx] = lerp(a.y, b.y, t) + lift;
           }
         }
       }
       let touched = 0;
       for (let idx = 0; idx < heights.length; idx++) {
-        const w = weights[idx];
+        const d = bestD[idx];
+        if (d > reach) continue;
+        const w = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
         if (w <= 0.001) continue;
         heights[idx] = lerp(heights[idx], targets[idx], w);
         touched++;
