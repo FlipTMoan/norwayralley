@@ -69,6 +69,9 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- Rooms: every other player carries a beacon — a tall arrow in their car's
+  colour hovering 9 m above the car, pointing down, slowly turning, with the
+  callsign above it — so friends are easy to spot from afar.
 - **Tyre tracks** (`tracks.js`): wheels leave dark ruts on gravel and open
   ground and black rubber on asphalt while sliding; a ring buffer of quads
   per wheel (about 350 m each) laid on the ground as you drive.

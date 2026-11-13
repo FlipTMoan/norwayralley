@@ -598,9 +598,27 @@ function makeLabel(text) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
-  sprite.scale.set(3.2, 0.8, 1);
+  sprite.scale.set(4.8, 1.2, 1);
   sprite.renderOrder = 999;
   return sprite;
+}
+
+/** A tall arrow pointing down, unlit so its colour reads from far away. */
+function makeArrow(hex) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: hex, toneMapped: false });
+  const head = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.2, 4), mat);
+  head.rotation.x = Math.PI;            // tip down
+  head.position.y = 1.1;
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.6, 0.5), mat);
+  shaft.position.y = 2.2 + 1.3;
+  const rim = new THREE.Mesh(new THREE.ConeGeometry(1.25, 2.4, 4), new THREE.MeshBasicMaterial({ color: 0x101513, toneMapped: false, side: THREE.BackSide }));
+  rim.rotation.x = Math.PI;
+  rim.position.y = 1.1;
+  group.add(rim, head, shaft);
+  group.name = 'playerArrow';
+  group.userData.material = mat;
+  return group;
 }
 
 function disposeGhost(id) {
@@ -608,6 +626,7 @@ function disposeGhost(id) {
   if (!g) return;
   disposeGroup(g.car.group);
   disposeGroup(g.car.dust.points);
+  if (g.arrow) { disposeGroup(g.arrow); scene.remove(g.arrow); }
   scene.remove(g.label);
   g.label.material.map?.dispose();
   g.label.material.dispose();
@@ -628,18 +647,26 @@ function updateGhosts(now, dt) {
       const ghostCar = new Car(scene, terrain, peer.kind);
       const label = makeLabel(peer.name);
       scene.add(label);
-      g = { car: ghostCar, label, kind: peer.kind, spin: 0, slot: undefined };
+      const arrow = makeArrow(paintForSlot(peer.slot ?? 1));
+      scene.add(arrow);
+      g = { car: ghostCar, label, arrow, kind: peer.kind, spin: 0, slot: undefined };
       ghosts.set(id, g);
     }
     if (g.slot !== peer.slot) {
       g.slot = peer.slot;
       g.car.setPaint(paintForSlot(peer.slot ?? 1));
+      g.arrow.userData.material.color.setHex(paintForSlot(peer.slot ?? 1));
     }
     const pose = peer.track.sample(now);
     const stale = now - peer.track.lastSeen > 6000;
     g.car.group.visible = Boolean(pose) && !stale;
     g.label.visible = g.car.group.visible;
+    g.arrow.visible = g.car.group.visible;
     if (!pose) continue;
+    // Beacon: the arrow hovers high over the car, bobbing and turning slowly.
+    const bob = Math.sin(now / 400) * 0.4;
+    g.arrow.position.set(pose.x, pose.y + 9 + bob, pose.z);
+    g.arrow.rotation.y = now / 1200;
     g.car.group.position.set(pose.x, pose.y + 0.02, pose.z);
     ghostQ.yaw.setFromAxisAngle(AXIS_Y, pose.yaw);
     ghostQ.pitch.setFromAxisAngle(AXIS_X, pose.pitch);
@@ -647,7 +674,7 @@ function updateGhosts(now, dt) {
     g.car.group.quaternion.copy(ghostQ.yaw).multiply(ghostQ.pitch).multiply(ghostQ.roll);
     g.spin += (pose.speed / g.car.spec.wheelRadius) * dt;
     for (const w of g.car.wheels) w.spin.rotation.x = g.spin;
-    g.label.position.set(pose.x, pose.y + 2.3, pose.z);
+    g.label.position.set(pose.x, pose.y + 15.2 + bob, pose.z);
   }
   for (const id of [...ghosts.keys()]) if (!session.peers.has(id)) disposeGhost(id);
 }
