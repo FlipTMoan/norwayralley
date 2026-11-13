@@ -12,7 +12,7 @@ import {
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
-import { Car, ENGINE } from './car.js';
+import { Car, CARS } from './car.js';
 import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
@@ -157,6 +157,28 @@ function setCompactHud(on) {
 let bakedSignData = null;
 // Gearbox preference (start-card toggle or G); remembered between visits.
 let gearboxAuto = (() => { try { return localStorage.getItem('rally.gearbox') !== 'manual'; } catch { return true; } })();
+// Which car: Porsche 911 or the Formula Offroad buggy (start-card toggle).
+let carKind = (() => { try { return CARS[localStorage.getItem('rally.car')] ? localStorage.getItem('rally.car') : 'porsche'; } catch { return 'porsche'; } })();
+function setCarKind(kind, { announce = true } = {}) {
+  if (!CARS[kind]) return;
+  carKind = kind;
+  try { localStorage.setItem('rally.car', kind); } catch { /* private mode */ }
+  const btn = document.getElementById('carBtn');
+  if (btn) btn.textContent = `CAR: ${CARS[kind].name.toUpperCase()}`;
+  if (car && terrain) swapCar();
+  if (announce) toast(kind === 'buggy' ? 'Formula Offroad: 1 200 hp, 4WD, paddle tyres.' : 'Porsche 911 rally car.');
+}
+/** Replace the car in place (keeps the route; restarts the stage if racing). */
+function swapCar() {
+  const pose = route ? route.startPose() : { x: car.pos.x, z: car.pos.z, yaw: car.yaw };
+  disposeGroup(car.group);
+  disposeGroup(car.dust.points);
+  car = new Car(scene, terrain, carKind);
+  car.autoShift = gearboxAuto;
+  if (route) car.setRoute(route); else car.reset(pose);
+  if (phase === 'racing' || phase === 'countdown' || phase === 'finished') resetStage({ countdownNow: true });
+}
+
 function setGearbox(auto, { announce = true } = {}) {
   gearboxAuto = Boolean(auto);
   if (car) car.autoShift = gearboxAuto;
@@ -444,7 +466,7 @@ async function enterStreamingWorld(geometry) {
     clearPickMarkers();
 
     scene.add(world.group);
-    car = new Car(scene, terrain);
+    car = new Car(scene, terrain, carKind);
     car.autoShift = gearboxAuto;
     water = buildWater(terrain);
     scene.add(water);
@@ -517,7 +539,7 @@ async function enterFreeDrive(center) {
     clearPickMarkers();
 
     scene.add(world.group);
-    car = new Car(scene, terrain);
+    car = new Car(scene, terrain, carKind);
     car.autoShift = gearboxAuto;
     water = buildWater(terrain);
     scene.add(water);
@@ -1397,7 +1419,7 @@ function updateCamera(dt) {
     // Driver's seat (left-hand drive): eyes behind the windscreen, the
     // fender humps in view. The cabin shell is back-face culled from inside.
     const r = car.right();
-    const eye = car.group.localToWorld(new THREE.Vector3(-0.36, 1.1, 0.12));
+    const eye = car.group.localToWorld(new THREE.Vector3(car.spec.eye.x, car.spec.eye.y, car.spec.eye.z));
     camera.position.copy(eye);
     tempLook.set(
       car.pos.x + f.x * 30 - r.x * 0.36,
@@ -1620,7 +1642,7 @@ function updateHud() {
   $('speed').textContent = String(Math.min(999, kmh)).padStart(3, '0');
   const gearLabel = car.gear === 0 ? 'R' : String(car.gear);
   $('gear').textContent = `${gearLabel} ${car.autoShift ? 'AUTO' : 'MAN'}`;
-  const rpmFrac = clamp01((car.rpm - ENGINE.idle) / (ENGINE.redline - ENGINE.idle));
+  const rpmFrac = clamp01((car.rpm - car.spec.idle) / (car.spec.redline - car.spec.idle));
   $('rpmFill').style.width = `${rpmFrac * 100}%`;
   $('rpmFill').style.background = rpmFrac > 0.9 || car.limiter ? '#ff3a2a' : '';
   const rpmRounded = Math.round(car.rpm / 100) * 100;
@@ -1790,7 +1812,7 @@ async function boot() {
     water = buildWater(terrain);
     scene.add(water);
 
-    car = new Car(scene, terrain);
+    car = new Car(scene, terrain, carKind);
 
     car.autoShift = gearboxAuto;
 
@@ -1976,6 +1998,8 @@ const mapPicker = createMapPicker({
 });
 
 $('gearboxBtn').addEventListener('click', () => setGearbox(!gearboxAuto));
+$('carBtn').addEventListener('click', () => setCarKind(carKind === 'porsche' ? 'buggy' : 'porsche'));
+setCarKind(carKind, { announce: false });
 document.querySelector('#stageInfo .panel-title').addEventListener('click', () => {
   const hud = $('hud');
   if (!compactMedia.matches) return;
@@ -2141,6 +2165,7 @@ window.__rally = {
   closeRouteBuilder,
   openMap: () => mapPicker.open(terrain, route),
   freeDrive: (lat, lon) => enterFreeDrive({ lat, lon }),
+  setCar: (kind) => setCarKind(kind),
   mapPicker,
   toggleDebug,
   dumpLog,

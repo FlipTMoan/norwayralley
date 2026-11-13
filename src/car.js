@@ -15,8 +15,9 @@ const WHEEL_TRAVEL = { down: 0.14, up: 0.2 };
  * than this game needs: the terrain is a height field, so a raycast vehicle
  * with spring suspension and a slip-based tyre model gives the same feel with
  * far less integration risk. These are the numbers that shape it. */
-const MASS = 1180;                 // kg
-const GRAVITY = 19.6;              // game gravity: 2 g feels snappier than 9.81
+const MASS = 1180;                 // kg (Porsche; the buggy has its own spec)
+const GRAVITY = 24;                // game gravity in the air: comes down hard
+const SLOPE_G = 13.5;              // effective gravity along slopes (≈1.4 g): hills bite
 // Phase 3 (V5 plan): stiffer suspension + a fine physics step. The car's ray
 // contacts read the exact same height array the terrain mesh is built from,
 // and the 1/120 s substeps (with a recovery guard below) stop a fast car from
@@ -40,6 +41,32 @@ const SHIFT_TIME = 0.24;
 const DRIVE_AXLE_LOAD = 0.62;
 
 export const ENGINE = { idle: IDLE_RPM, redline: REDLINE_RPM, gears: GEAR_RATIOS.length - 1 };
+
+/**
+ * The garage. Every number the physics and the model read per car.
+ *  - power caps the drive force at speed (F ≤ P / v), torque the low end;
+ *  - driveLoad is the share of weight on the driven wheels (traction cap);
+ *  - gripBonus scales tyre grip per surface (paddle tyres love loose ground).
+ */
+export const CARS = {
+  porsche: {
+    key: 'porsche', name: 'Porsche 911', mass: 1180, wheelbase: 2.45, track: 1.62, wheelRadius: 0.35, frontAxle: 1.25,
+    travel: { down: 0.14, up: 0.2 }, springK: 190, springD: 14, jump: 6.2,
+    gears: [-6.0, 6.77, 4.05, 2.90, 2.26, 1.85], finalDrive: 3.9, idle: 1200, redline: 12000,
+    torque: 380, power: 224000, upshift: 11000, downshift: 4200, driveLoad: 0.62,
+    gripBonus: { asphalt: 1, gravel: 1, offroad: 1 },
+    eye: { x: -0.36, y: 1.1, z: 0.12 }, shadow: [2.8, 4.6],
+  },
+  buggy: {
+    key: 'buggy', name: 'Formula Offroad', mass: 1500, wheelbase: 2.9, track: 2.1, wheelRadius: 0.62, frontAxle: 1.45,
+    travel: { down: 0.35, up: 0.45 }, springK: 120, springD: 11, jump: 7.5,
+    // 1 200 hp, 4WD, four gears: 61 / 102 / 153 / 212 km/h at an 8 000 rpm redline.
+    gears: [-6.0, 9.0, 5.4, 3.6, 2.6], finalDrive: 3.4, idle: 1000, redline: 8000,
+    torque: 1500, power: 895000, upshift: 7600, downshift: 3200, driveLoad: 1.0,
+    gripBonus: { asphalt: 0.85, gravel: 1.25, offroad: 1.4 },
+    eye: { x: 0, y: 1.6, z: -0.1 }, shadow: [3.6, 4.8],
+  },
+};
 
 // Surface model. `peak` scales the lateral grip, `loose` how progressively the
 // tyres let go (and how much the tail comes round on the throttle), `dust`
@@ -73,11 +100,11 @@ function makeNumberTexture(text) {
 }
 
 /** Engine torque curve: torquey mid-range, falls off at the redline. */
-function engineTorque(rpm) {
-  const x = clamp((rpm - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM), 0, 1);
+function engineTorque(spec, rpm) {
+  const x = clamp((rpm - spec.idle) / (spec.redline - spec.idle), 0, 1);
   // A soft peak around 65% of the rev range, then a gentle drop-off.
   const curve = Math.sin(Math.PI * Math.pow(x, 0.9)) * 0.55 + 0.55;
-  return MAX_TORQUE * clamp(curve, 0.25, 1);
+  return spec.torque * clamp(curve, 0.25, 1);
 }
 
 /* ------------------------------------------------------------------ *
@@ -251,7 +278,9 @@ function stations(from, to, count, bias = 1) {
 }
 
 export class Car {
-  constructor(scene, terrain) {
+  constructor(scene, terrain, kind = 'porsche') {
+    this.spec = CARS[kind] || CARS.porsche;
+    this.kind = this.spec.key;
     this.scene = scene;
     this.terrain = terrain;
     this.route = null;
@@ -290,7 +319,7 @@ export class Car {
     // Drivetrain state.
     this.gear = 1;
     this.autoShift = true;
-    this.rpm = IDLE_RPM;
+    this.rpm = this.spec.idle;
     this.shiftTimer = 0;
     this.engineLoad = 0;
     this.limiter = false;
@@ -308,6 +337,11 @@ export class Car {
   }
 
   buildModel() {
+    if (this.spec.key === 'buggy') this.buildBuggy();
+    else this.build911();
+  }
+
+  build911() {
     const g = this.group;
     const paint = new THREE.MeshLambertMaterial({ color: 0xd34a31 });
     const paintDark = new THREE.MeshLambertMaterial({ color: 0x9e2f22, flatShading: true });
@@ -399,21 +433,21 @@ export class Car {
     }
 
     this.wheels = [];
-    const tireFront = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.3, 18);
+    const tireFront = new THREE.CylinderGeometry(this.spec.wheelRadius, this.spec.wheelRadius, 0.3, 18);
     tireFront.rotateZ(Math.PI / 2);
-    const tireRear = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.36, 18);
+    const tireRear = new THREE.CylinderGeometry(this.spec.wheelRadius, this.spec.wheelRadius, 0.36, 18);
     tireRear.rotateZ(Math.PI / 2);
     const hubGeo = new THREE.CylinderGeometry(0.21, 0.21, 0.38, 10);
     hubGeo.rotateZ(Math.PI / 2);
     const positions = [
-      [-TRACK / 2, FRONT_AXLE, true],
-      [TRACK / 2, FRONT_AXLE, true],
-      [-TRACK / 2, REAR_AXLE, false],
-      [TRACK / 2, REAR_AXLE, false],
+      [-this.spec.track / 2, this.spec.frontAxle, true],
+      [this.spec.track / 2, this.spec.frontAxle, true],
+      [-this.spec.track / 2, (this.spec.frontAxle - this.spec.wheelbase), false],
+      [this.spec.track / 2, (this.spec.frontAxle - this.spec.wheelbase), false],
     ];
     for (const [x, z, front] of positions) {
       const pivot = new THREE.Group();
-      pivot.position.set(x, WHEEL_RADIUS, z);
+      pivot.position.set(x, this.spec.wheelRadius, z);
       const spin = new THREE.Group();
       const tire = new THREE.Mesh(front ? tireFront : tireRear, black);
       tire.castShadow = true;
@@ -435,8 +469,140 @@ export class Car {
     sctx.fillRect(0, 0, 128, 128);
     const shadowTex = new THREE.CanvasTexture(shadowCanvas);
     const blob = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.8, 4.6),
+      new THREE.PlaneGeometry(this.spec.shadow[0], this.spec.shadow[1]),
       new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false }),
+    );
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.y = 0.02;
+    g.add(blob);
+    this.blobShadow = blob;
+    this.tmpV = new THREE.Vector3();
+  }
+
+  /**
+   * Formula Offroad: a tube-frame hill-climb buggy on 1.2 m paddle tyres.
+   * Chassis pan and nose, full roll cage, driver, V8 with four stacks behind
+   * the seat, splitter and rear wing — all primitives, flat shaded.
+   */
+  buildBuggy() {
+    const g = this.group;
+    const R = this.spec.wheelRadius;
+    const paint = new THREE.MeshLambertMaterial({ color: 0xf0c020, flatShading: true });
+    const dark = new THREE.MeshLambertMaterial({ color: 0x1c1f21, flatShading: true });
+    const tubeMat = new THREE.MeshLambertMaterial({ color: 0xd8d4c8, flatShading: true });
+    const chrome = new THREE.MeshLambertMaterial({ color: 0xcfcac0, flatShading: true });
+    const rubber = new THREE.MeshLambertMaterial({ color: 0x15171a, flatShading: true });
+    const suit = new THREE.MeshLambertMaterial({ color: 0xd9452c, flatShading: true });
+    const box = (w, h, d, mat, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      g.add(m);
+      return m;
+    };
+    const tube = (a, b, r = 0.04) => {
+      const from = new THREE.Vector3(...a);
+      const to = new THREE.Vector3(...b);
+      const len = from.distanceTo(to);
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 6), tubeMat);
+      m.position.copy(from).add(to).multiplyScalar(0.5);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
+      m.castShadow = true;
+      g.add(m);
+      return m;
+    };
+
+    // Chassis pan sits high on the big wheels; wedge nose and side pods.
+    const floorY = R - 0.05;
+    box(1.1, 0.3, 2.7, paint, 0, floorY + 0.15, -0.1);
+    box(0.8, 0.22, 0.9, paint, 0, floorY + 0.08, 1.75);
+    box(0.5, 0.26, 1.6, dark, -0.78, floorY + 0.2, -0.2);
+    box(0.5, 0.26, 1.6, dark, 0.78, floorY + 0.2, -0.2);
+    // Splitter and rear wing.
+    box(1.7, 0.05, 0.5, dark, 0, floorY - 0.02, 2.05);
+    box(1.9, 0.06, 0.55, paint, 0, floorY + 1.55, -1.55).rotation.x = -0.18;
+    tube([-0.6, floorY + 0.3, -1.5], [-0.6, floorY + 1.52, -1.55], 0.03);
+    tube([0.6, floorY + 0.3, -1.5], [0.6, floorY + 1.52, -1.55], 0.03);
+
+    // Roll cage: a box of tubes over the cockpit, braced to the nose and tail.
+    const cx = 0.58; const y0 = floorY + 0.3; const y1 = floorY + 1.3; const zf = 0.55; const zb = -0.75;
+    for (const sx of [-cx, cx]) {
+      tube([sx, y0, zf], [sx * 0.85, y1, zf * 0.7]);
+      tube([sx, y0, zb], [sx * 0.85, y1, zb]);
+      tube([sx * 0.85, y1, zf * 0.7], [sx * 0.85, y1, zb]);
+      tube([sx * 0.85, y1, zf * 0.7], [sx * 0.6, floorY + 0.25, 1.9], 0.035);
+      tube([sx * 0.85, y1, zb], [sx * 0.6, floorY + 0.4, -1.7], 0.035);
+    }
+    tube([-cx * 0.85, y1, zf * 0.7], [cx * 0.85, y1, zf * 0.7]);
+    tube([-cx * 0.85, y1, zb], [cx * 0.85, y1, zb]);
+    tube([-cx * 0.85, y1, zb], [cx * 0.85, y1, zf * 0.7], 0.03); // diagonal
+
+    // Driver: seat, torso, helmet.
+    box(0.5, 0.55, 0.45, dark, 0, floorY + 0.55, -0.2);
+    box(0.4, 0.4, 0.3, suit, 0, floorY + 0.7, -0.05);
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), chrome);
+    helmet.position.set(0, floorY + 1.05, -0.05);
+    g.add(helmet);
+
+    // Engine behind the seat with four exhaust stacks and an intake scoop.
+    box(0.75, 0.6, 0.7, dark, 0, floorY + 0.6, -1.15);
+    box(0.5, 0.25, 0.4, chrome, 0, floorY + 1.0, -1.1);
+    for (const x of [-0.3, -0.1, 0.1, 0.3]) {
+      const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.55, 8), chrome);
+      stack.position.set(x, floorY + 1.15, -1.35);
+      stack.rotation.x = -0.35;
+      g.add(stack);
+    }
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), new THREE.MeshBasicMaterial({ map: makeNumberTexture('13'), toneMapped: false }));
+    plate.rotation.x = -0.6;
+    plate.position.set(0, floorY + 0.32, 1.78);
+    g.add(plate);
+
+    // Paddle tyres: a wide drum with lugs around it, big chrome hub.
+    this.wheels = [];
+    const positions = [
+      [-this.spec.track / 2, this.spec.frontAxle, true],
+      [this.spec.track / 2, this.spec.frontAxle, true],
+      [-this.spec.track / 2, this.spec.frontAxle - this.spec.wheelbase, false],
+      [this.spec.track / 2, this.spec.frontAxle - this.spec.wheelbase, false],
+    ];
+    for (const [x, z, front] of positions) {
+      const width = front ? 0.38 : 0.56;
+      const pivot = new THREE.Group();
+      pivot.position.set(x, R, z);
+      const spin = new THREE.Group();
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.93, R * 0.93, width, 16), rubber);
+      drum.rotation.z = Math.PI / 2;
+      drum.castShadow = true;
+      spin.add(drum);
+      const lugs = 14;
+      for (let i = 0; i < lugs; i++) {
+        const lug = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.12, 0.16), rubber);
+        const a = (i / lugs) * Math.PI * 2;
+        lug.position.set(0, Math.sin(a) * R * 0.97, Math.cos(a) * R * 0.97);
+        lug.rotation.x = -a;
+        spin.add(lug);
+      }
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.42, R * 0.42, width + 0.06, 10), chrome);
+      hub.rotation.z = Math.PI / 2;
+      spin.add(hub);
+      pivot.add(spin);
+      g.add(pivot);
+      this.wheels.push({ pivot, spin, front, x, z });
+    }
+
+    const shadowCanvas = document.createElement('canvas');
+    shadowCanvas.width = 128;
+    shadowCanvas.height = 128;
+    const sctx = shadowCanvas.getContext('2d');
+    const grad = sctx.createRadialGradient(64, 64, 8, 64, 64, 62);
+    grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, 128, 128);
+    const blob = new THREE.Mesh(
+      new THREE.PlaneGeometry(this.spec.shadow[0], this.spec.shadow[1]),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, depthWrite: false }),
     );
     blob.rotation.x = -Math.PI / 2;
     blob.position.y = 0.02;
@@ -509,7 +675,7 @@ export class Car {
     this.distance = 0;
     this.wrongWay = false;
     this.gear = 1;
-    this.rpm = IDLE_RPM;
+    this.rpm = this.spec.idle;
     this.shiftTimer = 0;
     this.airborneAt = -1;
     this.group.position.copy(this.pos);
@@ -560,11 +726,11 @@ export class Car {
 
   /** Ratio for the current gear (0 = reverse, 1..6 = forward). */
   gearRatio() {
-    return GEAR_RATIOS[Math.max(0, this.gear)] ?? 1;
+    return this.spec.gears[Math.max(0, this.gear)] ?? 1;
   }
 
   shift(nextGear) {
-    const gear = clamp(nextGear, 0, GEAR_RATIOS.length - 1);
+    const gear = clamp(nextGear, 0, this.spec.gears.length - 1);
     if (gear === this.gear) return;
     this.gear = gear;
     this.shiftTimer = SHIFT_TIME;
@@ -575,17 +741,17 @@ export class Car {
     const brake = clamp(input.brake || 0, 0, 1);
     const reversing = this.gear === REVERSE;
     const wheelSpeed = Math.abs(this.vF);
-    const wheelRpm = (wheelSpeed / (2 * Math.PI * WHEEL_RADIUS)) * 60;
-    const ratio = Math.abs(this.gearRatio()) * FINAL_DRIVE;
+    const wheelRpm = (wheelSpeed / (2 * Math.PI * this.spec.wheelRadius)) * 60;
+    const ratio = Math.abs(this.gearRatio()) * this.spec.finalDrive;
     const rawRpm = wheelRpm * ratio;
-    const targetRpm = clamp(rawRpm, IDLE_RPM, REDLINE_RPM);
+    const targetRpm = clamp(rawRpm, this.spec.idle, this.spec.redline);
     // Blip the revs a little under throttle even when stationary.
     const powerInput = reversing ? brake : throttle;
     const freeRev = powerInput > 0 && wheelSpeed < 1 ? 1 : 0;
-    this.rpm = damp(this.rpm, Math.max(targetRpm, IDLE_RPM + freeRev * 2600), 9, dt);
+    this.rpm = damp(this.rpm, Math.max(targetRpm, this.spec.idle + freeRev * 2600), 9, dt);
     // Rev limiter: on the redline (manual box, or a long downhill) the
     // ignition cuts until the revs drop.
-    this.limiter = rawRpm >= REDLINE_RPM * 0.995;
+    this.limiter = rawRpm >= this.spec.redline * 0.995;
 
     this.shiftTimer = Math.max(0, this.shiftTimer - dt);
     if (this.gear === REVERSE) {
@@ -596,9 +762,9 @@ export class Car {
 
     if (this.autoShift && this.shiftTimer <= 0) {
       if (this.gear !== REVERSE) {
-        if (this.rpm > AUTO_UPSHIFT && throttle > 0.25 && this.gear < GEAR_RATIOS.length - 1) {
+        if (this.rpm > this.spec.upshift && throttle > 0.25 && this.gear < this.spec.gears.length - 1) {
           this.shift(this.gear + 1);
-        } else if (this.rpm < AUTO_DOWNSHIFT && this.gear > 1) {
+        } else if (this.rpm < this.spec.downshift && this.gear > 1) {
           this.shift(this.gear - 1);
         }
       }
@@ -609,8 +775,8 @@ export class Car {
 
     // Torque at the wheels, minus a clutch cut while shifting.
     const shifting = this.shiftTimer > 0.12;
-    const torque = engineTorque(this.rpm) * powerInput * (shifting ? 0.15 : 1) * (this.grounded ? 1 : 0.35) * (this.limiter ? 0 : 1);
-    const driveForce = ((torque * ratio) / WHEEL_RADIUS) * (reversing ? -1 : 1);
+    const torque = engineTorque(this.spec, this.rpm) * powerInput * (shifting ? 0.15 : 1) * (this.grounded ? 1 : 0.35) * (this.limiter ? 0 : 1);
+    const driveForce = Math.min((torque * ratio) / this.spec.wheelRadius, this.spec.power / Math.max(wheelSpeed, 3)) * (reversing ? -1 : 1);
     const engineBrake = powerInput === 0 && Math.abs(this.vF) > 1
       ? -(Math.sign(this.vF) * (28 + this.rpm * 0.012) * Math.abs(ratio) * 0.16)
       : 0;
@@ -659,7 +825,7 @@ export class Car {
       this.updateVisual(dt, 0);
       this.updateDust(dt, 0, 0);
       return {
-        speed: 0, vF: 0, vR: 0, rpm: IDLE_RPM, gear: 1,
+        speed: 0, vF: 0, vR: 0, rpm: this.spec.idle, gear: 1,
         onRoad: this.onRoad, drifting: false, grounded: true,
         progress: this.progress || 0, wrongWay: false, landingImpact: 0,
       };
@@ -721,8 +887,9 @@ export class Car {
     if (this.grounded) {
       // Engine, brakes and the ground. Whatever the gearing multiplies the
       // torque to, the driven tyres can only push as hard as they grip.
-      const maxDrive = surface.mu * DRIVE_AXLE_LOAD * 9.81 * (input.handbrake ? 0.3 : 1);
-      vF += clamp(drivetrain.driveForce / MASS, -maxDrive, maxDrive) * h;
+      const bonus = this.spec.gripBonus[this.surfaceKind] ?? 1;
+      const maxDrive = surface.mu * bonus * this.spec.driveLoad * 9.81 * (input.handbrake ? 0.3 : 1);
+      vF += clamp(drivetrain.driveForce / this.spec.mass, -maxDrive, maxDrive) * h;
       if (drivetrain.brake > 0) {
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 21 * drivetrain.brake) * h;
       }
@@ -730,7 +897,7 @@ export class Car {
         // Locked rear wheels: sliding friction on the rear axle, no more.
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 4.2 * surface.mu) * h;
       }
-      vF += (drivetrain.engineBrake / MASS) * h;
+      vF += (drivetrain.engineBrake / this.spec.mass) * h;
 
       // Rolling resistance, aero drag and the extra cost of rough ground.
       vF -= Math.sign(vF) * surface.rolling * h;
@@ -745,8 +912,8 @@ export class Car {
       // a slope would keep pulling the car towards the ditch.
       const { gx, gz } = this.terrain.gradient(this.pos.x, this.pos.z, this.onRoad ? 1.8 : 6);
       const denom = 1 + gx * gx + gz * gz;
-      vF += (-9.81 * (gx * f.x + gz * f.z) / denom) * h;
-      vR += (-9.81 * (gx * r.x + gz * r.z) / denom) * h * 0.55;
+      vF += (-SLOPE_G * (gx * f.x + gz * f.z) / denom) * h;
+      vR += (-SLOPE_G * (gx * r.x + gz * r.z) / denom) * h * 0.8;
 
       // Slip-based lateral tyre force. The peak grip happens at a small slip
       // angle, then falls away: that is what lets the tail step out on gravel
@@ -760,7 +927,7 @@ export class Car {
       const curveC = 1.55 + surface.loose * 0.3 + (sliding ? 0.35 : 0); // more fall-off past the peak
       const shape = Math.sin(curveC * Math.atan(surface.slipK * slip));
       const handbrake = input.handbrake ? 0.2 - surface.loose * 0.06 : lerp(0.35, 1, this.slideGrip);
-      const mu = surface.mu * handbrake;
+      const mu = surface.mu * bonus * handbrake;
       const maxLat = mu * 9.81 * surface.peak;
       const latForce = -Math.sign(vR) * maxLat * clamp(shape, 0, 1) * clamp(Math.abs(vR) / 0.35, 0, 1);
       vR += latForce * h;
@@ -776,7 +943,7 @@ export class Car {
       // loose surface lets the nose rotate further into a slide.
       const absV = Math.abs(vF);
       const delta = this.steer * lerp(MAX_STEER_LOW, MAX_STEER_HIGH, clamp(absV / 50, 0, 1));
-      const kinematic = (vF * Math.tan(delta)) / WHEELBASE;
+      const kinematic = (vF * Math.tan(delta)) / this.spec.wheelbase;
       const yawCap = ((surface.mu * 9.81 * 1.1) / Math.max(absV, 4)) * (1 + surface.loose * 0.6) * (sliding ? 2.4 : 1);
       const targetYawVel = clamp(kinematic, -yawCap, yawCap) * clamp(absV / 1.5, 0, 1);
       const gripResponse = input.handbrake ? 2.6 : sliding ? 4.5 : 8.0 - surface.loose * 3;
@@ -801,7 +968,7 @@ export class Car {
         this.pos.y = g + 0.22;
         this.bounce = 0.22;
         this.bounceVel = 0;
-        this.verticalVel = 6.2;
+        this.verticalVel = this.spec.jump;
         this.grounded = false;
         this.airTime = 0;
         this.airborneAt = 0;
@@ -853,11 +1020,11 @@ export class Car {
     if (this.grounded) {
       // Spring/damper body bounce around the surface, then the four raycast
       // wheel contacts decide whether there is still ground under the car.
-      this.bounceVel += (-SUSPENSION_K * this.bounce - SUSPENSION_D * this.bounceVel) * h;
+      this.bounceVel += (-this.spec.springK * this.bounce - this.spec.springD * this.bounceVel) * h;
       // Real suspension travel: the body may dip a hand's width, no more.
       // Anything beyond that is absorbed by the wheels (updateVisual).
-      this.bounce = clamp(this.bounce + this.bounceVel * h, -WHEEL_TRAVEL.down, WHEEL_TRAVEL.up);
-      if (this.bounce <= -WHEEL_TRAVEL.down) this.bounceVel = Math.max(0, this.bounceVel);
+      this.bounce = clamp(this.bounce + this.bounceVel * h, -this.spec.travel.down, this.spec.travel.up);
+      if (this.bounce <= -this.spec.travel.down) this.bounceVel = Math.max(0, this.bounceVel);
       this.pos.y = groundY + this.bounce;
 
       const contacts = this.sampleWheels(groundY);
@@ -876,7 +1043,7 @@ export class Car {
         const impact = -this.verticalVel;
         this.landingImpact = clamp(impact / 12, 0, 1);
         this.pos.y = groundY;
-        this.bounce = -clamp(impact * 0.015, 0, WHEEL_TRAVEL.down);
+        this.bounce = -clamp(impact * 0.015, 0, this.spec.travel.down);
         this.bounceVel = -clamp(impact * 0.12, 0, 2.4);
         this.verticalVel = 0;
         this.grounded = true;
@@ -949,8 +1116,8 @@ export class Car {
     this.group.quaternion.copy(qYaw).multiply(qPitch).multiply(qRoll);
 
     this.steerVisual = damp(this.steerVisual, this.steer * 0.48, 12, dt);
-    this.wheelSpin += (this.vF / WHEEL_RADIUS) * dt;
-    if (!this.handbrakeOn) this.rearSpin += (this.vF / WHEEL_RADIUS) * dt; // locked rears stand still
+    this.wheelSpin += (this.vF / this.spec.wheelRadius) * dt;
+    if (!this.handbrakeOn) this.rearSpin += (this.vF / this.spec.wheelRadius) * dt; // locked rears stand still
     // Each wheel drops or lifts to meet the ground beneath it (in car space),
     // so the tyres follow ruts and crests instead of hovering or clipping.
     this.group.updateMatrixWorld(true);
@@ -960,8 +1127,8 @@ export class Car {
       this.tmpV.set(wx, this.groundAt(wx, wz), wz);
       this.group.worldToLocal(this.tmpV);
       const rest = this.grounded
-        ? clamp(this.tmpV.y + WHEEL_RADIUS, WHEEL_RADIUS - WHEEL_TRAVEL.up, WHEEL_RADIUS + WHEEL_TRAVEL.down)
-        : WHEEL_RADIUS - WHEEL_TRAVEL.up * 0.6;
+        ? clamp(this.tmpV.y + this.spec.wheelRadius, this.spec.wheelRadius - this.spec.travel.up, this.spec.wheelRadius + this.spec.travel.down)
+        : this.spec.wheelRadius - this.spec.travel.up * 0.6;
       w.pivot.position.y = damp(w.pivot.position.y, rest, 22, dt);
       w.spin.rotation.x = w.front ? this.wheelSpin : this.rearSpin;
       if (w.front) w.pivot.rotation.y = this.steerVisual;

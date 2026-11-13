@@ -69,6 +69,16 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Second car: Formula Offroad buggy** (CAR toggle on the start card, or
+  `window.__rally.setCar('buggy')`): 1 200 hp / 1 500 Nm, 4WD, 1.24 m paddle
+  tyres that grip loose ground 25–40 % better (and asphalt worse), long-travel
+  suspension, four gears to 212 km/h at 8 000 rpm. Tube-frame model with roll
+  cage, driver, V8 stacks, splitter and wing. Each car is a spec object in
+  `car.js` (mass, gearing, power, traction, grip, suspension, eye point).
+- Drive force is now power-limited (F ≤ P / v) on top of the torque curve.
+- **Gravity is more pronounced**: slopes pull with ~1.4 g along the road
+  (and 0.8 of that sideways), airborne gravity 24 m/s², the Porsche loses a
+  fifth of its speed on a 25 % climb where the buggy powers on.
 - **Engineered road corridor** (`corridor.js`): the road is a flat
   carriageway with a 1 m shoulder, carried on a 1:1.5 embankment where the
   ground is lower and cut 1:1 into the hillside where it is higher. The coarse
