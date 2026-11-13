@@ -1396,7 +1396,7 @@ async function resolveSceneFolder() {
   const requested = new URLSearchParams(location.search).get('scene');
   let catalog = [];
   try {
-    const response = await fetch('/terrain/scenes/index.json');
+    const response = await fetch(`${import.meta.env.BASE_URL}terrain/scenes/index.json`);
     if (response.ok) catalog = await response.json();
   } catch {
     catalog = [];
@@ -1407,7 +1407,7 @@ async function resolveSceneFolder() {
   const entry = catalog.find((s) => s.name === requested) || catalog[0];
   let path = String(entry.path || `scenes/${entry.name}/`).replace(/^\/+/, '');
   if (!path.endsWith('/')) path += '/';
-  const base = `/terrain/${path}`;
+  const base = `${import.meta.env.BASE_URL}terrain/${path}`;
 
   let sceneMeta = null;
   try {

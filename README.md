@@ -236,3 +236,15 @@ debugging in the browser console.
 - Routing: **OSRM** / **OpenStreetMap** contributors.
 - Scene packaging: the bundled **3d_terrain** project.
 - Built with **Three.js** and **Vite**.
+
+## Deploying to GitHub Pages
+
+The site is published at <https://fliptmoan.github.io/norwayralley/> by
+`.github/workflows/pages.yml`: every push to `main` runs `npm ci && npm run build`
+and deploys `dist/`. The repo-name prefix comes from `base` in `vite.config.js`;
+code that fetches runtime files (terrain scenes) must build URLs from
+`import.meta.env.BASE_URL` rather than a leading `/`.
+
+The Pages source in the repository settings must be **GitHub Actions**, not
+"Deploy from a branch" — the latter serves the unbuilt source `index.html`,
+which loads no CSS or JS.
