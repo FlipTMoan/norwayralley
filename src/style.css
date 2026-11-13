@@ -738,3 +738,204 @@ kbd {
   #brand { display: none; }
   #builderPanel { bottom: 12px; }
 }
+
+/* --------------------------------------------------------------- rpm bar */
+#rpmWrap {
+  position: relative;
+  margin-top: 7px;
+  height: 11px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+#rpmFill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--green), var(--acid) 68%, var(--red));
+  transition: width 0.08s linear;
+}
+#rpmText {
+  position: absolute;
+  right: 3px;
+  top: 0;
+  font-size: 7px;
+  line-height: 11px;
+  color: var(--paper);
+  letter-spacing: 0.04em;
+  text-shadow: 1px 1px 0 #000;
+}
+
+/* --------------------------------------------------------------- 2D map */
+#mapPicker {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(6, 10, 8, 0.84);
+  backdrop-filter: blur(2px);
+}
+.map-card {
+  width: min(1100px, 96vw);
+  height: min(780px, 93vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--acid);
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.45);
+}
+.map-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px 9px;
+  border-bottom: 1px solid var(--line);
+}
+.map-kicker {
+  color: var(--acid);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+}
+.map-head h2 {
+  margin: 2px 0 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.map-close {
+  padding: 2px 9px;
+  font-size: 15px;
+  line-height: 1.2;
+  background: transparent;
+  border-color: var(--line);
+}
+#mapCanvas {
+  flex: 1;
+  min-height: 240px;
+  background: #16211b;
+  filter: saturate(0.82) contrast(0.96);
+}
+.map-foot {
+  padding: 10px 14px 11px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.map-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.map-controls button { padding: 7px 10px; }
+.map-controls .profile { margin-right: auto; }
+.map-status {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  min-height: 14px;
+}
+.map-status.ok { color: var(--green); }
+.map-status.err { color: #ff9b84; }
+.map-credit {
+  font-size: 8px;
+  color: rgba(169, 178, 163, 0.7);
+  letter-spacing: 0.05em;
+}
+
+/* Leaflet marker pins */
+.route-pin span {
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: var(--pin, #f0ce58);
+  border: 2px solid #101513;
+  color: #101513;
+  font: bold 13px/26px "Courier New", monospace;
+  text-align: center;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* --------------------------------------------------------------- debug overlay */
+#debugPanel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  margin: 0;
+  padding: 9px 11px;
+  max-width: min(560px, 92vw);
+  background: rgba(5, 9, 7, 0.9);
+  border: 1px solid rgba(142, 210, 161, 0.45);
+  border-left: 3px solid var(--green);
+  color: #b9e6c4;
+  font: 10px/1.5 "Courier New", monospace;
+  white-space: pre;
+  pointer-events: none;
+  overflow: auto;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* --------------------------------------------------------------- world generation */
+#worldLoading {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(6, 10, 8, 0.88);
+  backdrop-filter: blur(3px);
+}
+.world-card {
+  width: min(560px, 94vw);
+  padding: 22px 24px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--acid);
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.45);
+}
+.world-kicker {
+  color: var(--acid);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+}
+.world-card h2 {
+  margin: 4px 0 12px;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+#worldStatus {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--paper);
+  min-height: 16px;
+}
+.world-track {
+  margin-top: 9px;
+  height: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+#worldBar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--green), var(--acid));
+  transition: width 0.2s linear;
+}
+.world-hint {
+  margin-top: 9px;
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}

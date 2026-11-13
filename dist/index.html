@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111614">
   <title>Retro Norway Rally — Preikestolen</title>
-  <script type="module" crossorigin src="/assets/index-C3bzuoo6.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DP9riYbw.css">
+  <script type="module" crossorigin src="/assets/index-DhR1Axro.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CqOgVXyY.css">
 </head>
 <body>
   <canvas id="game" aria-label="Retro Norway Rally"></canvas>
@@ -30,6 +30,7 @@
     <div id="speedBox">
       <div class="speed-row"><span id="speed">000</span><span class="speed-unit">KM/H</span></div>
       <div class="speed-row small"><span id="gear">N</span><span id="surface">OFF ROAD</span></div>
+      <div id="rpmWrap"><div id="rpmFill"></div><span id="rpmText">900</span></div>
     </div>
 
     <div id="stageInfo" class="panel">
@@ -40,6 +41,7 @@
       <div class="panel-actions">
         <button id="newStage" class="primary" title="Scout a new rally stage across the mountains">NEW STAGE</button>
         <button id="routeBuilder" title="Open the 3D topo map and pick a start and finish">ROUTE BUILDER</button>
+        <button id="mapPickerBtn" title="Pick any two points in Norway on a 2D Leaflet map">2D MAP</button>
       </div>
       <button id="restart" class="wide" title="Restart this stage (R)">RESTART STAGE</button>
 
@@ -122,7 +124,46 @@
     </div>
 
     <div id="helpLine">
-      <span><b>WASD</b> drive</span><span><b>SPACE</b> drift</span><span><b>R</b> restart</span><span><b>C</b> camera</span><span><b>M</b> mute</span>
+      <span><b>WASD</b> drive</span><span><b>SPACE</b> jump</span><span><b>SHIFT</b> drift</span><span><b>Q/E</b> gear</span><span><b>G</b> auto</span><span><b>R</b> restart</span><span><b>C</b> camera</span><span><b>M</b> mute</span>
+    </div>
+  </div>
+
+  <div id="mapPicker" class="hidden" role="dialog" aria-label="2D route map">
+    <div class="map-card">
+      <div class="map-head">
+        <div>
+          <div class="map-kicker">NORGE · 2D ROUTE PICKER</div>
+          <h2>PICK TWO POINTS</h2>
+        </div>
+        <button id="mapClose" class="map-close" title="Close the map">✕</button>
+      </div>
+      <div id="mapCanvas"></div>
+      <div class="map-foot">
+        <div class="map-controls">
+          <label class="profile">PROFILE
+            <select id="mapProfile">
+              <option value="driving" selected>driving</option>
+              <option value="cycling">cycling</option>
+              <option value="foot">foot</option>
+            </select>
+          </label>
+          <button id="mapUseStage">USE CURRENT STAGE</button>
+          <button id="mapClear">CLEAR</button>
+          <button id="mapGenerate" class="primary" disabled>GENERATE ROUTE</button>
+        </div>
+        <div id="mapStatus" class="map-status">Click the map to set the START point, then the FINISH.</div>
+        <div class="map-credit">Tiles © OpenStreetMap · routing by OSRM · dashes outline the loaded world</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="worldLoading" class="hidden" role="status" aria-live="polite">
+    <div class="world-card">
+      <div class="world-kicker">KARTVERKET · 1 M DTM</div>
+      <h2>GENERATING NORWAY</h2>
+      <div id="worldStatus">Preparing the elevation request…</div>
+      <div class="world-track"><div id="worldBar"></div></div>
+      <div class="world-hint">Downloading the national height model and building this stage's world.</div>
     </div>
   </div>
 
@@ -130,8 +171,8 @@
     <div class="start-card">
       <div class="start-eyebrow">KARTVERKET 1 M DTM · EPSG:25833</div>
       <h1>RETRO<br><em>NORWAY</em><br>RALLY</h1>
-      <div class="start-sub">PREIKESTOLEN · LYSEFJORDEN</div>
-      <p class="start-copy">A low-poly arcade rally stage over a real Norwegian mountain. Chase the clock, hang the tail out on the gravel, and try not to visit the fjord.</p>
+      <div class="start-sub">PREIKESTOLEN · LYSEFJORDEN · OR ANYWHERE IN NORWAY</div>
+      <p class="start-copy">A low-poly arcade rally stage over real Norwegian terrain. Chase the clock, hang the tail out on the gravel, and try not to visit the fjord. Open the 2D MAP to pick two points anywhere in Norway and generate that world on the fly.</p>
       <div id="loadingWrap">
         <div id="loadingText">Waking the mountain…</div>
         <div id="loadingTrack"><div id="loadingBar"></div></div>
@@ -139,10 +180,11 @@
       <button id="startBtn" disabled>START ENGINE</button>
       <div class="start-controls">
         <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</span>
-        <span><kbd>SPACE</kbd> handbrake</span>
+        <span><kbd>SPACE</kbd> jump</span>
+        <span><kbd>SHIFT</kbd> handbrake</span>
+        <span><kbd>Q</kbd><kbd>E</kbd> gear</span>
         <span><kbd>R</kbd> restart</span>
         <span><kbd>C</kbd> camera</span>
-        <span><kbd>M</kbd> sound</span>
       </div>
       <div class="start-credit">Terrain: Kartverket NHM DTM (CC BY 4.0) · Routing: OSRM / OpenStreetMap contributors</div>
     </div>

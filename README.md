@@ -1,9 +1,10 @@
 # Retro Norway Rally
 
-A browser arcade rally game on a real 1 m Norwegian terrain model: the
-Preikestolen (Lysefjorden) DTM from Kartverket. Low-poly PS1-style visuals,
-drift-heavy arcade physics, generated rally stages, a 3D topo-map route
-builder, and real-road routing through OSRM.
+A browser arcade rally game on real 1 m Norwegian terrain: the bundled
+Preikestolen (Lysefjorden) DTM from Kartverket, plus on-demand worlds generated
+anywhere in Norway straight from the national height model. Low-poly
+PS1-style visuals, drift-heavy arcade physics, generated rally stages, a 3D
+topo-map route builder, and real-road routing through OSRM.
 
 ## Run it
 
@@ -29,16 +30,76 @@ npm run preview
 | `W` / `↑` | Throttle |
 | `S` / `↓` | Brake / reverse |
 | `A` `D` / `←` `→` | Steer |
-| `Space` | Handbrake (drift) |
+| `Space` | Jump (when the wheels are on the ground) |
+| `Shift` | Handbrake (drift) |
+| `Q` / `E` | Manual gear down / up (switches the gearbox to manual) |
+| `G` | Toggle automatic / manual gearbox |
 | `R` | Restart the stage |
 | `N` | Scout a new stage |
 | `C` | Toggle chase / bonnet camera |
 | `M` | Mute sound |
-| `Esc` | Close the route builder |
+| `F3` | Toggle the debug/performance overlay |
+| `Esc` | Close the route builder or the 2D map |
 
 Touch controls appear automatically on narrow screens.
 
+## Debugging a freeze or a slow machine
+
+The game logs to the browser console and keeps a rolling history:
+
+- `?log=debug` — verbose logging (boot timings, terrain rebuilds, long frames).
+- `?debug=1` or `F3` — on-screen FPS/frame-time/draw-call/chunk/LOD overlay.
+- `__rally.dumpLog()` — print the last 800 log lines from the console.
+- `__rally.perf` — live frame monitor; `__rally.terrainStats()` — chunk and LOD counts.
+
+If the frame rate stays under 24 fps for 1.5 s, the game automatically lowers
+the render scale, disables the larger shadow map and shows a toast. Long
+frames are logged with their duration so a hitch can be told apart from a
+genuinely frozen tab.
+
+For the network/LAN launch (`npm run dev -- --host`), the same diagnostics work
+from the other device's browser console. If it still looks frozen, check the
+console for the boot timings first: the shader warm-up reaches "Warming up
+shaders and shadows…" on the loading screen and is the slowest one-time step.
+
 ## Make your own route
+
+Two pickers are available:
+
+- **ROUTE BUILDER** — the 3-D topo-map picker described below.
+- **2D MAP** — a full Leaflet/OpenStreetMap picker covering the whole country.
+  Click a start and a finish **anywhere in Norway**, choose `driving`, `cycling`
+  or `foot`, and press **GENERATE ROUTE**. The game asks OSRM for the road,
+  then either drives it on the loaded terrain or generates a new world around
+  it. **USE CURRENT STAGE** seeds the map with the active stage's endpoints.
+
+### Drive anywhere in Norway
+
+When the chosen route does not fit the loaded world, the 2D map generates one:
+
+1. The route's bounding box is measured and padded by roughly 500 m of horizon.
+2. A square world is requested from Kartverket's national 1 m DTM through its
+   CORS-enabled WCS (`nhm_dtm_topo_25833`), resampled to a height grid of
+   384–900 samples (~6 m cells). The download and parsing happen in the
+   browser with the vendored `geotiff.js`.
+3. The old terrain, car, water, vegetation, road and distant peaks are torn
+   down, and the new height field becomes the world shared by rendering,
+   physics, the minimap and road carving.
+4. The OSRM route is projected with a local equirectangular projection anchored
+   at the route centre, the start pad and road are carved into the height
+   field, and the chunked LOD mesh is rebuilt once from the final heights.
+
+A generated world can be at most **6 km across**; longer routes are rejected
+with a message asking for closer points (the road may be longer than the
+world, as long as it stays inside it). Terrain remains vertex-coloured — there
+is no orthophoto texturing, so the retro low-poly style is unchanged. Sea and
+edge nodata are treated as height 0.
+
+Generated worlds are not cached between reloads; they are rebuilt from the
+national DTM each time. The baked Preikestolen scene still loads instantly and
+works offline.
+
+### 3D route builder
 
 1. Click **ROUTE BUILDER** in the STAGE panel.
 2. The terrain is draped with the Kartverket topo map from the bundled
@@ -64,19 +125,22 @@ stage still gets a level start pad, whichever router produced it.
 
 ### Why OSRM sometimes fails here
 
-The demo tile is only 2 km across and sits on a mountain plateau. The nearest
-public road for driving is roughly 2 km outside the tile, so the **driving**
-profile will usually fail with a snap-distance message. The **foot** profile
-can use the Preikestolen trails; its nearest mapped node may still be a few
-hundred metres from the point you tapped, which the status line tells you.
-Routes that leave the tile are rejected, because the car has no terrain out
-there.
+The baked demo tile is only 2 km across and sits on a mountain plateau. The
+nearest public road for driving is roughly 2 km outside it, so **driving** on
+the demo world usually fails with a snap-distance message — but the 2D map can
+now generate a world around that road instead. The **foot** profile can use the
+Preikestolen trails; its nearest mapped node may still be a few hundred metres
+from the point you tapped, which the status line tells you. The 3D route
+builder still works only inside the loaded world.
 
 ## What is in the game
 
 - **Real terrain**: `public/terrain/scenes/preikestolen/dtm_1m.tif` is read in
   the browser with `geotiff.js`; the 2000 × 2000 grid is reduced to a 512 × 512
   height field shared by the renderer, collision, camera and minimap.
+- **Generated worlds**: from the 2D map, the national Kartverket DTM is
+  downloaded live and turned into a height field of 384–900 samples for a
+  square world up to 6 km across, anywhere in Norway.
 - **3d_terrain scene catalog**: the game reads
   `public/terrain/scenes/index.json` and each scene's `scene.json` /
   `index.json`, then loads its DTM and optional `basemap_kv_topo.jpg`. Open
@@ -87,15 +151,27 @@ there.
 - **Flat start pad**: the start of every stage is levelled and blended into the
   mountain, so the car never spawns on a sideways slope or rolls away during
   the countdown.
-- **Arcade physics**: a custom height-field vehicle model with lateral grip,
-  handbrake slides, gravity, airtime, soft tile edges and dust.
+- **Arcade-sim vehicle**: raycast suspension with spring/damper body bounce,
+  weight transfer, a Pacejka-style slip curve for lateral grip, gravel vs.
+  asphalt friction, six forward gears plus reverse, an engine torque curve,
+  automatic or manual shifting, and a Spacebar jump with landing absorption.
+- **Chunked terrain LOD**: the height field is cut into a grid of chunks whose
+  count scales with the sample grid (49 chunks for the demo's 512², 121 for a
+  generated 784²). Each chunk has three detail levels (1×, 2× and 4×
+  decimated) chosen by distance to the car, with vertical skirts hiding LOD
+  seams. The car still drives on the full-resolution height field, and all LOD
+  geometry is built up front so switching detail never causes a hitch.
+- **Carved roads**: the route is stamped into the shared height field before
+  the terrain mesh is rebuilt, so the visible surface, the gravel ribbon and
+  the physics agree on where the road is.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.
 - **OSRM routing**: the route builder and the advanced **OSRM ROAD ROUTER**
-  panel can fetch real OpenStreetMap roads/trails. Snap distances, degenerate
-  routes and routes outside the tile are reported instead of silently making a
-  bad stage.
+  panel can fetch real OpenStreetMap roads/trails. The 2D map can additionally
+  generate a world around a route that lies outside the loaded terrain. Snap
+  distances, degenerate routes and routes too long for a 6 km world are
+  reported instead of silently making a bad stage.
 - **Game loop**: countdown, stage timer, best time in `localStorage`, progress
   bar, wrong-way warning, finish gate, results screen and restart.
 - **Retro presentation**: render at reduced resolution, then quantise colour,
@@ -122,21 +198,25 @@ The wrapper calls `3d_terrain/viz3d.py` with `--site public/terrain`, writes
 the DTM, topo basemap, `scene.json` and `scenes/index.json` catalog, and prints
 the `?scene=<name>` URL. Open that URL to drive the new place.
 
-Kartverket's height WCS was returning HTTP 500 when this was written, so the
-builder's terrain download may fail until the service recovers. The existing
-Preikestolen scene is self-contained and does not need the network.
+Kartverket's height WCS (`nhm_dtm_topo_25833`) is also what the in-game world
+generator uses, so building a baked scene is only necessary if you want an
+offline world with the topo basemap. Otherwise pick the area on the 2D map.
 
 ## Project layout
 
 ```
 index.html                 UI shell and HUD markup
 src/main.js                renderer, game loop, cameras, route builder, HUD
-src/terrain.js             GeoTIFF loading, height field, terrain/basemap, minimap
+src/terrain.js             GeoTIFF loading, height field, road carving, minimap
+src/lod.js                 chunked terrain quadtree/LOD with edge skirts
+src/worldgen.js            Kartverket WCS DEM fetch + on-demand world generation
+src/car.js                 car model, suspension, tyre model and gearbox
+src/map.js                 Leaflet 2D route picker
+src/log.js                 logging, timing spans and the performance watchdog
 src/stage.js               A*, route sampling, OSRM, road/gate visuals
-src/car.js                 car model and arcade physics
 src/retro.js               PS1-style post-processing
 src/audio.js               synthesized engine/wind/gravel/skid audio
-src/geo.js                 UTM 33N conversion and small math helpers
+src/geo.js                 local projection, UTM 33N conversion, math helpers
 scripts/build-scene.py     wrapper for the 3d_terrain scene builder
 public/terrain/scenes/     scene catalog + Preikestolen DTM/topo map
 public/vendor/geotiff.js   vendored GeoTIFF reader
@@ -144,8 +224,10 @@ public/vendor/geotiff.js   vendored GeoTIFF reader
 ```
 
 `window.__rally` exposes the live scene, camera, terrain, car, route, phase,
-stage time, route builder state, `generateRoute`, `fetchOsrm` and
-`screenFromWorld` for debugging in the browser console.
+stage time, route builder state, `generateRoute`, `fetchOsrm`,
+`driveGeometry`, `generateWorld`, `screenFromWorld`, the 2D `mapPicker`,
+`terrainStats()`, `toggleDebug()`, `dumpLog()` and the `perf` monitor for
+debugging in the browser console.
 
 ## Credits
 

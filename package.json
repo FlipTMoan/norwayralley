@@ -11,6 +11,7 @@
     "scene": "python3 scripts/build-scene.py"
   },
   "dependencies": {
+    "leaflet": "^1.9.4",
     "three": "^0.187.0"
   },
   "devDependencies": {

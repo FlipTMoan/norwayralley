@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
+import { logger } from './log.js';
+
+const log = logger('stage');
 
 /* ------------------------------------------------------------------ *
  *  A very small binary heap — A*'s open set.                         *
@@ -243,7 +246,7 @@ function simplify(points, epsilon = 2.5) {
   return points.filter((_, i) => keep[i]);
 }
 
-function makeRoute(points, terrain, options = {}) {
+export function makeRoute(points, terrain, options = {}) {
   const smoothIterations = options.smooth ?? 2;
   const spacing = options.spacing ?? 4;
   const simplified = options.simplify === false ? points : simplify(points, options.simplifyEpsilon ?? 2.5);
@@ -257,30 +260,38 @@ function makeRoute(points, terrain, options = {}) {
  *  rally-stage router: it prefers gentle ground and refuses to go      *
  *  straight down a cliff.                                              *
  * ------------------------------------------------------------------ */
-function buildCostGrid(terrain, cells = 248) {
-  const cell = terrain.sizeX / cells;
-  const n = cells + 1;
-  const heights = new Float32Array(n * n);
-  const slopes = new Float32Array(n * n);
-  for (let j = 0; j < n; j++) {
-    const z = -terrain.sizeZ / 2 + (j / cells) * terrain.sizeZ;
+function buildCostGrid(terrain, cells = 248, window = null) {
+  const halfX = terrain.sizeX / 2;
+  const halfZ = terrain.sizeZ / 2;
+  const minX = window ? window.minX : -halfX;
+  const maxX = window ? window.maxX : halfX;
+  const minZ = window ? window.minZ : -halfZ;
+  const maxZ = window ? window.maxZ : halfZ;
+  const spanX = maxX - minX;
+  const spanZ = maxZ - minZ;
+  const cell = Math.max(spanX, spanZ) / cells;
+  const n = Math.ceil(spanX / cell) + 1;
+  const m = Math.ceil(spanZ / cell) + 1;
+  const heights = new Float32Array(n * m);
+  const slopes = new Float32Array(n * m);
+  for (let j = 0; j < m; j++) {
+    const z = minZ + j * cell;
     for (let i = 0; i < n; i++) {
-      const x = -terrain.sizeX / 2 + (i / cells) * terrain.sizeX;
-      heights[j * n + i] = terrain.sample(x, z);
+      heights[j * n + i] = terrain.sample(minX + i * cell, z);
     }
   }
-  for (let j = 0; j < n; j++) {
+  for (let j = 0; j < m; j++) {
     for (let i = 0; i < n; i++) {
       const il = Math.max(0, i - 1);
       const ir = Math.min(n - 1, i + 1);
       const jl = Math.max(0, j - 1);
-      const jr = Math.min(n - 1, j + 1);
+      const jr = Math.min(m - 1, j + 1);
       const gx = (heights[j * n + ir] - heights[j * n + il]) / ((ir - il) * cell);
       const gz = (heights[jr * n + i] - heights[jl * n + i]) / ((jr - jl) * cell);
       slopes[j * n + i] = Math.hypot(gx, gz);
     }
   }
-  return { cell, n, heights, slopes };
+  return { cell, n, m, heights, slopes, minX, minZ };
 }
 
 /**
@@ -305,16 +316,16 @@ export function findFlatSpot(terrain, x, z, radius = 55) {
   return { x: best.x, z: best.z, slope: best.slope };
 }
 
-export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage', cells = 248, maxSlope = 0.78 } = {}) {
+export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage', cells = 248, maxSlope = 0.78, window = null } = {}) {
   // Snap the start to a natural flat shelf so the car does not spawn on a
   // 35° sideways slope. The finish is snapped less aggressively.
   start = findFlatSpot(terrain, start.x, start.z, 65);
   finish = findFlatSpot(terrain, finish.x, finish.z, 24);
-  const grid = buildCostGrid(terrain, cells);
-  const { cell, n, heights, slopes } = grid;
+  const grid = buildCostGrid(terrain, cells, window);
+  const { cell, n, heights, slopes, minX, minZ } = grid;
   const toIndex = (x, z) => ({
-    i: clamp(Math.round((x + terrain.sizeX / 2) / cell), 0, n - 1),
-    j: clamp(Math.round((z + terrain.sizeZ / 2) / cell), 0, n - 1),
+    i: clamp(Math.round((x - minX) / cell), 0, n - 1),
+    j: clamp(Math.round((z - minZ) / cell), 0, grid.m - 1),
   });
   // A click can land a metre or two off the drivable grid cell because of the
   // flat-spot snap or the 8 m A* cell. Find the nearest cell a rally car can
@@ -328,7 +339,7 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
           if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
           const i = i0 + di;
           const j = j0 + dj;
-          if (i < 0 || j < 0 || i >= n || j >= n) continue;
+          if (i < 0 || j < 0 || i >= n || j >= grid.m) continue;
           const idx = j * n + i;
           if (heights[idx] < 1.5 || slopes[idx] > maxSlope) continue;
           const d = di * di + dj * dj;
@@ -352,7 +363,7 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
   if (startIdx === finishIdx) {
     throw new Error('Those two points are practically the same place. Pick a finish further away.');
   }
-  const total = n * n;
+  const total = n * grid.m;
   const gScore = new Float32Array(total).fill(Infinity);
   const cameFrom = new Int32Array(total).fill(-1);
   const closed = new Uint8Array(total);
@@ -380,7 +391,7 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
     for (const [di, dj, mult] of dirs) {
       const ni = ci + di;
       const nj = cj + dj;
-      if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+      if (ni < 0 || nj < 0 || ni >= n || nj >= grid.m) continue;
       const next = nj * n + ni;
       if (closed[next]) continue;
       const h = heights[next];
@@ -412,10 +423,7 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
   while (p >= 0) {
     const i = p % n;
     const j = (p / n) | 0;
-    raw.push({
-      x: -terrain.sizeX / 2 + i * cell,
-      z: -terrain.sizeZ / 2 + j * cell,
-    });
+    raw.push({ x: minX + i * cell, z: minZ + j * cell });
     p = cameFrom[p];
   }
   raw.reverse();
@@ -497,7 +505,12 @@ function haversine(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-export async function fetchOsrmRoute(terrain, { a, b, profile = 'driving' }) {
+/**
+ * Fetch the raw road geometry from OSRM. The result is in WGS84 lat/lon, so it
+ * can be projected onto the current terrain — or used to generate a brand new
+ * one anywhere in Norway.
+ */
+export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
   const base = OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving;
   const url = `${base}/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=false`;
   let response;
@@ -544,16 +557,146 @@ export async function fetchOsrmRoute(terrain, { a, b, profile = 'driving' }) {
     );
   }
 
-  const coordinates = routeData.geometry.coordinates;
+  const coordinates = routeData.geometry.coordinates
+    .map(([lon, lat]) => ({ lat, lon }));
+  if (coordinates.length < 2) throw new Error('OSRM returned an empty geometry.');
+
+  return {
+    coordinates,
+    distance: routeData.distance,
+    duration: routeData.duration,
+    profile,
+    snapped: { a: snappedA, b: snappedB },
+    snapText,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Phase 1 (V5 plan): long routes are requested in < 5 km segments.    *
+ *                                                                      *
+ *  The straight line between the two picks is divided into ~4 km hops, *
+ *  OSRM is asked for each hop in turn, and the returned geometries are *
+ *  merged into one master track. Segmenting keeps each request small   *
+ *  (the public OSRM servers time out or degrade long routes), and the  *
+ *  merged track is what the streaming world generator consumes.        *
+ * ------------------------------------------------------------------ */
+export const MAX_STAGE_LENGTH = 30000;   // metres of merged master track
+const SEGMENT_LENGTH = 4000;             // metres of straight line per request
+
+function interpolateGeo(a, b, t) {
+  return { lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t };
+}
+
+export async function fetchOsrmGeometrySegmented({
+  a,
+  b,
+  profile = 'driving',
+  onProgress = null,
+  segmentLength = SEGMENT_LENGTH,
+} = {}) {
+  const straight = haversine(a, b);
+  const hops = Math.max(1, Math.ceil(straight / segmentLength));
+  // Within ~1.2 segments a single request is both faster and more accurate.
+  if (hops <= 1) {
+    const geometry = await fetchOsrmGeometry({ a, b, profile });
+    onProgress?.(1, 'Route received.');
+    return geometry;
+  }
+
+  const anchors = [];
+  for (let i = 0; i <= hops; i++) anchors.push(interpolateGeo(a, b, i / hops));
+
+  const coordinates = [];
+  let distance = 0;
+  let duration = 0;
+  let snapped = { a: null, b: null };
+  const t0 = performance.now();
+  for (let i = 0; i < hops; i++) {
+    onProgress?.(i / hops, `OSRM segment ${i + 1} of ${hops}…`);
+    const geometry = await fetchOsrmGeometry({ a: anchors[i], b: anchors[i + 1], profile });
+    const startAt = coordinates.length ? 1 : 0; // skip the duplicated joint
+    for (let k = startAt; k < geometry.coordinates.length; k++) {
+      coordinates.push(geometry.coordinates[k]);
+    }
+    distance += geometry.distance;
+    duration += geometry.duration;
+    if (i === 0) snapped.a = geometry.snapped?.a ?? null;
+    snapped.b = geometry.snapped?.b ?? null;
+  }
+  onProgress?.(1, `Merged ${hops} segments.`);
+
+  if (coordinates.length < 2) throw new Error('The segmented route came back empty.');
+  const km = (distance / 1000).toFixed(1);
+  if (distance > MAX_STAGE_LENGTH) {
+    throw new Error(
+      `That route is ${km} km long. The streamer covers stages up to `
+      + `${Math.round(MAX_STAGE_LENGTH / 1000)} km — pick closer points.`,
+    );
+  }
+  log.debug(`segmented OSRM route: ${hops} hops, ${km} km in ${(performance.now() - t0).toFixed(0)} ms`);
+  return {
+    coordinates,
+    distance,
+    duration,
+    profile,
+    snapped,
+    snapText: '',
+    segmented: { hops, segmentLength },
+  };
+}
+
+/**
+ * A grid-hash of the route samples for cheap "how far am I from the road?"
+ * checks. `route.nearest()` scans every sample; the scatter code asks that
+ * thousands of times per chunk, so it queries the hash instead.
+ */
+export function buildRouteIndex(route, cell = 48) {
+  const buckets = new Map();
+  const key = (bx, bz) => `${bx},${bz}`;
+  route.samples.forEach((p, i) => {
+    const bx = Math.floor(p.x / cell);
+    const bz = Math.floor(p.z / cell);
+    const k = key(bx, bz);
+    let list = buckets.get(k);
+    if (!list) buckets.set(k, (list = []));
+    list.push(i);
+  });
+  return {
+    cell,
+    /** Distance to the nearest sample, capped at `limit` (returns > limit when farther). */
+    distanceTo(x, z, limit = 40) {
+      const bx = Math.floor(x / cell);
+      const bz = Math.floor(z / cell);
+      const r = Math.ceil(limit / cell);
+      let best = Infinity;
+      for (let dj = -r; dj <= r; dj++) {
+        for (let di = -r; di <= r; di++) {
+          const list = buckets.get(key(bx + di, bz + dj));
+          if (!list) continue;
+          for (const i of list) {
+            const p = route.samples[i];
+            const d = Math.hypot(p.x - x, p.z - z);
+            if (d < best) best = d;
+          }
+        }
+      }
+      return best === Infinity ? limit + cell : best;
+    },
+  };
+}
+
+/** Project an OSRM geometry onto an existing terrain and build a StageRoute. */
+export function buildOsrmRoute(terrain, geometry, { requireInside = true } = {}) {
+  const { coordinates, profile, snapText = '', snapped = {} } = geometry;
   const points = [];
   let outside = 0;
-  for (const [lon, lat] of coordinates) {
+  for (const { lat, lon } of coordinates) {
     const p = terrain.worldFromLatLon(lat, lon);
-    if (!terrain.inside(p.x, p.z, 4)) outside++;
+    if (requireInside && !terrain.inside(p.x, p.z, 4)) outside++;
     points.push(p);
   }
   if (outside > 0) {
-    throw new Error(`That road leaves the 2 km demo terrain (${outside} of ${points.length} points outside). Pick start and finish inside the Preikestolen tile.`);
+    throw new Error(`That road leaves the ${(terrain.sizeX / 1000).toFixed(0)} km terrain (${outside} of ${points.length} points outside). Generate a world for it from the 2D map.`);
   }
   if (points.length < 2) throw new Error('OSRM returned an empty geometry.');
 
@@ -570,11 +713,16 @@ export async function fetchOsrmRoute(terrain, { a, b, profile = 'driving' }) {
   }
   return {
     route,
-    distance: routeData.distance,
-    duration: routeData.duration,
+    distance: geometry.distance,
+    duration: geometry.duration,
     profile,
-    snapped: { a: snappedA, b: snappedB },
+    snapped,
   };
+}
+
+export async function fetchOsrmRoute(terrain, { a, b, profile = 'driving' }) {
+  const geometry = await fetchOsrmGeometry({ a, b, profile });
+  return buildOsrmRoute(terrain, geometry);
 }
 
 /* ------------------------------------------------------------------ *
@@ -683,9 +831,57 @@ function buildGate(route, terrain, atStart) {
   return group;
 }
 
-export function buildRoadVisuals(route, terrain) {
+/**
+ * Build the gravel ribbon, marker posts and start/finish gates.
+ *
+ * With no `bounds` this renders the whole route (the classic single-world
+ * path). With `bounds = { minX, maxX, minZ, maxZ }` only the samples, posts
+ * and gates inside the rectangle are built — that is how the streaming world
+ * adds its slice of the road when a 2 km chunk loads.
+ */
+export function buildRoadVisuals(route, terrain, { bounds = null, gates = 'both', posts = true } = {}) {
+  const all = route.samples;
+  const inBounds = (p) => !bounds
+    || (p.x >= bounds.minX && p.x <= bounds.maxX && p.z >= bounds.minZ && p.z <= bounds.maxZ);
+
+  // Contiguous runs of in-bounds samples; the route can leave and re-enter a
+  // chunk rectangle, so the ribbon is split where the index jumps.
+  const runs = [];
+  let run = null;
+  for (let i = 0; i < all.length; i++) {
+    if (!inBounds(all[i])) {
+      run = null;
+      continue;
+    }
+    if (run && i === run.end + 1) {
+      run.end = i;
+    } else {
+      run = { start: i, end: i };
+      runs.push(run);
+    }
+  }
+
+  const group = new THREE.Group();
+  group.name = 'road';
+
+  for (const { start, end } of runs) {
+    if (end - start < 1) continue;
+    group.add(buildRibbon(route, terrain, start, end));
+  }
+
+  if (posts) group.add(buildPosts(route, terrain, inBounds));
+
+  const startHere = (gates === 'both' || gates === 'start') && inBounds(all[0]);
+  const finishHere = (gates === 'both' || gates === 'finish') && inBounds(all[all.length - 1]);
+  if (startHere) group.add(buildGate(route, terrain, true));
+  if (finishHere) group.add(buildGate(route, terrain, false));
+
+  return group;
+}
+
+function buildRibbon(route, terrain, from, to) {
   const samples = route.samples;
-  const count = samples.length;
+  const count = to - from + 1;
   const half = route.roadWidth;
   const shoulder = 0.9;
   const ROWS = 6;
@@ -706,9 +902,10 @@ export function buildRoadVisuals(route, terrain) {
   // hanging off both shoulders so the road reads as a solid ribbon.
   const tiltLimit = Math.max(0.5, half * 1.15);
   for (let i = 0; i < count; i++) {
-    const p = samples[i];
-    const prev = samples[Math.max(0, i - 1)];
-    const next = samples[Math.min(count - 1, i + 1)];
+    const gi = from + i;
+    const p = samples[gi];
+    const prev = samples[Math.max(from, gi - 1)];
+    const next = samples[Math.min(to, gi + 1)];
     let tx = next.x - prev.x;
     let tz = next.z - prev.z;
     const tl = Math.hypot(tx, tz) || 1;
@@ -770,12 +967,13 @@ export function buildRoadVisuals(route, terrain) {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
   mesh.castShadow = false;
-  mesh.name = 'road';
+  mesh.name = 'roadRibbon';
+  return mesh;
+}
 
-  const group = new THREE.Group();
-  group.add(mesh);
-
-  // Red-and-white rally marker posts along the right-hand edge.
+/** Red-and-white rally marker posts along the road edge, filtered by bounds. */
+function buildPosts(route, terrain, inBounds) {
+  const half = route.roadWidth;
   const postGeo = new THREE.CylinderGeometry(0.065, 0.085, 1.15, 5);
   const whiteMat = new THREE.MeshBasicMaterial({ color: 0xf4efe1 });
   const redMat = new THREE.MeshBasicMaterial({ color: 0xcf3e32 });
@@ -783,6 +981,7 @@ export function buildRoadVisuals(route, terrain) {
   const step = 26;
   for (let d = 18; d < route.length - 12; d += step) {
     const p = route.sampleAtDistance(d);
+    if (!inBounds(p)) continue;
     const prev = route.sampleAtDistance(d - 3);
     const next = route.sampleAtDistance(d + 3);
     const tx = next.x - prev.x;
@@ -808,13 +1007,9 @@ export function buildRoadVisuals(route, terrain) {
     inst.instanceMatrix.needsUpdate = true;
     return inst;
   };
+  const group = new THREE.Group();
+  group.name = 'roadPosts';
   group.add(makePosts(whitePosts, whiteMat), makePosts(redPosts, redMat));
-
-  const startGate = buildGate(route, terrain, true);
-  const finishGate = buildGate(route, terrain, false);
-  group.add(startGate, finishGate);
-  group.userData.startGate = startGate;
-  group.userData.finishGate = finishGate;
-
   return group;
 }
+

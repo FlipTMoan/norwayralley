@@ -78,6 +78,47 @@ export function utmInverse(easting, northing) {
   return { lat: lat / DEG, lon: lon / DEG };
 }
 
+/**
+ * A local tangent-plane projection, in metres, anchored at `lat0`/`lon0`.
+ *
+ * UTM zone 33N is only accurate around 15°E; Norway spans roughly 4°E to 31°E.
+ * For a generated stage we only care about a few kilometres around the route,
+ * so a local equirectangular projection is both accurate (< 0.1% over 10 km)
+ * and trivial to invert. `x` grows east, `z` grows south — the same axis
+ * convention the rest of the game uses.
+ */
+export function localProjection(lat0, lon0) {
+  const phi = lat0 * DEG;
+  // Metres per degree of latitude (WGS84 series).
+  const mPerLat = 111132.92 - 559.82 * Math.cos(2 * phi) + 1.175 * Math.cos(4 * phi)
+    - 0.0023 * Math.cos(6 * phi);
+  // Metres per degree of longitude at this latitude.
+  const mPerLon = 111412.84 * Math.cos(phi) - 93.5 * Math.cos(3 * phi) + 0.118 * Math.cos(5 * phi);
+  return {
+    lat0,
+    lon0,
+    mPerLat,
+    mPerLon,
+    worldFromLatLon(lat, lon) {
+      return { x: (lon - lon0) * mPerLon, z: -(lat - lat0) * mPerLat };
+    },
+    latLonFromWorld(x, z) {
+      return { lat: lat0 - z / mPerLat, lon: lon0 + x / mPerLon };
+    },
+  };
+}
+
+/** Great-circle distance in metres. */
+export function haversine(a, b) {
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * DEG;
+  const dLon = (b.lon - a.lon) * DEG;
+  const la = a.lat * DEG;
+  const lb = b.lat * DEG;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la) * Math.cos(lb) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export const lerp = (a, b, t) => a + (b - a) * t;
 export const smoothstep = (t) => t * t * (3 - 2 * t);

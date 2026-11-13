@@ -8,6 +8,7 @@ import * as THREE from 'three';
 export class RetroPresenter {
   constructor(renderer) {
     this.renderer = renderer;
+    this.pixelScaleOverride = null;
     this.target = new THREE.WebGLRenderTarget(640, 360, {
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter,
@@ -94,13 +95,21 @@ export class RetroPresenter {
   }
 
   resize(width, height) {
-    const pixelScale = width < 700 ? 0.6 : 0.46;
+    this.lastWidth = width;
+    this.lastHeight = height;
+    const pixelScale = this.pixelScaleOverride ?? (width < 700 ? 0.6 : 0.46);
     const w = Math.max(420, Math.min(1024, Math.round(width * pixelScale)));
     const h = Math.max(260, Math.round(w * (height / width)));
     this.target.setSize(w, h);
     this.material.uniforms.uResolution.value.set(w, h);
     this.material.uniforms.uScreen.value.set(width, height);
     this.postCamera.updateProjectionMatrix();
+  }
+
+  /** Drop the internal render resolution (used by the perf watchdog). */
+  setPixelScale(scale) {
+    this.pixelScaleOverride = scale;
+    if (this.lastWidth) this.resize(this.lastWidth, this.lastHeight);
   }
 
   render(scene, camera, time) {

@@ -85,6 +85,164 @@ function readMeta(image, scene) {
 }
 
 /**
+ * Build the game's terrain model around an existing height grid.
+ *
+ * `projection` supplies `worldFromLatLon` / `latLonFromWorld` (and optionally
+ * the UTM helpers), so the same physics, LOD and road code works both for a
+ * baked demo scene and for a stage generated on the fly anywhere in Norway.
+ */
+export function createTerrainModel({
+  heights,
+  grid,
+  sizeX,
+  sizeZ,
+  projection,
+  scene = null,
+  basemapUrl = null,
+  meta = {},
+}) {
+  let minH = Infinity;
+  let maxH = -Infinity;
+  for (let i = 0; i < heights.length; i++) {
+    const h = heights[i];
+    if (h < minH) minH = h;
+    if (h > maxH) maxH = h;
+  }
+  if (!Number.isFinite(minH)) {
+    minH = 0;
+    maxH = 0;
+  }
+
+  const nx = sizeX / (grid - 1);
+  const nz = sizeZ / (grid - 1);
+  // Keep the untouched survey heights so a start pad can be carved (and
+  // re-carved for the next stage) without flattening the mountain for good.
+  const baseHeights = heights.slice();
+
+  return {
+    scene,
+    meta,
+    heights,
+    basemapUrl,
+    grid,
+    sizeX,
+    sizeZ,
+    minH,
+    maxH,
+    cellX: nx,
+    cellZ: nz,
+    originX: meta.originX ?? 0,
+    originY: meta.originY ?? 0,
+
+    worldFromLatLon: (lat, lon) => projection.worldFromLatLon(lat, lon),
+    latLonFromWorld: (x, z) => projection.latLonFromWorld(x, z),
+    worldFromUtm: projection.worldFromUtm ? (x, y) => projection.worldFromUtm(x, y) : null,
+    utmFromWorld: projection.utmFromWorld ? (x, z) => projection.utmFromWorld(x, z) : null,
+    inside(x, z, margin = 0) {
+      return Math.abs(x) <= sizeX / 2 - margin && Math.abs(z) <= sizeZ / 2 - margin;
+    },
+    sample(x, z) {
+      const u = ((x + sizeX / 2) / sizeX) * (grid - 1);
+      const v = ((z + sizeZ / 2) / sizeZ) * (grid - 1);
+      const i = clamp(Math.floor(u), 0, grid - 2);
+      const j = clamp(Math.floor(v), 0, grid - 2);
+      const fx = clamp(u - i, 0, 1);
+      const fz = clamp(v - j, 0, 1);
+      const a = heights[j * grid + i];
+      const b = heights[j * grid + i + 1];
+      const c = heights[(j + 1) * grid + i];
+      const d = heights[(j + 1) * grid + i + 1];
+      return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
+    },
+    gradient(x, z, e = 4) {
+      const gx = (this.sample(x + e, z) - this.sample(x - e, z)) / (2 * e);
+      const gz = (this.sample(x, z + e) - this.sample(x, z - e)) / (2 * e);
+      return { gx, gz };
+    },
+    slope(x, z) {
+      const { gx, gz } = this.gradient(x, z);
+      return Math.hypot(gx, gz);
+    },
+    normal(x, z, e = 5) {
+      const { gx, gz } = this.gradient(x, z, e);
+      return new THREE.Vector3(-gx, 1, -gz).normalize();
+    },
+    /** Restore the original survey surface (removing any previous start pad). */
+    resetHeights() {
+      heights.set(baseHeights);
+    },
+    /**
+     * Carve a drivable ribbon into the high-resolution height field. This is
+     * the physics side of "carving the road": the visible terrain mesh, the
+     * minimap and `sample()` all read the same modified heights, so the car
+     * never floats above or sinks into the road.
+     */
+    carveRoad(samples, { halfWidth = 5.4, blend = 7, lift = 0.12 } = {}) {
+      if (!samples || samples.length < 2) return 0;
+      const halfX = sizeX / 2;
+      const halfZ = sizeZ / 2;
+      const reach = halfWidth + blend;
+      const weights = new Float32Array(grid * grid);
+      const targets = new Float32Array(grid * grid);
+      for (const p of samples) {
+        const target = p.y + lift;
+        const minI = Math.max(0, Math.floor(((p.x - reach + halfX) / sizeX) * (grid - 1)) - 1);
+        const maxI = Math.min(grid - 1, Math.ceil(((p.x + reach + halfX) / sizeX) * (grid - 1)) + 1);
+        const minJ = Math.max(0, Math.floor(((p.z - reach + halfZ) / sizeZ) * (grid - 1)) - 1);
+        const maxJ = Math.min(grid - 1, Math.ceil(((p.z + reach + halfZ) / sizeZ) * (grid - 1)) + 1);
+        for (let j = minJ; j <= maxJ; j++) {
+          const z = -halfZ + (j / (grid - 1)) * sizeZ;
+          for (let i = minI; i <= maxI; i++) {
+            const x = -halfX + (i / (grid - 1)) * sizeX;
+            const d = Math.hypot(x - p.x, z - p.z);
+            if (d > reach) continue;
+            const t = d <= halfWidth ? 1 : 1 - smoothstep((d - halfWidth) / blend);
+            const idx = j * grid + i;
+            if (t > weights[idx]) {
+              weights[idx] = t;
+              targets[idx] = target;
+            }
+          }
+        }
+      }
+      let touched = 0;
+      for (let idx = 0; idx < heights.length; idx++) {
+        const w = weights[idx];
+        if (w <= 0.001) continue;
+        heights[idx] = lerp(heights[idx], targets[idx], w);
+        touched++;
+      }
+      return touched;
+    },
+
+    /**
+     * Bulldoze a flat start pad: a level disc of `radius` metres that blends
+     * back into the mountain over `blend` metres. Without this, a spot that
+     * looks flat on a 1 m DTM can still tip the car onto two wheels.
+     */
+    flattenPad(cx, cz, radius = 18, blend = 34, targetHeight = null) {
+      const target = targetHeight ?? this.sample(cx, cz);
+      const halfX = sizeX / 2;
+      const halfZ = sizeZ / 2;
+      const reach = radius + blend;
+      for (let j = 0; j < grid; j++) {
+        const z = -halfZ + (j / (grid - 1)) * sizeZ;
+        if (Math.abs(z - cz) > reach) continue;
+        for (let i = 0; i < grid; i++) {
+          const x = -halfX + (i / (grid - 1)) * sizeX;
+          const d = Math.hypot(x - cx, z - cz);
+          if (d > reach) continue;
+          const t = d <= radius ? 1 : 1 - smoothstep((d - radius) / blend);
+          const idx = j * grid + i;
+          heights[idx] = lerp(baseHeights[idx], target, t);
+        }
+      }
+      return target;
+    },
+  };
+}
+
+/**
  * Loads a local GeoTIFF (through geotiff.js on window) and builds the sampled
  * height field the game and the car physics share.
  */
@@ -115,116 +273,37 @@ export async function loadTerrain({ sceneUrl, tifUrl, onProgress, basemapUrl = n
     resampleMethod: 'nearest',
   });
   const heights = new Float32Array(rasters[0].length);
-  let minH = Infinity;
-  let maxH = -Infinity;
   for (let i = 0; i < heights.length; i++) {
     const raw = rasters[0][i];
-    const h = raw <= NODATA + 100 || !Number.isFinite(raw) ? 0 : Math.max(0, raw);
-    heights[i] = h;
-    if (h < minH) minH = h;
-    if (h > maxH) maxH = h;
+    heights[i] = raw <= NODATA + 100 || !Number.isFinite(raw) ? 0 : Math.max(0, raw);
   }
 
-  const sizeX = meta.sizeX;
-  const sizeZ = meta.sizeZ;
-  const nx = sizeX / (GRID - 1);
-  const nz = sizeZ / (GRID - 1);
-  // Keep the untouched survey heights so a start pad can be carved (and
-  // re-carved for the next stage) without flattening the mountain for good.
-  const baseHeights = heights.slice();
-
-  const terrain = {
-    scene,
-    meta,
+  const terrain = createTerrainModel({
     heights,
-    basemapUrl,
     grid: GRID,
-    sizeX,
-    sizeZ,
-    minH,
-    maxH,
-    cellX: nx,
-    cellZ: nz,
-    originX: meta.originX,
-    originY: meta.originY,
-
-    worldFromUtm(x, y) {
-      return { x: x - meta.originX, z: -(y - meta.originY) };
+    sizeX: meta.sizeX,
+    sizeZ: meta.sizeZ,
+    scene,
+    basemapUrl,
+    meta,
+    projection: {
+      worldFromUtm: (x, y) => ({ x: x - meta.originX, z: -(y - meta.originY) }),
+      utmFromWorld: (x, z) => ({ x: x + meta.originX, y: meta.originY - z }),
+      worldFromLatLon(lat, lon) {
+        const { x, y } = utmForward(lat, lon);
+        return { x: x - meta.originX, z: -(y - meta.originY) };
+      },
+      latLonFromWorld(x, z) {
+        return utmInverse(x + meta.originX, meta.originY - z);
+      },
     },
-    utmFromWorld(x, z) {
-      return { x: x + meta.originX, y: meta.originY - z };
-    },
-    worldFromLatLon(lat, lon) {
-      const { x, y } = utmForward(lat, lon);
-      return { x: x - meta.originX, z: -(y - meta.originY) };
-    },
-    latLonFromWorld(x, z) {
-      return utmInverse(x + meta.originX, meta.originY - z);
-    },
-    inside(x, z, margin = 0) {
-      return Math.abs(x) <= sizeX / 2 - margin && Math.abs(z) <= sizeZ / 2 - margin;
-    },
-    sample(x, z) {
-      const u = ((x + sizeX / 2) / sizeX) * (GRID - 1);
-      const v = ((z + sizeZ / 2) / sizeZ) * (GRID - 1);
-      const i = clamp(Math.floor(u), 0, GRID - 2);
-      const j = clamp(Math.floor(v), 0, GRID - 2);
-      const fx = clamp(u - i, 0, 1);
-      const fz = clamp(v - j, 0, 1);
-      const a = heights[j * GRID + i];
-      const b = heights[j * GRID + i + 1];
-      const c = heights[(j + 1) * GRID + i];
-      const d = heights[(j + 1) * GRID + i + 1];
-      return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
-    },
-    gradient(x, z, e = 4) {
-      const gx = (this.sample(x + e, z) - this.sample(x - e, z)) / (2 * e);
-      const gz = (this.sample(x, z + e) - this.sample(x, z - e)) / (2 * e);
-      return { gx, gz };
-    },
-    slope(x, z) {
-      const { gx, gz } = this.gradient(x, z);
-      return Math.hypot(gx, gz);
-    },
-    normal(x, z, e = 5) {
-      const { gx, gz } = this.gradient(x, z, e);
-      return new THREE.Vector3(-gx, 1, -gz).normalize();
-    },
-    /** Restore the original survey surface (removing any previous start pad). */
-    resetHeights() {
-      heights.set(baseHeights);
-    },
-    /**
-     * Bulldoze a flat start pad: a level disc of `radius` metres that blends
-     * back into the mountain over `blend` metres. Without this, a spot that
-     * looks flat on a 1 m DTM can still tip the car onto two wheels.
-     */
-    flattenPad(cx, cz, radius = 18, blend = 34, targetHeight = null) {
-      const target = targetHeight ?? this.sample(cx, cz);
-      const halfX = sizeX / 2;
-      const halfZ = sizeZ / 2;
-      const reach = radius + blend;
-      for (let j = 0; j < GRID; j++) {
-        const z = -halfZ + (j / (GRID - 1)) * sizeZ;
-        if (Math.abs(z - cz) > reach) continue;
-        for (let i = 0; i < GRID; i++) {
-          const x = -halfX + (i / (GRID - 1)) * sizeX;
-          const d = Math.hypot(x - cx, z - cz);
-          if (d > reach) continue;
-          const t = d <= radius ? 1 : 1 - smoothstep((d - radius) / blend);
-          const idx = j * GRID + i;
-          heights[idx] = lerp(baseHeights[idx], target, t);
-        }
-      }
-      return target;
-    },
-  };
+  });
 
   onProgress?.(0.85, 'Growing trees…');
   return terrain;
 }
 
-function terrainColor(h, slope, x, z, out) {
+export function terrainColor(h, slope, x, z, out) {
   const n = hash2(Math.floor(x * 0.25), Math.floor(z * 0.25), 91);
   const n2 = hash2(Math.floor(x * 0.08), Math.floor(z * 0.08), 17);
   let r;
