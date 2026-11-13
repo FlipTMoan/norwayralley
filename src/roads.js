@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, lerp, smoothstep } from './geo.js';
+import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
 
 /**
@@ -88,7 +88,8 @@ function finishRun(points, road, half, terrain) {
     if (i > 0) s += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
     samples.push({ x: points[i].x, z: points[i].z, roadY: sum / n, y: sum / n, s });
   }
-  return { kind: road.kind, name: road.name, half, paved: isPaved(road), maxspeed: road.maxspeed, samples, length: s };
+  const paved = isPaved(road);
+  return { kind: road.kind, name: road.name, half, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };
 }
 
 /**
@@ -186,7 +187,7 @@ export class RoadNetwork {
     for (const line of polylines) {
       const s = line.samples;
       for (let k = 0; k + 1 < s.length; k++) {
-        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, half: line.half, paved: line.paved, chunk: chunkKey };
+        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, half: line.half, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
         const bx = Math.floor(((seg.ax + seg.bx) / 2) / this.cell);
         const bz = Math.floor(((seg.az + seg.bz) / 2) / this.cell);
         const key = this.key(bx, bz);
@@ -237,7 +238,7 @@ export class RoadNetwork {
       }
     }
     if (!best) {
-      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, paved: false };
+      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, paved: false, surface: 'gravel' };
     }
     const dx = best.bx - best.ax;
     const dz = best.bz - best.az;
@@ -250,7 +251,23 @@ export class RoadNetwork {
       tangent: { x: dx / l, z: dz / l },
       width: best.half,
       paved: best.paved,
+      surface: best.surface,
     };
+  }
+
+  /** Every segment whose bucket lies within `radius` of (x, z) (for the minimap). */
+  segmentsNear(x, z, radius) {
+    const r = Math.ceil(radius / this.cell);
+    const bx = Math.floor(x / this.cell);
+    const bz = Math.floor(z / this.cell);
+    const out = [];
+    for (let dj = -r; dj <= r; dj++) {
+      for (let di = -r; di <= r; di++) {
+        const list = this.buckets.get(this.key(bx + di, bz + dj));
+        if (list) out.push(...list);
+      }
+    }
+    return out;
   }
 
   /** A pose on the nearest road to (x, z), or null when no road is near. */
@@ -265,4 +282,107 @@ export class RoadNetwork {
   }
 
   snapToTerrain() { return this; }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Road surface: NVDB "Vegdekke" (type 241) with OSM fallback            *
+ * ------------------------------------------------------------------ */
+
+const NVDB_SURFACE_URL = 'https://nvdbapiles.atlas.vegvesen.no/vegobjekter/api/v4/vegobjekter/241';
+const MASSETYPE = 1216;
+
+/** NVDB "Massetype" text → game surface kind ('asphalt' covers every bound surface). */
+export function surfaceKindFromMassetype(verdi) {
+  if (!verdi) return null;
+  const v = String(verdi).toLowerCase();
+  if (v === 'grus' || v.startsWith('enkel overflatebehandling grus') || v.startsWith('dobbel overflatebehandling grus')) return 'gravel';
+  if (v.includes('grus') && !v.includes('asfalt') && !v.includes('emulsjon') && !v.includes('olje')) return 'gravel';
+  return 'asphalt';
+}
+
+function parseLineZ(wkt) {
+  const m = /LINESTRING\s*Z?\s*\(([^)]*)\)/i.exec(wkt || '');
+  if (!m) return null;
+  const pts = m[1].split(',').map((t) => t.trim().split(/\s+/).map(Number)).filter((a) => a.length >= 2 && Number.isFinite(a[0]));
+  return pts.length >= 2 ? pts.map(([e, n]) => utmInverse(e, n)) : null;
+}
+
+/**
+ * Fetch the registered road surfaces inside a lat/lon bbox. Returns
+ * `[{ kind: 'asphalt'|'gravel', points: [{lat, lon}] }]`; objects without a
+ * `Massetype` are skipped (the register is patchy on municipal roads).
+ */
+export async function fetchRoadSurfaces({ minLat, minLon, maxLat, maxLon }, { timeout = 20000 } = {}) {
+  let minE = Infinity; let maxE = -Infinity; let minN = Infinity; let maxN = -Infinity;
+  for (const [lat, lon] of [[minLat, minLon], [minLat, maxLon], [maxLat, minLon], [maxLat, maxLon]]) {
+    const { x: e, y: n } = utmForward(lat, lon);
+    minE = Math.min(minE, e); maxE = Math.max(maxE, e); minN = Math.min(minN, n); maxN = Math.max(maxN, n);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  const out = [];
+  try {
+    let url = `${NVDB_SURFACE_URL}?kartutsnitt=${minE.toFixed(0)},${minN.toFixed(0)},${maxE.toFixed(0)},${maxN.toFixed(0)}&srid=5973&inkluder=geometri,egenskaper&antall=1000`;
+    for (let page = 0; url && page < 10; page++) {
+      const response = await fetch(url, { headers: { 'X-Client': 'norwayralley', Accept: 'application/json' }, signal: controller.signal });
+      if (!response.ok) break;
+      const data = await response.json();
+      const objects = data.objekter || [];
+      for (const o of objects) {
+        const prop = (o.egenskaper || []).find((e) => e.id === MASSETYPE);
+        const kind = surfaceKindFromMassetype(prop?.verdi);
+        const points = kind ? parseLineZ(o.geometri?.wkt) : null;
+        if (kind && points) out.push({ kind, points });
+      }
+      url = objects.length && data.metadata?.neste?.href ? data.metadata.neste.href : null;
+    }
+  } catch {
+    // No surface data: callers fall back to OSM tags / road class.
+  } finally {
+    clearTimeout(timer);
+  }
+  return out;
+}
+
+/**
+ * Give every sample a `surface` from the nearest surface polyline within
+ * `maxDist` metres, else `fallback` (or the sample's existing value).
+ * `polylines` are `{ kind, points: [{lat, lon}] }`; `project` maps lat/lon
+ * to world x/z. Returns how many samples got a measured surface.
+ */
+export function assignSurfaces(samples, polylines, project, { maxDist = 12, fallback = null } = {}) {
+  const cell = 64;
+  const buckets = new Map();
+  const key = (bx, bz) => `${bx},${bz}`;
+  for (const line of polylines || []) {
+    const pts = line.points.map((p) => project(p.lat, p.lon));
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const seg = { ax: pts[i].x, az: pts[i].z, bx: pts[i + 1].x, bz: pts[i + 1].z, kind: line.kind };
+      const bx0 = Math.floor(Math.min(seg.ax, seg.bx) / cell); const bx1 = Math.floor(Math.max(seg.ax, seg.bx) / cell);
+      const bz0 = Math.floor(Math.min(seg.az, seg.bz) / cell); const bz1 = Math.floor(Math.max(seg.az, seg.bz) / cell);
+      for (let bz = bz0; bz <= bz1; bz++) for (let bx = bx0; bx <= bx1; bx++) {
+        const k = key(bx, bz);
+        let list = buckets.get(k);
+        if (!list) buckets.set(k, (list = []));
+        list.push(seg);
+      }
+    }
+  }
+  let measured = 0;
+  for (const p of samples) {
+    let best = null; let bestD = maxDist;
+    const bx = Math.floor(p.x / cell); const bz = Math.floor(p.z / cell);
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const list = buckets.get(key(bx + di, bz + dj));
+      if (!list) continue;
+      for (const seg of list) {
+        const dx = seg.bx - seg.ax; const dz = seg.bz - seg.az; const l2 = dx * dx + dz * dz || 1;
+        const t = clamp(((p.x - seg.ax) * dx + (p.z - seg.az) * dz) / l2, 0, 1);
+        const d = Math.hypot(p.x - (seg.ax + dx * t), p.z - (seg.az + dz * t));
+        if (d < bestD) { bestD = d; best = seg.kind; }
+      }
+    }
+    if (best) { p.surface = best; measured++; } else if (fallback && !p.surface) p.surface = fallback;
+  }
+  return measured;
 }

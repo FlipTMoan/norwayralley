@@ -40,10 +40,16 @@ const DRIVE_AXLE_LOAD = 0.62;
 
 export const ENGINE = { idle: IDLE_RPM, redline: REDLINE_RPM, gears: GEAR_RATIOS.length - 1 };
 
+// Surface model. `peak` scales the lateral grip, `loose` how progressively the
+// tyres let go (and how much the tail comes round on the throttle), `dust`
+// whether the wheels throw up a plume.
 const SURFACES = {
-  road: { mu: 1.02, rolling: 0.5, drag: 0.0011 },
-  gravel: { mu: 0.76, rolling: 2.0, drag: 0.003 },
+  asphalt: { mu: 1.08, rolling: 0.4, drag: 0.0011, peak: 1.2, loose: 0, slipK: 9.0, dust: false },
+  gravel: { mu: 0.86, rolling: 0.9, drag: 0.0013, peak: 0.95, loose: 0.35, slipK: 6.0, dust: true },
+  offroad: { mu: 0.7, rolling: 2.0, drag: 0.003, peak: 0.85, loose: 0.55, slipK: 5.0, dust: true },
 };
+const MAX_STEER_LOW = 0.6;         // rad of front-wheel angle at walking pace
+const MAX_STEER_HIGH = 0.08;       // rad at 50 m/s
 
 function makeNumberTexture(text) {
   const canvas = document.createElement('canvas');
@@ -264,6 +270,7 @@ export class Car {
     this.vR = 0;
     this.speed = 0;
     this.onRoad = false;
+    this.surfaceKind = 'offroad';
     this.drifting = false;
     this.airTime = 0;
     this.landingImpact = 0;
@@ -649,7 +656,8 @@ export class Car {
     // vehicle — smaller dt, stiffer suspension).
     const steps = clamp(Math.ceil(dt / (1 / 120)), 1, MAX_SUBSTEPS);
     const h = dt / steps;
-    const surface = this.onRoad ? SURFACES.road : SURFACES.gravel;
+    this.surfaceKind = this.onRoad ? (this.roadQuery?.surface || 'gravel') : 'offroad';
+    const surface = SURFACES[this.surfaceKind] || SURFACES.gravel;
     const drivetrain = this.updateDrivetrain(dt, input, surface);
     let jumpRequested = false;
 
@@ -727,27 +735,38 @@ export class Car {
       // angle, then falls away: that is what lets the tail step out on gravel
       // and on the handbrake without the car feeling like it is on ice.
       const slip = Math.atan2(Math.abs(vR), Math.max(1.2, Math.abs(vF)));
-      const shape = Math.sin(1.55 * Math.atan(9.0 * slip));
-      const handbrake = input.handbrake ? 0.38 : 1;
+      const shape = Math.sin(1.55 * Math.atan(surface.slipK * slip));
+      const handbrake = input.handbrake ? 0.38 - surface.loose * 0.12 : 1;
       const mu = surface.mu * handbrake;
-      const maxLat = mu * 9.81 * 1.15;
+      const maxLat = mu * 9.81 * surface.peak;
       const latForce = -Math.sign(vR) * maxLat * clamp(shape, 0, 1) * clamp(Math.abs(vR) / 0.35, 0, 1);
       vR += latForce * h;
 
       // Ruts and loose stones make the tail wander a little.
-      if (!this.onRoad && Math.abs(vF) > 4) {
-        vR += (Math.random() - 0.5) * 2.4 * h;
+      if (surface.loose > 0 && Math.abs(vF) > 4) {
+        vR += (Math.random() - 0.5) * (1.2 + surface.loose * 3) * h;
       }
 
-      // Steering uses a bicycle model; the yaw authority softens with speed.
-      const turnRate = this.steer * clamp(2.95 - Math.abs(vF) * 0.032, 1.15, 2.95);
-      const targetYawVel = turnRate * Math.sign(vF || 1) * clamp(Math.abs(vF) / 2.6, 0, 1);
-      const gripResponse = input.handbrake ? 4.0 : 9.5;
+      // Steering: a bicycle model (yaw rate = v·tan δ / wheelbase) whose
+      // front-wheel angle shrinks with speed, capped by what the tyres can
+      // hold — so a fast car takes wide lines instead of twitching, and a
+      // loose surface lets the nose rotate further into a slide.
+      const absV = Math.abs(vF);
+      const delta = this.steer * lerp(MAX_STEER_LOW, MAX_STEER_HIGH, clamp(absV / 50, 0, 1));
+      const kinematic = (vF * Math.tan(delta)) / WHEELBASE;
+      const yawCap = ((surface.mu * 9.81 * 1.1) / Math.max(absV, 4)) * (1 + surface.loose * 0.6);
+      const targetYawVel = clamp(kinematic, -yawCap, yawCap) * clamp(absV / 1.5, 0, 1);
+      const gripResponse = input.handbrake ? 4.0 : 8.0 - surface.loose * 3;
       this.yawVel = damp(this.yawVel, targetYawVel, gripResponse, h);
-      if (input.handbrake && Math.abs(vF) > 6) {
-        this.yawVel += this.steer * 1.5 * clamp(Math.abs(vF) / 20, 0, 1) * h;
+      if (input.handbrake && absV > 6) {
+        this.yawVel += this.steer * (1.5 + surface.loose * 1.5) * clamp(absV / 20, 0, 1) * h;
       }
-      this.drifting = Math.abs(vR) > 3.2 && Math.hypot(vF, vR) > 7;
+      // Power oversteer on loose ground: a rear-engined car swings its tail.
+      if (surface.loose > 0 && drivetrain.throttle > 0.6 && absV > 6) {
+        this.yawVel += this.steer * drivetrain.throttle * surface.loose * 1.6 * clamp(absV / 15, 0, 1) * h;
+        vR -= this.steer * drivetrain.throttle * surface.loose * 2.2 * h;
+      }
+      this.drifting = Math.abs(vR) > (3.2 - surface.loose * 1.2) && Math.hypot(vF, vR) > 7;
 
       // Jump: a vertical impulse off the springs. Only from a grounded stance.
       if (jump && this.airTime < 0.15) {
@@ -920,7 +939,9 @@ export class Car {
   updateDust(dt, speed, throttle) {
     const d = this.dust;
     d.clock += dt;
-    const wantDust = this.grounded && speed > 5 && (!this.onRoad || this.drifting || throttle > 0.9);
+    const surface = SURFACES[this.surfaceKind] || SURFACES.gravel;
+    // Asphalt stays clean; gravel and open ground throw a plume at speed.
+    const wantDust = this.grounded && speed > 5 && surface.dust && (!this.onRoad || this.drifting || throttle > 0.9 || speed > 12);
     if (wantDust && d.clock > 0.035) {
       d.clock = 0;
       const f = this.forward();

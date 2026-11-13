@@ -69,6 +69,20 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Minimap** is now a north-up window that follows the car (1.4–2.3 km
+  across, wider at speed) with live hillshade, land-cover tints, the loaded
+  OSM roads, the stage route, a scale bar, and the car always at the centre.
+  Click it twice to route a stage between the two spots.
+- **Road surfaces**: NVDB "Vegdekke" (type 241, `Massetype`) where
+  registered, else OpenStreetMap `surface`/class; the stage ribbon is drawn
+  as asphalt or gravel per sample. Asphalt grips hard and raises no dust;
+  gravel and open ground dust at speed, let go more progressively, allow
+  more rotation and power-oversteer; HUD shows ASPHALT / GRAVEL / OFF ROAD.
+- **Steering** is a bicycle model (yaw = v·tan δ / wheelbase) with the wheel
+  angle shrinking with speed and capped by tyre grip: wide lines at speed
+  instead of the old twitchiness.
+- Houses: clean gable roofs (no stray faces) and hillside foundations so the
+  downhill wall stands on the ground.
 - **Gearbox**: automatic or manual, chosen on the start card (remembered) or
   with `G`; `Q`/`E` shift. Five 911-style gears on a 12 000 rpm engine that
   run out at 60 / 100 / 140 / 180 / 220 km/h, a rev limiter on the redline,

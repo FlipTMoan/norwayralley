@@ -58,11 +58,12 @@ class MinHeap {
  *  query used for road grip, progress and the HUD.                     *
  * ------------------------------------------------------------------ */
 export class StageRoute {
-  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = 3.2 } = {}) {
+  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = 3.2, surface = 'gravel' } = {}) {
     this.terrain = terrain;
     this.name = name;
     this.source = source;
     this.roadWidth = roadWidth;
+    this.surface = surface; // default surface kind until NVDB / OSM say otherwise
     this.points = points;
     this.samples = this.prepareSamples(points);
     this.length = this.samples[this.samples.length - 1]?.s || 0;
@@ -79,7 +80,7 @@ export class StageRoute {
         const q = points[i - 1];
         s += Math.hypot(p.x - q.x, p.z - q.z);
       }
-      out.push({ x: p.x, z: p.z, y: this.terrain.sample(p.x, p.z), s });
+      out.push({ x: p.x, z: p.z, y: this.terrain.sample(p.x, p.z), s, surface: this.surface });
     }
     return out;
   }
@@ -144,6 +145,7 @@ export class StageRoute {
       progress: this.length > 0 ? p.s / this.length : 0,
       point: p,
       tangent: { x: tx, z: tz },
+      surface: p.surface || this.surface,
     };
   }
 
@@ -765,6 +767,7 @@ export function buildOsrmRoute(terrain, geometry, { requireInside = true } = {})
     spacing: 5,
     simplifyEpsilon: 2,
     roadWidth: profile === 'driving' ? 3.4 : 2.4,
+    surface: profile === 'driving' ? 'asphalt' : 'gravel',
   });
   if (route.length < 20) {
     throw new Error(`That road is too short to make a stage (${Math.round(route.length)} m).${snapText}`);
@@ -952,6 +955,10 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
   const cShoulder = new THREE.Color(paved ? 0x5a5a52 : 0x4d5146);
   const cEdge = new THREE.Color(paved ? 0xd9d6c8 : 0x8f8877);
   const cSkirt = new THREE.Color(0x333a35);
+  const cAsphalt = new THREE.Color(0x4b4d4f);
+  const cAsphaltDark = new THREE.Color(0x434547);
+  const cAsphaltShoulder = new THREE.Color(0x5a5a52);
+  const cCentreLine = new THREE.Color(0xd9d6c8);
   const tmp = new THREE.Color();
 
   // A rally ribbon must not tip over sideways or sink into a crest between two
@@ -971,6 +978,7 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
     const nx = -tz;
     const nz = tx;
     const fun = i < 3 || i > count - 4 ? 1 : 0.55;
+    const pavedHere = paved || p.surface === 'asphalt';
     const centerY = terrain.sample(p.x, p.z);
     const lift = ROAD_RIBBON_LIFT;
     for (let k = 0; k < ROWS; k++) {
@@ -991,7 +999,8 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
       positions[vi + 2] = z;
 
       if (k === 0 || k === 5) tmp.copy(cSkirt);
-      else if (k === 1 || k === 4) tmp.copy(cShoulder);
+      else if (k === 1 || k === 4) tmp.copy(pavedHere ? cAsphaltShoulder : cShoulder);
+      else if (pavedHere) tmp.copy(i % 17 === 0 ? cCentreLine : i % 5 === 0 ? cAsphaltDark : cAsphalt);
       else if (i % 17 === 0) tmp.copy(cEdge);
       else tmp.copy(i % 5 === 0 ? cGravelDark : cGravel);
       tmp.multiplyScalar(0.92 + fun * 0.08);

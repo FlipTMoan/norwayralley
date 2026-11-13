@@ -307,16 +307,16 @@ function houseGeometry() {
   body.translate(0, 0.5, 0);
 
   // Gable roof: a triangular prism, ridge along +x at y = 1, eaves at y = 0.
+  // Five outward-facing faces (two slopes, two gable triangles, underside).
   const v = [];
   const push = (...pts) => { for (const p of pts) v.push(...p); };
   const A = [-0.5, 0, -0.5]; const B = [0.5, 0, -0.5]; const C = [0.5, 0, 0.5]; const D = [-0.5, 0, 0.5];
   const R0 = [-0.5, 1, 0]; const R1 = [0.5, 1, 0];
-  push(A, R0, R1, A, R1, B);        // back slope
-  push(D, C, R1, D, R1, R0);        // front slope
-  push(A, B, R1); push(A, R1, R0);  // keep both slopes two-sided for low poly cleanliness
-  push(B, A, R0, B, R0, R1);        // gable end -x (inside faces, cheap)
-  push(A, D, R0);                   // gable triangle -x
-  push(C, B, R1);                   // gable triangle +x
+  push(A, B, R1, A, R1, R0);        // back slope (faces -z, +y)
+  push(D, R1, C, D, R0, R1);        // front slope (faces +z, +y)
+  push(A, R0, D);                   // gable -x
+  push(B, C, R1);                   // gable +x
+  push(A, D, C, A, C, B);           // underside (seen from below on hillsides)
   const roof = new THREE.BufferGeometry();
   roof.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
   roof.computeVertexNormals();
@@ -373,7 +373,8 @@ export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
     if (routeIndex && routeIndex.distanceTo(rect.x, rect.z, 24) < 8) continue;
     const h = terrain.sample(rect.x, rect.z);
     if (h < 0.8) continue; // in the fjord
-    if (terrain.slope(rect.x, rect.z) > 0.5) continue; // would float off a hillside
+    const slope = terrain.slope(rect.x, rect.z);
+    if (slope > 0.6) continue; // a cliff, not a building plot
 
     const family = familyFor(b.tags, rect.length, rect.width);
     const fam = FAMILIES[family];
@@ -383,10 +384,12 @@ export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
     const roofRise = Math.min(Math.max(width * 0.5 * fam.pitch, 0.6), 6.5);
     const yaw = -rect.yaw;
 
-    // Sink the walls into the hillside a little so no gap shows downhill.
-    pos.set(rect.x, h - 0.4, rect.z);
+    // Foundations: on a slope the walls reach down far enough that the
+    // downhill side stands on the ground instead of floating.
+    const sink = 0.4 + slope * Math.max(length, width) * 0.5;
+    pos.set(rect.x, h - sink, rect.z);
     q.setFromAxisAngle(yAxis, yaw);
-    scl.set(length, eaves + 0.4, width);
+    scl.set(length, eaves + sink, width);
     m.compose(pos, q, scl);
     color.setHex(fam.walls[Math.floor(rand() * fam.walls.length)]);
     bodies.push({ matrix: m.clone(), color: color.clone() });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, damp, formatCoord, formatTime, wrapAngle } from './geo.js';
-import { loadTerrain, buildWater, buildVegetation, buildMinimap, loadBasemapTexture, buildBasemapMesh } from './terrain.js';
+import { loadTerrain, buildWater, buildVegetation, buildMinimap, loadBasemapTexture, buildBasemapMesh, terrainColor } from './terrain.js';
 import { createTerrainLOD } from './lod.js';
 import {
   generateRallyRoute,
@@ -1043,112 +1043,163 @@ const mm = $('minimap');
 const mmCtx = mm.getContext('2d');
 const MM_SIZE = mm.width;
 
+// The minimap is a north-up window that follows the car: WINDOW_M metres
+// across (a little wider at speed), terrain sampled live so it works in the
+// baked world, a streamed stage and free drive alike.
+const MM_CELLS = 80;
+const mmTerrain = document.createElement('canvas');
+mmTerrain.width = MM_CELLS;
+mmTerrain.height = MM_CELLS;
+const mmTerrainCtx = mmTerrain.getContext('2d', { willReadFrequently: true });
+const mmPixels = mmTerrainCtx.createImageData(MM_CELLS, MM_CELLS);
+let mmWindow = 1400;
+let mmLast = { x: Infinity, z: Infinity, window: 0, t: 0 };
+const mmColor = new THREE.Color();
+let mmPick = { a: null, b: null, busy: false };
+
+/** Metres per minimap pixel for the current window. */
+function mmScale() { return MM_SIZE / mmWindow; }
+
 function worldToMap(x, z) {
-  if (terrain?.streaming) return terrain.mapFromWorld(x, z);
-  return {
-    x: ((x + terrain.sizeX / 2) / terrain.sizeX) * MM_SIZE,
-    y: ((z + terrain.sizeZ / 2) / terrain.sizeZ) * MM_SIZE,
-  };
+  const cx = car ? car.pos.x : 0;
+  const cz = car ? car.pos.z : 0;
+  const k = mmScale();
+  return { x: MM_SIZE / 2 + (x - cx) * k, y: MM_SIZE / 2 + (z - cz) * k };
+}
+
+function mapToWorld(px, py) {
+  const k = mmScale();
+  return { x: car.pos.x + (px - MM_SIZE / 2) / k, z: car.pos.z + (py - MM_SIZE / 2) / k };
+}
+
+/** Re-sample the hillshaded terrain layer around the car (cheap, throttled). */
+function refreshMinimapTerrain(force = false) {
+  if (!terrain || !car) return;
+  const moved = Math.hypot(car.pos.x - mmLast.x, car.pos.z - mmLast.z);
+  if (!force && moved < mmWindow / MM_CELLS * 2 && mmLast.window === mmWindow && time - mmLast.t < 0.6) return;
+  mmLast = { x: car.pos.x, z: car.pos.z, window: mmWindow, t: time };
+  const cell = mmWindow / MM_CELLS;
+  const x0 = car.pos.x - mmWindow / 2;
+  const z0 = car.pos.z - mmWindow / 2;
+  const heights = new Float32Array((MM_CELLS + 2) * (MM_CELLS + 2));
+  for (let j = 0; j < MM_CELLS + 2; j++) {
+    for (let i = 0; i < MM_CELLS + 2; i++) {
+      heights[j * (MM_CELLS + 2) + i] = terrain.sample(x0 + (i - 0.5) * cell, z0 + (j - 0.5) * cell);
+    }
+  }
+  const data = mmPixels.data;
+  const W = MM_CELLS + 2;
+  for (let j = 0; j < MM_CELLS; j++) {
+    for (let i = 0; i < MM_CELLS; i++) {
+      const h = heights[(j + 1) * W + (i + 1)];
+      const gx = (heights[(j + 1) * W + (i + 2)] - heights[(j + 1) * W + i]) / (2 * cell);
+      const gz = (heights[(j + 2) * W + (i + 1)] - heights[j * W + (i + 1)]) / (2 * cell);
+      const x = x0 + (i + 0.5) * cell;
+      const z = z0 + (j + 0.5) * cell;
+      const o = (j * MM_CELLS + i) * 4;
+      if (terrain.inside && !terrain.inside(x, z, 0)) {
+        // Beyond the loaded world: unknown ground, drawn dark.
+        data[o] = 18; data[o + 1] = 22; data[o + 2] = 20; data[o + 3] = 255;
+        continue;
+      }
+      terrainColor(h, Math.hypot(gx, gz), x, z, mmColor);
+      terrain.tintAt?.(x, z, mmColor);
+      const shade = clamp(0.74 + (-gx * 0.7 - gz * 0.7) * 1.3, 0.4, 1.25);
+      data[o] = clamp(mmColor.r * 255 * shade, 0, 255);
+      data[o + 1] = clamp(mmColor.g * 255 * shade, 0, 255);
+      data[o + 2] = clamp(mmColor.b * 255 * shade, 0, 255);
+      data[o + 3] = 255;
+    }
+  }
+  mmTerrainCtx.putImageData(mmPixels, 0, 0);
 }
 
 function updateMinimapRoute() {
-  if (!route) return;
-  mmCtx.clearRect(0, 0, MM_SIZE, MM_SIZE);
-  if (minimapBase) mmCtx.drawImage(minimapBase, 0, 0, MM_SIZE, MM_SIZE);
-
-  const pts = route.samples;
-  mmCtx.lineJoin = 'round';
-  mmCtx.lineCap = 'round';
-  mmCtx.strokeStyle = 'rgba(0,0,0,.65)';
-  mmCtx.lineWidth = 6;
-  mmCtx.beginPath();
-  for (let i = 0; i < pts.length; i += 2) {
-    const p = worldToMap(pts[i].x, pts[i].z);
-    if (i === 0) mmCtx.moveTo(p.x, p.y);
-    else mmCtx.lineTo(p.x, p.y);
-  }
-  mmCtx.stroke();
-  mmCtx.strokeStyle = '#f0ce58';
-  mmCtx.lineWidth = 2.4;
-  mmCtx.stroke();
-
-  const s = worldToMap(route.start.x, route.start.z);
-  mmCtx.fillStyle = '#8fe6a3';
-  mmCtx.beginPath();
-  mmCtx.arc(s.x, s.y, 4, 0, Math.PI * 2);
-  mmCtx.fill();
-  mmCtx.strokeStyle = '#101513';
-  mmCtx.lineWidth = 1.5;
-  mmCtx.stroke();
-
-  const f = worldToMap(route.finish.x, route.finish.z);
-  mmCtx.fillStyle = '#f0ce58';
-  mmCtx.fillRect(f.x - 4, f.y - 4, 8, 8);
-  mmCtx.strokeStyle = '#101513';
-  mmCtx.strokeRect(f.x - 4, f.y - 4, 8, 8);
+  // The map is redrawn every frame around the car; nothing to cache here.
+  refreshMinimapTerrain(true);
 }
 
 function drawMinimap() {
-  if (!route || !car || !terrain) return;
+  if (!car || !terrain) return;
+  mmWindow = 1400 + Math.min(900, car.speed * 14);
+  refreshMinimapTerrain();
+  mmCtx.imageSmoothingEnabled = false;
   mmCtx.clearRect(0, 0, MM_SIZE, MM_SIZE);
-  if (minimapBase) mmCtx.drawImage(minimapBase, 0, 0, MM_SIZE, MM_SIZE);
+  mmCtx.drawImage(mmTerrain, 0, 0, MM_SIZE, MM_SIZE);
 
-  const pts = route.samples;
-  mmCtx.lineJoin = 'round';
-  mmCtx.lineCap = 'round';
-  mmCtx.strokeStyle = 'rgba(0,0,0,.68)';
-  mmCtx.lineWidth = 6;
-  mmCtx.beginPath();
-  for (let i = 0; i < pts.length; i += 2) {
-    const p = worldToMap(pts[i].x, pts[i].z);
-    if (i === 0) mmCtx.moveTo(p.x, p.y);
-    else mmCtx.lineTo(p.x, p.y);
-  }
-  mmCtx.stroke();
-  mmCtx.strokeStyle = '#f0ce58';
-  mmCtx.lineWidth = 2.4;
-  mmCtx.stroke();
-
-  const s = worldToMap(route.start.x, route.start.z);
-  mmCtx.fillStyle = '#8fe6a3';
-  mmCtx.beginPath();
-  mmCtx.arc(s.x, s.y, 4, 0, Math.PI * 2);
-  mmCtx.fill();
-
-  const f = worldToMap(route.finish.x, route.finish.z);
-  mmCtx.fillStyle = '#f0ce58';
-  mmCtx.fillRect(f.x - 4, f.y - 4, 8, 8);
-  mmCtx.strokeStyle = '#101513';
-  mmCtx.lineWidth = 1.5;
-  mmCtx.strokeRect(f.x - 4, f.y - 4, 8, 8);
-
-  if (builderActive) {
-    if (builderA && builderB) {
-      const a = worldToMap(builderA.x, builderA.z);
-      const b = worldToMap(builderB.x, builderB.z);
-      mmCtx.strokeStyle = 'rgba(255,255,255,.75)';
-      mmCtx.setLineDash([4, 4]);
-      mmCtx.lineWidth = 1.5;
-      mmCtx.beginPath();
+  // OpenStreetMap roads of the loaded chunks (streamed worlds).
+  const network = terrain.roads;
+  if (network?.segmentCount) {
+    mmCtx.strokeStyle = 'rgba(236,232,220,.55)';
+    mmCtx.lineWidth = 1.2;
+    mmCtx.beginPath();
+    for (const seg of network.segmentsNear(car.pos.x, car.pos.z, mmWindow * 0.75)) {
+      const a = worldToMap(seg.ax, seg.az);
+      const b = worldToMap(seg.bx, seg.bz);
       mmCtx.moveTo(a.x, a.y);
       mmCtx.lineTo(b.x, b.y);
-      mmCtx.stroke();
-      mmCtx.setLineDash([]);
     }
-    for (const [point, color] of [[builderA, '#8fe6a3'], [builderB, '#ffc94a']]) {
-      if (!point) continue;
-      const p = worldToMap(point.x, point.z);
-      mmCtx.fillStyle = color;
-      mmCtx.beginPath();
-      mmCtx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-      mmCtx.fill();
-      mmCtx.strokeStyle = '#101513';
-      mmCtx.lineWidth = 1.5;
-      mmCtx.stroke();
-    }
+    mmCtx.stroke();
   }
 
-  const c = worldToMap(car.pos.x, car.pos.z);
+  if (route && route.samples.length) {
+    const pts = route.samples;
+    mmCtx.lineJoin = 'round';
+    mmCtx.lineCap = 'round';
+    mmCtx.strokeStyle = 'rgba(0,0,0,.68)';
+    mmCtx.lineWidth = 6;
+    mmCtx.beginPath();
+    for (let i = 0; i < pts.length; i += 2) {
+      const p = worldToMap(pts[i].x, pts[i].z);
+      if (i === 0) mmCtx.moveTo(p.x, p.y);
+      else mmCtx.lineTo(p.x, p.y);
+    }
+    mmCtx.stroke();
+    mmCtx.strokeStyle = '#f0ce58';
+    mmCtx.lineWidth = 2.4;
+    mmCtx.stroke();
+
+    const s = worldToMap(route.start.x, route.start.z);
+    mmCtx.fillStyle = '#8fe6a3';
+    mmCtx.beginPath();
+    mmCtx.arc(s.x, s.y, 4, 0, Math.PI * 2);
+    mmCtx.fill();
+    const f = worldToMap(route.finish.x, route.finish.z);
+    mmCtx.fillStyle = '#f0ce58';
+    mmCtx.fillRect(f.x - 4, f.y - 4, 8, 8);
+    mmCtx.strokeStyle = '#101513';
+    mmCtx.lineWidth = 1.5;
+    mmCtx.strokeRect(f.x - 4, f.y - 4, 8, 8);
+  }
+
+  // Points being picked: 3D builder or minimap clicks.
+  const picks = builderActive ? [[builderA, '#8fe6a3'], [builderB, '#ffc94a']] : [[mmPick.a, '#8fe6a3'], [mmPick.b, '#ffc94a']];
+  if (picks[0][0] && picks[1][0]) {
+    const a = worldToMap(picks[0][0].x, picks[0][0].z);
+    const b = worldToMap(picks[1][0].x, picks[1][0].z);
+    mmCtx.strokeStyle = 'rgba(255,255,255,.75)';
+    mmCtx.setLineDash([4, 4]);
+    mmCtx.lineWidth = 1.5;
+    mmCtx.beginPath();
+    mmCtx.moveTo(a.x, a.y);
+    mmCtx.lineTo(b.x, b.y);
+    mmCtx.stroke();
+    mmCtx.setLineDash([]);
+  }
+  for (const [point, color] of picks) {
+    if (!point) continue;
+    const p = worldToMap(point.x, point.z);
+    mmCtx.fillStyle = color;
+    mmCtx.beginPath();
+    mmCtx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+    mmCtx.fill();
+    mmCtx.strokeStyle = '#101513';
+    mmCtx.lineWidth = 1.5;
+    mmCtx.stroke();
+  }
+
+  // The car, always at the centre, pointing its way.
+  const c = { x: MM_SIZE / 2, y: MM_SIZE / 2 };
   const fw = car.forward();
   const rx = -fw.z;
   const rz = fw.x;
@@ -1162,7 +1213,49 @@ function drawMinimap() {
   mmCtx.closePath();
   mmCtx.fill();
   mmCtx.stroke();
+
+  // Scale bar.
+  const barM = mmWindow > 1800 ? 500 : 250;
+  const barPx = barM * mmScale();
+  mmCtx.fillStyle = 'rgba(0,0,0,.55)';
+  mmCtx.fillRect(6, MM_SIZE - 14, barPx + 6, 10);
+  mmCtx.fillStyle = '#f4efe0';
+  mmCtx.fillRect(9, MM_SIZE - 9, barPx, 2);
+  mmCtx.font = '7px monospace';
+  mmCtx.fillText(`${barM} m`, 9, MM_SIZE - 16);
 }
+
+/**
+ * Click the minimap twice to route a stage between the two spots (OSRM via
+ * the same path as the 2D map); Escape clears. Works wherever you are,
+ * including free drive.
+ */
+mm.addEventListener('click', async (event) => {
+  if (!car || !terrain || !loaded || builderActive || mmPick.busy) return;
+  const rect = mm.getBoundingClientRect();
+  const px = ((event.clientX - rect.left) / rect.width) * MM_SIZE;
+  const py = ((event.clientY - rect.top) / rect.height) * MM_SIZE;
+  const w = mapToWorld(px, py);
+  if (!mmPick.a || (mmPick.a && mmPick.b)) {
+    mmPick = { a: { x: w.x, z: w.z }, b: null, busy: false };
+    toast('Start set on the minimap. Click the finish.');
+    return;
+  }
+  mmPick.b = { x: w.x, z: w.z };
+  mmPick.busy = true;
+  toast('Routing between the two spots…');
+  try {
+    const a = terrain.latLonFromWorld(mmPick.a.x, mmPick.a.z);
+    const b = terrain.latLonFromWorld(mmPick.b.x, mmPick.b.z);
+    const geometry = await fetchOsrmGeometrySegmented({ a, b, profile: lastOsrmProfile });
+    await applyRouteGeometry(geometry);
+  } catch (error) {
+    toast(error.message || 'No road between those spots.', 'error');
+  } finally {
+    mmPick = { a: null, b: null, busy: false };
+  }
+});
+mm.title = 'Click two spots to route a stage between them (Esc clears)';
 
 /* ------------------------------------------------------------------ */
 /*  Camera                                                             */
@@ -1348,6 +1441,7 @@ window.addEventListener('keydown', (event) => {
   if (/^Digit[123]$/.test(event.code)) {
     setCameraMode(CAMERA_MODES[Number(event.code.slice(5)) - 1]);
   }
+  if (event.code === 'Escape' && !mmPick.busy) mmPick = { a: null, b: null, busy: false };
   if (event.code === 'KeyM') {
     audio.setMuted(!audio.muted);
     toast(audio.muted ? 'Sound off.' : 'Sound on.');
@@ -1462,7 +1556,7 @@ function updateHud() {
     surface.textContent = 'AIRBORNE';
     surface.className = 'air';
   } else if (car.onRoad) {
-    surface.textContent = car.drifting ? 'DRIFT' : 'GRAVEL';
+    surface.textContent = car.drifting ? 'DRIFT' : car.surfaceKind === 'asphalt' ? 'ASPHALT' : 'GRAVEL';
     surface.className = car.drifting ? 'off' : 'road';
   } else {
     surface.textContent = 'OFF ROAD';

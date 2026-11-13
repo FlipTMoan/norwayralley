@@ -7,7 +7,7 @@ import { fetchOsmChunk, overpassBlocked, buildChunkHouses } from './buildings.js
 import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './landcover.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
-import { prepareChunkRoads, carvePolylines, buildRoadMeshes, RoadNetwork } from './roads.js';
+import { prepareChunkRoads, carvePolylines, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
 import { logger } from './log.js';
 
 /**
@@ -424,6 +424,13 @@ async function addChunkFeatures(world, chunk, hooks) {
     hooks.signs(chunk);
   }).catch((error) => log.warn(`signs skipped for ${chunk.key}: ${error.message}`));
 
+  // Registered road surfaces (NVDB Vegdekke): recolour and re-grip the roads.
+  fetchRoadSurfaces(bbox).then((surfaces) => {
+    if (!alive() || !surfaces.length) return;
+    chunk.surfaces = surfaces;
+    hooks.surfaces(chunk);
+  }).catch((error) => log.warn(`surfaces skipped for ${chunk.key}: ${error.message}`));
+
   const osmPromise = requestChunkOsm(world, chunk, hooks);
 
   try {
@@ -618,6 +625,13 @@ export async function createStreamingWorld({
 
     worldFromLatLon: (lat, lon) => projection.worldFromLatLon(lat, lon),
     latLonFromWorld: (x, z) => projection.latLonFromWorld(x, z),
+
+    /** Land-cover tint of the chunk under (x, z), if it has arrived (minimap). */
+    tintAt(x, z, color) {
+      const chunk = chunks.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
+      if (chunk?.cover) tintByCover(chunk.cover, x, z, color);
+      return color;
+    },
 
     bounds: {
       minX: cMinX,
@@ -974,6 +988,7 @@ export async function createStreamingWorld({
       signGroup: null,
       osmRoads: null,
       osmRoadGroup: null,
+      surfaces: null,
       cover: null,
       osm: null,
       osmPending: false,
@@ -1060,6 +1075,7 @@ export async function createStreamingWorld({
     houses: (n) => { houseCount += n; },
     signs: (c) => refreshChunkSigns(c),
     roads: (c) => refreshChunkOsmRoads(c),
+    surfaces: (c) => applyChunkSurfaces(c),
     clearance: () => clearanceIndex,
     coverReady: (c) => {
       rebuildChunkGeometries(c);
@@ -1078,6 +1094,46 @@ export async function createStreamingWorld({
     },
   };
 
+  /** Majority NVDB surface per OSM road; returns true when any road changed. */
+  function surfaceOsmLines(lines, surfaces) {
+    const project = (lat, lon) => world.worldFromLatLon(lat, lon);
+    let changed = false;
+    for (const line of lines) {
+      const measured = assignSurfaces(line.samples, surfaces, project, { maxDist: 10 });
+      if (measured < line.samples.length / 2) continue;
+      const counts = {};
+      for (const p of line.samples) if (p.surface) counts[p.surface] = (counts[p.surface] || 0) + 1;
+      const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (best && best !== line.surface) {
+        line.surface = best;
+        line.paved = best === 'asphalt';
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /** NVDB surfaces arrived (or the route changed): apply to route and OSM roads. */
+  function applyChunkSurfaces(chunk) {
+    if (!chunk.surfaces?.length) return;
+    const project = (lat, lon) => world.worldFromLatLon(lat, lon);
+    const route = world.route;
+    if (route) {
+      const inside = (p) => p.x >= chunk.x0 && p.x < chunk.x0 + CHUNK && p.z >= chunk.z0 && p.z < chunk.z0 + CHUNK;
+      const measured = assignSurfaces(route.samples.filter(inside), chunk.surfaces, project, { maxDist: 14 });
+      if (measured) refreshChunkRoad(chunk);
+    }
+    if (chunk.osmRoads?.length && surfaceOsmLines(chunk.osmRoads, chunk.surfaces)) {
+      world.roads.setChunk(chunk.key, chunk.osmRoads);
+      if (chunk.osmRoadGroup) {
+        disposeObject(chunk.osmRoadGroup);
+        chunk.group.remove(chunk.osmRoadGroup);
+      }
+      chunk.osmRoadGroup = buildRoadMeshes(chunk.osmRoads, world);
+      if (chunk.osmRoadGroup) chunk.group.add(chunk.osmRoadGroup);
+    }
+  }
+
   /** OSM roads of one chunk: carve, ribbons, and the shared road network. */
   function refreshChunkOsmRoads(chunk) {
     if (chunk.osmRoadGroup) {
@@ -1091,6 +1147,7 @@ export async function createStreamingWorld({
       avoid: route ? { index: world.routeIndex, distance: route.roadWidth + 7 } : null,
     });
     chunk.osmRoads = roads;
+    if (chunk.surfaces?.length) surfaceOsmLines(roads, chunk.surfaces);
     world.roads.setChunk(chunk.key, roads);
     if (!roads.length) return;
     const touched = carvePolylines(
@@ -1429,6 +1486,7 @@ export async function createStreamingWorld({
       }
       refreshChunkRoad(chunk);
       refreshChunkOsmRoads(chunk);
+      applyChunkSurfaces(chunk);
       refreshChunkSigns(chunk);
     }
     redrawMinimap();
@@ -1510,6 +1568,7 @@ export async function createStreamingWorld({
     spacing: 5,
     simplifyEpsilon: 2,
     roadWidth: profile === 'driving' ? 3.4 : 2.4,
+    surface: profile === 'driving' ? 'asphalt' : 'gravel',
   });
   if (route.length < 20) {
     throw new Error(`That road is too short to make a stage (${Math.round(route.length)} m).`);
