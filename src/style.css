@@ -944,3 +944,17 @@ kbd {
 .rpm-num { margin-left: 16px; font-weight: 700; letter-spacing: .04em; color: #f0ce58; font-size: .78em; }
 .start-toggle { margin-top: 10px; width: 100%; background: transparent; color: #f3ead8; border: 1px solid rgba(243, 234, 216, .35); padding: 9px 12px; font: inherit; font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
 .start-toggle:hover { border-color: #f0ce58; color: #f0ce58; }
+
+/* ------------------------------------------------ compact HUD (phones) */
+/* While driving on a small screen the stage panel folds to its title tab;
+   tap the tab to open it, tap again to fold. */
+#stageInfo .panel-title { cursor: pointer; user-select: none; }
+#stageInfo .panel-title::after { content: ''; }
+@media (max-width: 900px), (pointer: coarse) {
+  #hud.compact #stageInfo { width: auto; padding: 6px 10px; max-height: none; overflow: hidden; }
+  #hud.compact #stageInfo > :not(.panel-title) { display: none; }
+  #hud.compact #stageInfo .panel-title { margin: 0; }
+  #hud.compact #stageInfo .panel-title::after { content: ' ▸'; }
+  #hud.compact #brand { display: none; }
+  #hud.compact #progressWrap { width: 120px; }
+}

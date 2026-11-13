@@ -147,6 +147,11 @@ let loaded = false;
 let hasStarted = false;
 let freeDrive = false; // streaming world without a stage: no finish, no timer goal
 let bakedFeatures = null;   // OSM houses/water + NVDB signs on the baked demo tile
+// Small screens: fold the stage panel away while driving so the road is visible.
+const compactMedia = window.matchMedia('(max-width: 900px), (pointer: coarse)');
+function setCompactHud(on) {
+  $('hud').classList.toggle('compact', Boolean(on) && compactMedia.matches);
+}
 let bakedSignData = null;
 // Gearbox preference (start-card toggle or G); remembered between visits.
 let gearboxAuto = (() => { try { return localStorage.getItem('rally.gearbox') !== 'manual'; } catch { return true; } })();
@@ -664,6 +669,7 @@ function updateBestLabel() {
 }
 
 function resetStage({ countdownNow = hasStarted } = {}) {
+  setCompactHud(countdownNow);
   if (!route || !car) return;
   phase = countdownNow ? 'countdown' : 'intro';
   stageTime = 0;
@@ -1958,6 +1964,11 @@ const mapPicker = createMapPicker({
 });
 
 $('gearboxBtn').addEventListener('click', () => setGearbox(!gearboxAuto));
+document.querySelector('#stageInfo .panel-title').addEventListener('click', () => {
+  const hud = $('hud');
+  if (!compactMedia.matches) return;
+  hud.classList.toggle('compact');
+});
 setGearbox(gearboxAuto, { announce: false });
 
 $('mapPickerBtn').addEventListener('click', () => {

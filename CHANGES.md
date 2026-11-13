@@ -69,6 +69,9 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- Phones / touch screens: the stage panel folds to its title tab when the
+  drive starts (tap to open, tap again to fold), the brand badge hides and
+  the progress bar shrinks, leaving the road visible.
 - **Handbrake (SHIFT) drifts**: the rear wheels lock (they visibly stop
   turning), the rear axle loses almost all sideways grip, the tail is thrown
   in the steered direction, and the slide carries on for ~0.7 s after release
