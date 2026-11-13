@@ -6,13 +6,13 @@ import { makeRoute } from '../src/stage.js';
 import { Car } from '../src/car.js';
 
 /** A 10 % grade along +z with lateral undulation and small bumps. */
-export function slopedTerrain({ size = 1200, grid = 601 } = {}) {
+export function slopedTerrain({ size = 1200, grid = 601, grade = 0.10 } = {}) {
   const heights = new Float32Array(grid * grid);
   for (let j = 0; j < grid; j++) {
     const z = -size / 2 + (j / (grid - 1)) * size;
     for (let i = 0; i < grid; i++) {
       const x = -size / 2 + (i / (grid - 1)) * size;
-      heights[j * grid + i] = 100 + 0.10 * (z + size / 2) + 3 * Math.sin(x / 40) + 0.8 * Math.sin(z / 15);
+      heights[j * grid + i] = 100 + grade * (z + size / 2) + 3 * Math.sin(x / 40) + 0.8 * Math.sin(z / 15);
     }
   }
   const projection = {

@@ -939,3 +939,8 @@ kbd {
   color: var(--muted);
   letter-spacing: 0.04em;
 }
+
+/* RPM readout beside the speed, and the gearbox toggle on the start card. */
+.rpm-num { margin-left: 16px; font-weight: 700; letter-spacing: .04em; color: #f0ce58; font-size: .78em; }
+.start-toggle { margin-top: 10px; width: 100%; background: transparent; color: #f3ead8; border: 1px solid rgba(243, 234, 216, .35); padding: 9px 12px; font: inherit; font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
+.start-toggle:hover { border-color: #f0ce58; color: #f0ce58; }

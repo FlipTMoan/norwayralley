@@ -23,16 +23,22 @@ const GRAVITY = 19.6;              // game gravity: 2 g feels snappier than 9.81
 const SUSPENSION_K = 190;          // spring back to the ground (per second²)
 const SUSPENSION_D = 14;           // damping of the body bounce
 const MAX_SUBSTEPS = 8;            // physics substeps per rendered frame
-const GEAR_RATIOS = [-3.40, 3.55, 2.35, 1.72, 1.32, 1.04, 0.84];
+// Five-speed 911-style box on a 12 000 rpm engine. At the redline the gears
+// run out at 60 / 100 / 140 / 180 / 220 km/h, so 2nd covers ~30–100 km/h,
+// 3rd ~45–140 and so on (wheel radius 0.35 m, final drive 3.9).
+const GEAR_RATIOS = [-6.0, 6.77, 4.05, 2.90, 2.26, 1.85];
 const REVERSE = 0;
 const FINAL_DRIVE = 3.9;
-const IDLE_RPM = 900;
-const REDLINE_RPM = 7200;
-const PEAK_TORQUE_RPM = 4200;
-const MAX_TORQUE = 430;            // Nm at peak (rally tune)
-const AUTO_UPSHIFT = 6500;
-const AUTO_DOWNSHIFT = 1950;
-const SHIFT_TIME = 0.28;
+const IDLE_RPM = 1200;
+const REDLINE_RPM = 12000;
+const MAX_TORQUE = 380;            // Nm at peak; the tyres, not the torque, cap acceleration
+const AUTO_UPSHIFT = 11000;
+const AUTO_DOWNSHIFT = 4200;
+const SHIFT_TIME = 0.24;
+// Rear-engined traction: the driven axle carries ~62 % of the weight.
+const DRIVE_AXLE_LOAD = 0.62;
+
+export const ENGINE = { idle: IDLE_RPM, redline: REDLINE_RPM, gears: GEAR_RATIOS.length - 1 };
 
 const SURFACES = {
   road: { mu: 1.02, rolling: 0.5, drag: 0.0011 },
@@ -277,6 +283,7 @@ export class Car {
     this.rpm = IDLE_RPM;
     this.shiftTimer = 0;
     this.engineLoad = 0;
+    this.limiter = false;
     this.airborneAt = -1;
     this.airControl = 0;
     this.roadLift = 0;
@@ -548,11 +555,15 @@ export class Car {
     const wheelSpeed = Math.abs(this.vF);
     const wheelRpm = (wheelSpeed / (2 * Math.PI * WHEEL_RADIUS)) * 60;
     const ratio = Math.abs(this.gearRatio()) * FINAL_DRIVE;
-    const targetRpm = clamp(wheelRpm * ratio, IDLE_RPM, REDLINE_RPM);
+    const rawRpm = wheelRpm * ratio;
+    const targetRpm = clamp(rawRpm, IDLE_RPM, REDLINE_RPM);
     // Blip the revs a little under throttle even when stationary.
     const powerInput = reversing ? brake : throttle;
     const freeRev = powerInput > 0 && wheelSpeed < 1 ? 1 : 0;
-    this.rpm = damp(this.rpm, Math.max(targetRpm, IDLE_RPM + freeRev * 900), 9, dt);
+    this.rpm = damp(this.rpm, Math.max(targetRpm, IDLE_RPM + freeRev * 2600), 9, dt);
+    // Rev limiter: on the redline (manual box, or a long downhill) the
+    // ignition cuts until the revs drop.
+    this.limiter = rawRpm >= REDLINE_RPM * 0.995;
 
     this.shiftTimer = Math.max(0, this.shiftTimer - dt);
     if (this.gear === REVERSE) {
@@ -576,7 +587,7 @@ export class Car {
 
     // Torque at the wheels, minus a clutch cut while shifting.
     const shifting = this.shiftTimer > 0.12;
-    const torque = engineTorque(this.rpm) * powerInput * (shifting ? 0.15 : 1) * (this.grounded ? 1 : 0.35);
+    const torque = engineTorque(this.rpm) * powerInput * (shifting ? 0.15 : 1) * (this.grounded ? 1 : 0.35) * (this.limiter ? 0 : 1);
     const driveForce = ((torque * ratio) / WHEEL_RADIUS) * (reversing ? -1 : 1);
     const engineBrake = powerInput === 0 && Math.abs(this.vF) > 1
       ? -(Math.sign(this.vF) * (28 + this.rpm * 0.012) * Math.abs(ratio) * 0.16)
@@ -684,8 +695,10 @@ export class Car {
     let vR = this.vR;
 
     if (this.grounded) {
-      // Engine, brakes and the ground.
-      vF += (drivetrain.driveForce / MASS) * h;
+      // Engine, brakes and the ground. Whatever the gearing multiplies the
+      // torque to, the driven tyres can only push as hard as they grip.
+      const maxDrive = surface.mu * DRIVE_AXLE_LOAD * 9.81 * (input.handbrake ? 0.3 : 1);
+      vF += clamp(drivetrain.driveForce / MASS, -maxDrive, maxDrive) * h;
       if (drivetrain.brake > 0) {
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 21 * drivetrain.brake) * h;
       }

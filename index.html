@@ -27,8 +27,8 @@
     </div>
 
     <div id="speedBox">
-      <div class="speed-row"><span id="speed">000</span><span class="speed-unit">KM/H</span></div>
-      <div class="speed-row small"><span id="gear">N</span><span id="surface">OFF ROAD</span></div>
+      <div class="speed-row"><span id="speed">000</span><span class="speed-unit">KM/H</span><span id="rpm" class="rpm-num">01200</span><span class="speed-unit">RPM</span></div>
+      <div class="speed-row small"><span id="gear">N AUTO</span><span id="surface">OFF ROAD</span></div>
       <div id="rpmWrap"><div id="rpmFill"></div><span id="rpmText">900</span></div>
     </div>
 
@@ -123,7 +123,7 @@
     </div>
 
     <div id="helpLine">
-      <span><b>WASD</b> drive</span><span><b>SPACE</b> jump</span><span><b>SHIFT</b> drift</span><span><b>Q/E</b> gear</span><span><b>G</b> auto</span><span><b>R</b> restart</span><span><b>1/2/3</b> camera</span><span><b>M</b> mute</span>
+      <span><b>WASD</b> drive</span><span><b>SPACE</b> jump</span><span><b>SHIFT</b> drift</span><span><b>Q/E</b> gear</span><span><b>G</b> auto/manual</span><span><b>R</b> restart</span><span><b>1/2/3</b> camera</span><span><b>M</b> mute</span>
     </div>
   </div>
 
@@ -178,11 +178,13 @@
         <div id="loadingTrack"><div id="loadingBar"></div></div>
       </div>
       <button id="startBtn" disabled>START ENGINE</button>
+      <button id="gearboxBtn" class="start-toggle" title="Automatic shifts for you; manual uses Q/E (G toggles any time)">GEARBOX: AUTOMATIC</button>
       <div class="start-controls">
         <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</span>
         <span><kbd>SPACE</kbd> jump</span>
         <span><kbd>SHIFT</kbd> handbrake</span>
         <span><kbd>Q</kbd><kbd>E</kbd> gear</span>
+        <span><kbd>G</kbd> auto / manual</span>
         <span><kbd>R</kbd> restart</span>
         <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> camera</span>
       </div>

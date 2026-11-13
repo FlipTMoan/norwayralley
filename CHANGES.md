@@ -69,6 +69,12 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Gearbox**: automatic or manual, chosen on the start card (remembered) or
+  with `G`; `Q`/`E` shift. Five 911-style gears on a 12 000 rpm engine that
+  run out at 60 / 100 / 140 / 180 / 220 km/h, a rev limiter on the redline,
+  and a tyre traction limit so the tall first gear does not launch the car
+  unrealistically. The HUD shows RPM beside the speed, with the bar turning
+  red near the limiter.
 - Free drive starts on a road: the picked point is snapped with OSRM `nearest`
   (heading from a short route along it) and the loader waits up to 12 s for
   the spawn chunk's OSM roads before handing over the car.

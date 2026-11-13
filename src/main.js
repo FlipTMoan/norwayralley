@@ -11,7 +11,7 @@ import {
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
-import { Car } from './car.js';
+import { Car, ENGINE } from './car.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -142,6 +142,16 @@ let showBasemap = false;
 let loaded = false;
 let hasStarted = false;
 let freeDrive = false; // streaming world without a stage: no finish, no timer goal
+// Gearbox preference (start-card toggle or G); remembered between visits.
+let gearboxAuto = (() => { try { return localStorage.getItem('rally.gearbox') !== 'manual'; } catch { return true; } })();
+function setGearbox(auto, { announce = true } = {}) {
+  gearboxAuto = Boolean(auto);
+  if (car) car.autoShift = gearboxAuto;
+  try { localStorage.setItem('rally.gearbox', gearboxAuto ? 'auto' : 'manual'); } catch { /* private mode */ }
+  const btn = document.getElementById('gearboxBtn');
+  if (btn) btn.textContent = `GEARBOX: ${gearboxAuto ? 'AUTOMATIC' : 'MANUAL (Q/E)'}`;
+  if (announce) toast(gearboxAuto ? 'Automatic gearbox.' : 'Manual gearbox. Q/E shift, redline 12 000.');
+}
 let time = 0;
 let phase = 'loading'; // loading | intro | countdown | building | racing | finished
 let stageTime = 0;
@@ -370,6 +380,7 @@ async function enterStreamingWorld(geometry) {
 
     scene.add(world.group);
     car = new Car(scene, terrain);
+    car.autoShift = gearboxAuto;
     water = buildWater(terrain);
     scene.add(water);
     vegetation = null;
@@ -442,6 +453,7 @@ async function enterFreeDrive(center) {
 
     scene.add(world.group);
     car = new Car(scene, terrain);
+    car.autoShift = gearboxAuto;
     water = buildWater(terrain);
     scene.add(water);
     vegetation = null;
@@ -1343,20 +1355,19 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyQ' && car && loaded) {
     car.shift(car.gear > 1 ? car.gear - 1 : car.gear);
     if (car.autoShift) {
-      car.autoShift = false;
+      setGearbox(false, { announce: false });
       toast('Manual gearbox. Q/E shift, G returns to automatic.');
     }
   }
   if (event.code === 'KeyE' && car && loaded) {
     car.shift(car.gear + 1);
     if (car.autoShift) {
-      car.autoShift = false;
+      setGearbox(false, { announce: false });
       toast('Manual gearbox. Q/E shift, G returns to automatic.');
     }
   }
   if (event.code === 'KeyG' && car) {
-    car.autoShift = !car.autoShift;
-    toast(car.autoShift ? 'Automatic gearbox.' : 'Manual gearbox. Q/E shift.');
+    setGearbox(!car.autoShift);
   }
   if (event.code === 'KeyN' && loaded && hasStarted && !builderActive) scoutNewStage();
   if (event.code === 'Escape') {
@@ -1438,9 +1449,13 @@ function updateHud() {
   const kmh = Math.round(car.speed * 3.6);
   $('speed').textContent = String(Math.min(999, kmh)).padStart(3, '0');
   const gearLabel = car.gear === 0 ? 'R' : String(car.gear);
-  $('gear').textContent = car.autoShift ? gearLabel : `${gearLabel}·M`;
-  $('rpmFill').style.width = `${clamp01((car.rpm - 900) / 5900) * 100}%`;
-  $('rpmText').textContent = String(Math.round(car.rpm / 100) * 100);
+  $('gear').textContent = `${gearLabel} ${car.autoShift ? 'AUTO' : 'MAN'}`;
+  const rpmFrac = clamp01((car.rpm - ENGINE.idle) / (ENGINE.redline - ENGINE.idle));
+  $('rpmFill').style.width = `${rpmFrac * 100}%`;
+  $('rpmFill').style.background = rpmFrac > 0.9 || car.limiter ? '#ff3a2a' : '';
+  const rpmRounded = Math.round(car.rpm / 100) * 100;
+  $('rpmText').textContent = String(rpmRounded);
+  $('rpm').textContent = String(rpmRounded).padStart(5, '0');
 
   const surface = $('surface');
   if (!car.grounded) {
@@ -1606,6 +1621,8 @@ async function boot() {
     scene.add(water);
 
     car = new Car(scene, terrain);
+
+    car.autoShift = gearboxAuto;
 
     setRoute(initialRoute, { pad: false });
 
@@ -1786,6 +1803,9 @@ const mapPicker = createMapPicker({
     }
   },
 });
+
+$('gearboxBtn').addEventListener('click', () => setGearbox(!gearboxAuto));
+setGearbox(gearboxAuto, { announce: false });
 
 $('mapPickerBtn').addEventListener('click', () => {
   if (!loaded || !terrain) {
