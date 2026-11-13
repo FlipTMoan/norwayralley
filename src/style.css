@@ -958,3 +958,27 @@ kbd {
   #hud.compact #brand { display: none; }
   #hud.compact #progressWrap { width: 120px; }
 }
+
+/* ------------------------------------------- touch devices, any orientation */
+/* Phones are played sideways: controls follow the orientation, pedals on the
+   right thumb, steering on the left, HUD tucked into the corners. */
+@media (pointer: coarse) {
+  #touchControls { display: flex; }
+}
+@media (pointer: coarse) and (orientation: landscape) {
+  #touchControls {
+    position: fixed; left: 10px; right: 10px; bottom: 10px; top: auto;
+    display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none;
+  }
+  #touchControls > div { gap: 10px; }
+  #touchControls button { width: 84px; height: 84px; font-size: 13px; }
+  .touch-right button[data-touch="throttle"] { width: 100px; height: 100px; }
+  #speedBox { left: 12px; bottom: 106px; min-width: 150px; transform: scale(.85); transform-origin: bottom left; }
+  #minimapWrap { display: block; right: 12px; bottom: 106px; transform: scale(.62); transform-origin: bottom right; }
+  #topCenter { top: 6px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
+  #timer { font-size: 18px; }
+  #progressWrap { width: 160px; }
+  #helpLine, #brand { display: none; }
+  #stageInfo { top: 6px; right: 10px; }
+  #builderPanel { bottom: 106px; width: min(520px, calc(100vw - 24px)); }
+}

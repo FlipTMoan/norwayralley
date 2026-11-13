@@ -736,7 +736,19 @@ function resetStage({ countdownNow = hasStarted } = {}) {
   if (!countdownNow) $('countdown').classList.remove('pop');
 }
 
+/** On phones go full screen and ask for landscape when the drive starts (best effort). */
+function requestLandscape() {
+  if (!window.matchMedia('(pointer: coarse)').matches) return;
+  const el = document.documentElement;
+  let p;
+  try { p = el.requestFullscreen?.({ navigationUI: 'hide' }); } catch { p = null; }
+  Promise.resolve(p).catch(() => {}).then(() => {
+    try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch { /* not allowed here */ }
+  });
+}
+
 function beginCountdown() {
+  requestLandscape();
   hasStarted = true;
   $('startScreen').classList.add('hidden');
   $('hud').classList.remove('hidden');

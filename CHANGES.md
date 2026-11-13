@@ -69,6 +69,10 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Phones sideways**: touch controls now appear on any touch device in any
+  orientation and re-flow for landscape (steering left thumb, pedals right
+  thumb, HUD and minimap tucked into the corners). START ENGINE goes full
+  screen and asks the phone for landscape where the browser allows it.
 - **Sliding setting** (SLIDING toggle on the start card, remembered):
   *Normal* is the new default — the car can only ask for the yaw rate its
   tyres can deliver, grip is 30 % higher with a stiffer slip curve, loose
