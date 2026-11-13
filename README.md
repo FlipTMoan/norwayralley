@@ -248,6 +248,17 @@ first chunk's roads arrive. There is no finish and no stage time to beat;
 In a normal stage the same OSM roads appear as side roads (cut away where
 they would overlap the OSRM stage road).
 
+## Play with friends
+
+Press **PLAY WITH FRIENDS** on the start card. One player hosts a room and
+gets a 4-letter code; the others join with it. Everyone drives the host's
+stage (the host's stage, free-drive area or demo route is sent to joiners
+and whenever it changes) and sees the other players as named cars. The
+connection is browser to browser (WebRTC data channels) with only the
+handshake brokered by the public PeerJS server, so it works across the
+internet and on one Wi-Fi or phone hotspot. Browsers cannot link phones
+over Bluetooth from a web page, which is why rooms work this way.
+
 ## Map data: forests, fields, water, houses and road signs
 
 In a streamed world (any route picked on the 2D map) every 2 km chunk asks

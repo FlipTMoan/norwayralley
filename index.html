@@ -24,6 +24,7 @@
         <span id="best">BEST --:--.---</span>
       </div>
       <div id="progressWrap"><div id="progressBar"></div><div id="progressDots"></div></div>
+      <div id="players" class="hidden"></div>
     </div>
 
     <div id="speedBox">
@@ -181,6 +182,7 @@
       <button id="carBtn" class="start-toggle" title="Porsche 911 rally car, or the 1 200 hp Formula Offroad buggy on paddle tyres">CAR: PORSCHE 911</button>
       <button id="gearboxBtn" class="start-toggle" title="Automatic shifts for you; manual uses Q/E (G toggles any time)">GEARBOX: AUTOMATIC</button>
       <button id="slideBtn" class="start-toggle" title="Normal: natural grip, slides only when provoked. Lots: arcade drift feel">SLIDING: NORMAL</button>
+      <button id="friendsBtn" class="start-toggle" title="Host a room or join a friend's with a 4-letter code; you drive the same stage and see each other">PLAY WITH FRIENDS</button>
       <div class="start-controls">
         <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</span>
         <span><kbd>SPACE</kbd> jump</span>
@@ -191,6 +193,24 @@
         <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> camera</span>
       </div>
       <div class="start-credit">Terrain: Kartverket NHM DTM (CC BY 4.0) · Forest: SR16 © NIBIO (NLOD) · Map data © OpenStreetMap contributors (ODbL) · Road signs: data under NLOD from Statens vegvesen · Routing: OSRM</div>
+    </div>
+  </div>
+
+  <div id="friendsPanel" class="hidden">
+    <div class="friends-card panel">
+      <div class="panel-title">PLAY WITH FRIENDS</div>
+      <p class="hint">Phones cannot link over Bluetooth from a web page, so rooms connect browser to browser (also on one Wi-Fi or hotspot). Everyone drives the host's stage and sees the others as cars.</p>
+      <label class="friends-row">CALLSIGN <input id="friendsName" maxlength="14" autocomplete="off"></label>
+      <div class="panel-actions">
+        <button id="friendsHost" class="primary">HOST A ROOM</button>
+      </div>
+      <div class="friends-row">
+        <input id="friendsCode" placeholder="ROOM CODE" maxlength="6" autocapitalize="characters" autocomplete="off">
+        <button id="friendsJoin">JOIN</button>
+      </div>
+      <div id="friendsRoom" class="hidden">ROOM <b id="friendsCodeOut">----</b> <button id="friendsLeave">LEAVE</button></div>
+      <div id="friendsStatus" class="map-status">Host a room, or enter a friend's code.</div>
+      <div class="panel-actions"><button id="friendsClose">CLOSE</button></div>
     </div>
   </div>
 

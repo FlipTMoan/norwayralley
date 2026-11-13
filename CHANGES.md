@@ -69,6 +69,11 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Play with friends** (`multiplayer.js`): peer-to-peer rooms with a
+  4-letter code (WebRTC data channels, PeerJS signalling). The host relays
+  positions at 12 Hz and shares the current stage with joiners; other
+  players appear as named cars with 120 ms interpolation. Bluetooth is not
+  possible from a web page, so this is the nearby-play equivalent.
 - **Phones sideways**: touch controls now appear on any touch device in any
   orientation and re-flow for landscape (steering left thumb, pedals right
   thumb, HUD and minimap tucked into the corners). START ENGINE goes full

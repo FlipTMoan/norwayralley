@@ -982,3 +982,15 @@ kbd {
   #stageInfo { top: 6px; right: 10px; }
   #builderPanel { bottom: 106px; width: min(520px, calc(100vw - 24px)); }
 }
+
+/* --------------------------------------------------------------- friends */
+#friendsPanel { position: fixed; inset: 0; z-index: 32; display: flex; align-items: center; justify-content: center; background: rgba(6, 9, 8, 0.55); pointer-events: auto; }
+#friendsPanel.hidden { display: none; }
+.friends-card { width: min(380px, calc(100vw - 24px)); }
+.friends-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; font-size: 11px; letter-spacing: .1em; }
+.friends-row input { flex: 1; min-width: 0; background: rgba(0,0,0,.45); border: 1px solid var(--line); color: var(--paper); padding: 7px 8px; font: inherit; letter-spacing: .12em; text-transform: uppercase; }
+#friendsRoom { margin: 8px 0; font-size: 12px; letter-spacing: .12em; }
+#friendsRoom b { color: var(--acid); font-size: 18px; margin: 0 8px; }
+#friendsRoom.hidden { display: none; }
+#players { margin-top: 4px; font-size: 9px; letter-spacing: .14em; color: var(--paper); background: rgba(0,0,0,.5); padding: 3px 8px; border: 1px solid var(--line); }
+#players.hidden { display: none; }

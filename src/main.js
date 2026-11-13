@@ -9,6 +9,7 @@ import {
   fetchOsrmGeometrySegmented,
   fetchOsrmNearest,
   buildRouteIndex,
+  makeRoute,
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
@@ -17,6 +18,7 @@ import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { buildCorridorGeometry, corridorMesh } from './corridor.js';
+import { Session, encodeState, makeCallsign } from './multiplayer.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -149,6 +151,12 @@ let loaded = false;
 let hasStarted = false;
 let freeDrive = false; // streaming world without a stage: no finish, no timer goal
 let bakedFeatures = null;   // OSM houses/water + NVDB signs on the baked demo tile
+// Friends: a peer-to-peer room; other players are drawn as named ghost cars.
+let session = null;
+const ghosts = new Map();   // peer id → { car, label, kind }
+let myCallsign = (() => { try { return localStorage.getItem('rally.callsign') || makeCallsign(); } catch { return makeCallsign(); } })();
+let lastGeometry = null;    // the OSRM geometry of the current streamed stage (to share)
+let lastFreeCenter = null;  // the free-drive centre (to share)
 // Small screens: fold the stage panel away while driving so the road is visible.
 const compactMedia = window.matchMedia('(max-width: 900px), (pointer: coarse)');
 function setCompactHud(on) {
@@ -386,6 +394,7 @@ function teardownWorld() {
   if (water) { disposeGroup(water); water = null; }
   if (bakedFeatures) { disposeGroup(bakedFeatures); bakedFeatures = null; }
   bakedSignData = null;
+  for (const id of [...ghosts.keys()]) disposeGhost(id);
   if (car) {
     disposeGroup(car.group);
     disposeGroup(car.dust.points);
@@ -400,6 +409,190 @@ function teardownWorld() {
   if (basemapTexture) { basemapTexture.dispose?.(); basemapTexture = null; }
   minimapBase = null;
   route = null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Friends (peer-to-peer rooms)                                       */
+/* ------------------------------------------------------------------ */
+function describeRoute() {
+  if (freeDrive && lastFreeCenter) return { kind: 'free', center: lastFreeCenter };
+  if (terrain?.streaming && lastGeometry) return { kind: 'osrm', geometry: lastGeometry };
+  if (route && terrain && !terrain.streaming && route.samples?.length) {
+    return {
+      kind: 'baked',
+      name: route.name,
+      roadWidth: route.roadWidth,
+      surface: route.surface,
+      points: route.samples.filter((_, i) => i % 2 === 0).map((p) => [+p.x.toFixed(1), +p.z.toFixed(1)]),
+    };
+  }
+  return null;
+}
+
+/** Host: tell the room which stage we are on (also kept for late joiners). */
+function shareRoute() {
+  if (!session?.isHost) return;
+  const described = describeRoute();
+  if (described) session.sendRoute(described);
+}
+
+let applyingSharedRoute = false;
+async function applySharedRoute(shared) {
+  if (!shared || applyingSharedRoute || !loaded) return;
+  applyingSharedRoute = true;
+  try {
+    if (shared.kind === 'osrm' && shared.geometry) {
+      await applyRouteGeometry(shared.geometry);
+    } else if (shared.kind === 'free' && shared.center) {
+      await enterFreeDrive(shared.center);
+    } else if (shared.kind === 'baked' && shared.points?.length > 2) {
+      if (terrain?.streaming) {
+        toast('The host is on the demo mountain. Reload the page to join that stage.', 'error');
+        return;
+      }
+      const points = shared.points.map(([x, z]) => ({ x, z }));
+      const sharedRoute = makeRoute(points, terrain, {
+        simplify: false, smooth: 0, spacing: 4, name: shared.name || 'Shared stage', source: 'shared',
+        roadWidth: shared.roadWidth || 3.2, surface: shared.surface || 'gravel',
+      });
+      setRoute(sharedRoute, { announce: false });
+    }
+    toast(`Stage synced with the room: ${route?.name || ''}`.trim());
+  } catch (error) {
+    toast(`Could not load the host's stage: ${error.message}`, 'error');
+  } finally {
+    applyingSharedRoute = false;
+  }
+}
+
+function friendsStatus(text, kind = '') {
+  const el = $('friendsStatus');
+  if (el) { el.textContent = text; el.className = `map-status ${kind}`.trim(); }
+}
+
+function updatePlayersBadge() {
+  const el = $('players');
+  if (!el) return;
+  if (!session) { el.classList.add('hidden'); return; }
+  const names = [...session.peers.values()].map((p) => p.name);
+  el.textContent = `ROOM ${session.code} · ${session.playerCount} ${session.playerCount === 1 ? 'PLAYER' : 'PLAYERS'}${names.length ? ' · ' + names.join(', ') : ''}`;
+  el.classList.remove('hidden');
+}
+
+function bindSession(s) {
+  s.addEventListener('status', (e) => { friendsStatus(e.detail.text, 'ok'); toast(e.detail.text); updatePlayersBadge(); });
+  s.addEventListener('error', (e) => { friendsStatus(e.detail.message, 'err'); toast(e.detail.message, 'error'); });
+  s.addEventListener('peer-join', () => { updatePlayersBadge(); shareRoute(); });
+  s.addEventListener('peer-leave', (e) => { disposeGhost(e.detail.id); updatePlayersBadge(); });
+  s.addEventListener('route', (e) => applySharedRoute(e.detail.route));
+}
+
+async function hostRoom() {
+  leaveRoom();
+  const s = new Session({ name: myCallsign, kind: carKind });
+  bindSession(s);
+  friendsStatus('Opening a room…');
+  try {
+    const code = await s.host();
+    session = s;
+    $('friendsCodeOut').textContent = code;
+    $('friendsRoom').classList.remove('hidden');
+    friendsStatus(`Room ${code}. Friends press JOIN and type this code.`, 'ok');
+    updatePlayersBadge();
+  } catch (error) {
+    friendsStatus(error.message, 'err');
+  }
+}
+
+async function joinRoom(code) {
+  leaveRoom();
+  const s = new Session({ name: myCallsign, kind: carKind });
+  bindSession(s);
+  friendsStatus(`Joining ${code}…`);
+  try {
+    await s.join(code);
+    session = s;
+    $('friendsCodeOut').textContent = s.code;
+    $('friendsRoom').classList.remove('hidden');
+    updatePlayersBadge();
+  } catch (error) {
+    friendsStatus(error.message, 'err');
+  }
+}
+
+function leaveRoom() {
+  if (session) {
+    session.close();
+    session = null;
+  }
+  for (const id of [...ghosts.keys()]) disposeGhost(id);
+  $('friendsRoom')?.classList.add('hidden');
+  updatePlayersBadge();
+}
+
+function makeLabel(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(10,14,11,0.75)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.fillStyle = '#f0ce58';
+  ctx.font = 'bold 34px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 34);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+  sprite.scale.set(3.2, 0.8, 1);
+  sprite.renderOrder = 999;
+  return sprite;
+}
+
+function disposeGhost(id) {
+  const g = ghosts.get(id);
+  if (!g) return;
+  disposeGroup(g.car.group);
+  disposeGroup(g.car.dust.points);
+  scene.remove(g.label);
+  g.label.material.map?.dispose();
+  g.label.material.dispose();
+  ghosts.delete(id);
+}
+
+const ghostQ = { yaw: new THREE.Quaternion(), pitch: new THREE.Quaternion(), roll: new THREE.Quaternion() };
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
+/** Draw the other players where their last packets say they are. */
+function updateGhosts(now, dt) {
+  if (!session || !terrain) return;
+  for (const [id, peer] of session.peers) {
+    let g = ghosts.get(id);
+    if (g && g.kind !== peer.kind) { disposeGhost(id); g = null; }
+    if (!g) {
+      const ghostCar = new Car(scene, terrain, peer.kind);
+      const label = makeLabel(peer.name);
+      scene.add(label);
+      g = { car: ghostCar, label, kind: peer.kind, spin: 0 };
+      ghosts.set(id, g);
+    }
+    const pose = peer.track.sample(now);
+    const stale = now - peer.track.lastSeen > 6000;
+    g.car.group.visible = Boolean(pose) && !stale;
+    g.label.visible = g.car.group.visible;
+    if (!pose) continue;
+    g.car.group.position.set(pose.x, pose.y + 0.02, pose.z);
+    ghostQ.yaw.setFromAxisAngle(AXIS_Y, pose.yaw);
+    ghostQ.pitch.setFromAxisAngle(AXIS_X, pose.pitch);
+    ghostQ.roll.setFromAxisAngle(AXIS_Z, pose.roll);
+    g.car.group.quaternion.copy(ghostQ.yaw).multiply(ghostQ.pitch).multiply(ghostQ.roll);
+    g.spin += (pose.speed / g.car.spec.wheelRadius) * dt;
+    for (const w of g.car.wheels) w.spin.rotation.x = g.spin;
+    g.label.position.set(pose.x, pose.y + 2.3, pose.z);
+  }
+  for (const id of [...ghosts.keys()]) if (!session.peers.has(id)) disposeGhost(id);
 }
 
 /**
@@ -513,6 +706,7 @@ async function enterStreamingWorld(geometry) {
     }
 
     log.info(`streamed world ready: ${route.name}, ${route.length.toFixed(0)} m route`);
+    shareRoute();
     return { route, world };
   } finally {
     setWorldLoading(false);
@@ -525,6 +719,8 @@ async function enterStreamingWorld(geometry) {
  * car is put on the nearest road as soon as the first chunk's roads arrive.
  */
 async function enterFreeDrive(center) {
+  lastFreeCenter = center;
+  lastGeometry = null;
   setWorldLoading(true, 0.02, 'Finding the nearest road…');
   // Start on a road: OSRM snaps the picked point to the nearest drivable way
   // and tells us which way it runs, even before the chunk's roads are loaded.
@@ -590,6 +786,7 @@ async function enterFreeDrive(center) {
       log.warn('free-drive warm-up failed (continuing)', error);
     }
     log.info(`free drive ready at ${center.lat.toFixed(4)}, ${center.lon.toFixed(4)}`);
+    shareRoute();
     toast('Free drive. Roads, houses and forests stream in as you go.');
     return world;
   } finally {
@@ -603,6 +800,8 @@ async function enterFreeDrive(center) {
  * Norway" path for both the 2D map and the coordinate router.
  */
 async function applyRouteGeometry(geometry) {
+  lastGeometry = geometry;
+  lastFreeCenter = null;
   if (terrain && !terrain.streaming) {
     const fits = geometry.coordinates.every(({ lat, lon }) => {
       const p = terrain.worldFromLatLon(lat, lon);
@@ -662,6 +861,7 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
     if (announce) {
       toast(`${route.name} — ${(route.length / 1000).toFixed(2)} km. Click START ENGINE or press Enter.`);
     }
+    shareRoute();
     return;
   }
 
@@ -707,6 +907,7 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
   updateRouteHud();
   updateMinimapRoute();
   resetStage();
+  shareRoute();
 
   if (announce) {
     toast(`${route.name} — ${(route.length / 1000).toFixed(2)} km. Click START ENGINE or press Enter.`);
@@ -2028,6 +2229,20 @@ const mapPicker = createMapPicker({
 
 $('gearboxBtn').addEventListener('click', () => setGearbox(!gearboxAuto));
 $('carBtn').addEventListener('click', () => setCarKind(carKind === 'porsche' ? 'buggy' : 'porsche'));
+$('friendsBtn').addEventListener('click', () => {
+  $('friendsName').value = myCallsign;
+  $('friendsPanel').classList.remove('hidden');
+});
+$('friendsClose').addEventListener('click', () => $('friendsPanel').classList.add('hidden'));
+$('friendsName').addEventListener('change', () => {
+  myCallsign = $('friendsName').value.trim().slice(0, 14) || myCallsign;
+  try { localStorage.setItem('rally.callsign', myCallsign); } catch { /* private mode */ }
+  if (session) session.name = myCallsign;
+});
+$('friendsHost').addEventListener('click', hostRoom);
+$('friendsJoin').addEventListener('click', () => joinRoom($('friendsCode').value));
+$('friendsCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom($('friendsCode').value); });
+$('friendsLeave').addEventListener('click', () => { leaveRoom(); friendsStatus('Left the room.'); });
 $('slideBtn').addEventListener('click', () => setSlideMode(slideMode === 'loose' ? 'normal' : 'loose'));
 setSlideMode(slideMode, { announce: false });
 setCarKind(carKind, { announce: false });
@@ -2152,6 +2367,7 @@ function frame(now) {
       car.vel.multiplyScalar(Math.exp(-2.2 * dt));
     }
     updateHud();
+    if (session) session.sendState(encodeState(car, { name: myCallsign, kind: carKind }), now);
     audio.update({
       speed: car.speed,
       throttle: phase === 'racing' && !builderActive ? input.throttle : 0,
@@ -2162,6 +2378,7 @@ function frame(now) {
   }
 
   if (loaded) {
+    updateGhosts(now, dt);
     updateGamePhase(dt);
     updateWorld(dt);
     if (car) updateTerrainLOD(car.pos.x, car.pos.z);
@@ -2197,6 +2414,10 @@ window.__rally = {
   openMap: () => mapPicker.open(terrain, route),
   freeDrive: (lat, lon) => enterFreeDrive({ lat, lon }),
   setCar: (kind) => setCarKind(kind),
+  hostRoom,
+  joinRoom,
+  leaveRoom,
+  get session() { return session; },
   setSlide: (mode) => setSlideMode(mode),
   mapPicker,
   toggleDebug,
