@@ -12,7 +12,7 @@ import {
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
-import { Car, CARS } from './car.js';
+import { Car, CARS, GRIP_MODES } from './car.js';
 import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
 import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
@@ -157,6 +157,18 @@ function setCompactHud(on) {
 let bakedSignData = null;
 // Gearbox preference (start-card toggle or G); remembered between visits.
 let gearboxAuto = (() => { try { return localStorage.getItem('rally.gearbox') !== 'manual'; } catch { return true; } })();
+// Sliding: natural grip by default, or the arcade drift feel (start-card toggle).
+let slideMode = (() => { try { return GRIP_MODES[localStorage.getItem('rally.slide')] ? localStorage.getItem('rally.slide') : 'normal'; } catch { return 'normal'; } })();
+function setSlideMode(mode, { announce = true } = {}) {
+  if (!GRIP_MODES[mode]) return;
+  slideMode = mode;
+  if (car) car.slideMode = mode;
+  try { localStorage.setItem('rally.slide', mode); } catch { /* private mode */ }
+  const btn = document.getElementById('slideBtn');
+  if (btn) btn.textContent = `SLIDING: ${mode === 'loose' ? 'LOTS' : 'NORMAL'}`;
+  if (announce) toast(mode === 'loose' ? 'Loose: the tail comes round on every corner.' : 'Normal grip: slides only when you provoke them.');
+}
+
 // Which car: Porsche 911 or the Formula Offroad buggy (start-card toggle).
 let carKind = (() => { try { return CARS[localStorage.getItem('rally.car')] ? localStorage.getItem('rally.car') : 'porsche'; } catch { return 'porsche'; } })();
 function setCarKind(kind, { announce = true } = {}) {
@@ -175,6 +187,7 @@ function swapCar() {
   disposeGroup(car.dust.points);
   car = new Car(scene, terrain, carKind);
   car.autoShift = gearboxAuto;
+  car.slideMode = slideMode;
   if (route) car.setRoute(route); else car.reset(pose);
   if (phase === 'racing' || phase === 'countdown' || phase === 'finished') resetStage({ countdownNow: true });
 }
@@ -468,6 +481,7 @@ async function enterStreamingWorld(geometry) {
     scene.add(world.group);
     car = new Car(scene, terrain, carKind);
     car.autoShift = gearboxAuto;
+    car.slideMode = slideMode;
     water = buildWater(terrain);
     scene.add(water);
     vegetation = null;
@@ -541,6 +555,7 @@ async function enterFreeDrive(center) {
     scene.add(world.group);
     car = new Car(scene, terrain, carKind);
     car.autoShift = gearboxAuto;
+    car.slideMode = slideMode;
     water = buildWater(terrain);
     scene.add(water);
     vegetation = null;
@@ -1816,6 +1831,8 @@ async function boot() {
 
     car.autoShift = gearboxAuto;
 
+    car.slideMode = slideMode;
+
     setRoute(initialRoute, { pad: false });
 
     // A hazy ring of distant peaks across the fjord.
@@ -1999,6 +2016,8 @@ const mapPicker = createMapPicker({
 
 $('gearboxBtn').addEventListener('click', () => setGearbox(!gearboxAuto));
 $('carBtn').addEventListener('click', () => setCarKind(carKind === 'porsche' ? 'buggy' : 'porsche'));
+$('slideBtn').addEventListener('click', () => setSlideMode(slideMode === 'loose' ? 'normal' : 'loose'));
+setSlideMode(slideMode, { announce: false });
 setCarKind(carKind, { announce: false });
 document.querySelector('#stageInfo .panel-title').addEventListener('click', () => {
   const hud = $('hud');
@@ -2166,6 +2185,7 @@ window.__rally = {
   openMap: () => mapPicker.open(terrain, route),
   freeDrive: (lat, lon) => enterFreeDrive({ lat, lon }),
   setCar: (kind) => setCarKind(kind),
+  setSlide: (mode) => setSlideMode(mode),
   mapPicker,
   toggleDebug,
   dumpLog,

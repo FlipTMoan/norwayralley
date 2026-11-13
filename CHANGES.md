@@ -69,6 +69,11 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Sliding setting** (SLIDING toggle on the start card, remembered):
+  *Normal* is the new default — the car can only ask for the yaw rate its
+  tyres can deliver, grip is 30 % higher with a stiffer slip curve, loose
+  surfaces wander and power-oversteer less, and handbrake slides recover in
+  0.45 s. *Lots* keeps the arcade drift feel. The handbrake drifts in both.
 - **Second car: Formula Offroad buggy** (CAR toggle on the start card, or
   `window.__rally.setCar('buggy')`): 1 200 hp / 1 500 Nm, 4WD, 1.24 m paddle
   tyres that grip loose ground 25–40 % better (and asphalt worse), long-travel

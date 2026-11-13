@@ -17,8 +17,9 @@ function flatRoad(surface) {
 }
 
 /** Accelerate to `kmh`, then hold full steer for `seconds`; report the peak yaw rate and slide. */
-function corner(surface, kmh, seconds) {
+function corner(surface, kmh, seconds, mode = 'loose') {
   const { car } = flatRoad(surface);
+  car.slideMode = mode;
   const drive = { throttle: 1, brake: 0, steer: 0, handbrake: false, jump: false };
   for (let i = 0; i < 60 * 40 && car.speed * 3.6 < kmh; i++) car.update(1 / 60, drive);
   const surfaceKind = car.surfaceKind; // read on the straight, before the car leaves the road
@@ -41,6 +42,13 @@ test('steering is speed-sensitive: no twitching at 140 km/h', () => {
   assert.equal(fast.surfaceKind, 'asphalt');
   assert.ok(fast.yawPeak < 0.42, `yaw rate at speed ${fast.yawPeak.toFixed(2)} rad/s`);
   assert.ok(slow.yawPeak > fast.yawPeak * 1.6, `slow ${slow.yawPeak.toFixed(2)} vs fast ${fast.yawPeak.toFixed(2)}`);
+});
+
+test('normal grip tracks the steering; loose mode slides', () => {
+  const normal = corner('gravel', 70, 0.6, 'normal');
+  const loose = corner('gravel', 70, 0.6, 'loose');
+  assert.ok(normal.slidePeak < 1.6, `normal mode slide ${normal.slidePeak.toFixed(2)} m/s`);
+  assert.ok(loose.slidePeak > normal.slidePeak * 1.5, `loose ${loose.slidePeak.toFixed(2)} vs normal ${normal.slidePeak.toFixed(2)} m/s`);
 });
 
 test('gravel slides more than asphalt and only gravel dusts', () => {
