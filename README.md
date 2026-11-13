@@ -237,8 +237,9 @@ debugging in the browser console.
 ### Free drive
 
 Open the **2D MAP**, click one point anywhere in Norway and press **FREE DRIVE
-HERE**. The world streams in around that point and keeps loading 2 km chunks
-ahead of the car as you drive. Real roads come from OpenStreetMap: every
+HERE**. The point is first snapped to the nearest drivable road with OSRM
+(heading included), then the world streams in around it and keeps loading
+2 km chunks ahead of the car as you drive. Real roads come from OpenStreetMap: every
 chunk's `highway=*` lines are carved into the terrain and drawn as tarmac or
 gravel ribbons, and the car is placed on the nearest road as soon as the
 first chunk's roads arrive. There is no finish and no stage time to beat;

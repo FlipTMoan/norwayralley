@@ -527,6 +527,47 @@ function haversine(a, b) {
  * can be projected onto the current terrain — or used to generate a brand new
  * one anywhere in Norway.
  */
+/**
+ * Snap a point to the nearest road with OSRM and work out the road's
+ * heading there (from a short route along it). Used by free drive so the
+ * car always starts on tarmac even before the chunk's own roads arrive.
+ * Returns `{ lat, lon, heading, name, snapped }` (heading in radians, game
+ * yaw convention: 0 = +z/south, π/2 = +x/east), or null when OSRM is down.
+ */
+export async function fetchOsrmNearest({ lat, lon }, { profile = 'driving' } = {}) {
+  const base = (OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving).replace('/route/', '/nearest/');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`${base}/${lon},${lat}?number=1`, { signal: controller.signal });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const wp = data.waypoints?.[0];
+    if (data.code !== 'Ok' || !wp?.location) return null;
+    const snapped = { lat: wp.location[1], lon: wp.location[0], name: wp.name || null, snapped: wp.distance ?? 0 };
+    // Heading: route 250 m away and read the first leg's direction.
+    let heading = 0;
+    try {
+      const away = { lat: snapped.lat + 0.0022, lon: snapped.lon + 0.004 };
+      const geometry = await fetchOsrmGeometry({ a: snapped, b: away, profile });
+      const c = geometry.coordinates;
+      if (c.length >= 2) {
+        const mPerLon = 111320 * Math.cos((snapped.lat * Math.PI) / 180);
+        const dx = (c[1].lon - c[0].lon) * mPerLon;
+        const dz = -(c[1].lat - c[0].lat) * 110950;
+        heading = Math.atan2(dx, dz);
+      }
+    } catch {
+      // No heading is fine; the road network corrects it once it has loaded.
+    }
+    return { ...snapped, heading };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
   const base = OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving;
   const url = `${base}/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=false`;

@@ -464,6 +464,7 @@ export async function createStreamingWorld({
   geometry,
   center = null,
   freeDrive = false,
+  heading = 0,
   title = 'Streamed stage',
   onProgress = null,
 } = {}) {
@@ -1482,15 +1483,22 @@ export async function createStreamingWorld({
   // ---- build the route ------------------------------------------------------
   if (freeDrive) {
     const spawn = points[0];
-    world.roads.spawn = { x: spawn.x, z: spawn.z, yaw: 0 };
+    world.roads.spawn = { x: spawn.x, z: spawn.z, yaw: heading };
     world.roads.start = { x: spawn.x, z: spawn.z };
     world.roads.finish = { x: spawn.x, z: spawn.z };
-    onProgress?.(0.62, 'Loading the first terrain chunks…');
+    onProgress?.(0.55, 'Loading the first terrain chunks…');
     await world.ensureReady(spawn.x, spawn.z, {
       rings: 1,
-      onTick: (p) => onProgress?.(0.62 + p * 0.3, 'Loading the first terrain chunks…'),
+      onTick: (p) => onProgress?.(0.55 + p * 0.3, 'Loading the first terrain chunks…'),
     });
-    log.info(`free-drive world ready at ${anchor.lat.toFixed(4)}, ${anchor.lon.toFixed(4)}`);
+    // Give the spawn chunk's OpenStreetMap roads a moment to arrive so the
+    // car starts on a carved road; a slow Overpass does not block the drive.
+    const deadline = performance.now() + 12000;
+    while (!world.roads.snapped && performance.now() < deadline && !disposed) {
+      onProgress?.(0.85 + ((12000 - (deadline - performance.now())) / 12000) * 0.1, 'Finding the road under the car…');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    log.info(`free-drive world ready at ${anchor.lat.toFixed(4)}, ${anchor.lon.toFixed(4)}${world.roads.snapped ? ' (on a road)' : ' (roads pending)'}`);
     return world;
   }
   onProgress?.(0.45, 'Smoothing the master track…');

@@ -7,6 +7,7 @@ import {
   randomRallyRoute,
   fetchOsrmGeometry,
   fetchOsrmGeometrySegmented,
+  fetchOsrmNearest,
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
@@ -412,12 +413,20 @@ async function enterStreamingWorld(geometry) {
  * car is put on the nearest road as soon as the first chunk's roads arrive.
  */
 async function enterFreeDrive(center) {
+  setWorldLoading(true, 0.02, 'Finding the nearest road…');
+  // Start on a road: OSRM snaps the picked point to the nearest drivable way
+  // and tells us which way it runs, even before the chunk's roads are loaded.
+  const nearest = await fetchOsrmNearest(center);
+  if (nearest) {
+    center = { lat: nearest.lat, lon: nearest.lon };
+    log.info(`free drive snapped ${Math.round(nearest.snapped)} m to ${nearest.name || 'a road'}`);
+  }
   const title = `Free drive at ${center.lat.toFixed(2)}°N ${center.lon.toFixed(2)}°E`;
-  setWorldLoading(true, 0.02, 'Planning the free-drive world…');
   try {
     const world = await createStreamingWorld({
       center,
       freeDrive: true,
+      heading: nearest?.heading || 0,
       title,
       onProgress: (p, text) => setWorldLoading(true, p, text),
     });
@@ -1363,6 +1372,16 @@ window.addEventListener('keyup', (event) => {
   if (keyMap[event.code]) keys.delete(keyMap[event.code]);
 });
 window.addEventListener('blur', () => keys.clear());
+
+// OpenStreetMap features (houses, roads, fields, water) come from the public
+// Overpass mirrors, which are sometimes overloaded. Say so instead of leaving
+// the player to wonder why the villages are empty; the chunks retry on their own.
+let overpassToastAt = 0;
+window.addEventListener('rally:overpass-down', () => {
+  if (performance.now() - overpassToastAt < 90000) return;
+  overpassToastAt = performance.now();
+  toast('OpenStreetMap servers are busy — houses, roads and fields will appear when they answer.', 'error');
+});
 
 for (const button of document.querySelectorAll('[data-touch]')) {
   const action = button.dataset.touch;

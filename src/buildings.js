@@ -23,6 +23,7 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
 ];
 
 const MAX_PER_CHUNK = 220;
@@ -104,6 +105,10 @@ async function fetchOsmChunkNow({ minLat, minLon, maxLat, maxLon }) {
   }
   log.warn(`map features unavailable: ${lastError?.message || 'no endpoint answered'} — retrying in ${BREAKER_MS / 1000} s`);
   blockedUntil = Date.now() + BREAKER_MS;
+  // Let the UI explain why houses and roads are missing (main.js shows a toast).
+  if (typeof window !== 'undefined' && window.dispatchEvent) {
+    window.dispatchEvent(new CustomEvent('rally:overpass-down', { detail: { message: lastError?.message || 'no answer' } }));
+  }
   return null;
 }
 
