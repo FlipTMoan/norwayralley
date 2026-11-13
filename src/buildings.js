@@ -8,6 +8,7 @@ import { logger } from './log.js';
  *   buildings  – footprint polygons + tags → oriented low-poly houses
  *   areas      – land use / land cover polygons (fields, forest, water, …)
  *   waterways  – river / stream centre lines
+ *   roads      – highway centre lines (for free drive and side roads)
  *
  * Buildings are placed exactly where they stand: the footprint's minimum-area
  * bounding rectangle gives the house its true heading and size, and the
@@ -20,32 +21,65 @@ const log = logger('buildings');
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
 const MAX_PER_CHUNK = 220;
-const REQUEST_TIMEOUT = 30000;
+const REQUEST_TIMEOUT = 25000;     // per endpoint attempt
+const MAX_CONCURRENT = 2;          // public Overpass instances allow two slots per client
+const BREAKER_MS = 60000;          // after every mirror failed, skip Overpass for this long
+
+let blockedUntil = 0;
+/** True while Overpass is considered down (every mirror failed recently). */
+export function overpassBlocked() {
+  return Date.now() < blockedUntil;
+}
+
+let inFlight = 0;
+const waiting = [];
+/** Run `task` when an Overpass slot is free (FIFO). */
+function withSlot(task) {
+  return new Promise((resolve, reject) => {
+    const run = async () => {
+      inFlight++;
+      try { resolve(await task()); } catch (e) { reject(e); } finally {
+        inFlight--;
+        const next = waiting.shift();
+        if (next) next();
+      }
+    };
+    if (inFlight < MAX_CONCURRENT) run(); else waiting.push(run);
+  });
+}
 
 const AREA_LANDUSE = ['farmland', 'meadow', 'orchard', 'farmyard', 'grass', 'forest',
   'residential', 'industrial', 'commercial', 'retail', 'quarry', 'cemetery'];
 const AREA_NATURAL = ['wood', 'water', 'wetland', 'scrub', 'grassland', 'heath', 'bare_rock', 'scree', 'sand'];
 const WATERWAYS = ['river', 'stream', 'canal', 'drain', 'ditch'];
+export const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service', 'track'];
 
 /**
  * Ask Overpass for every mapped feature the game renders inside a lat/lon
  * bbox. Returns `{ buildings, areas, waterways }` (all arrays, possibly empty
  * when the service is unreachable).
  */
-export async function fetchOsmChunk({ minLat, minLon, maxLat, maxLon }) {
+export function fetchOsmChunk(bbox) {
+  if (overpassBlocked()) return Promise.resolve(null);
+  return withSlot(() => fetchOsmChunkNow(bbox));
+}
+
+async function fetchOsmChunkNow({ minLat, minLon, maxLat, maxLon }) {
   const bbox = `${minLat.toFixed(6)},${minLon.toFixed(6)},${maxLat.toFixed(6)},${maxLon.toFixed(6)}`;
-  const query = `[out:json][timeout:25];(`
+  // Ways only for land cover and water: multipolygon *relations* for forests
+  // and big lakes can span hundreds of km² and make Overpass time out.
+  const query = `[out:json][timeout:45];(`
     + `way["building"](${bbox});`
     + `relation["building"]["type"="multipolygon"](${bbox});`
     + `way["landuse"~"^(${AREA_LANDUSE.join('|')})$"](${bbox});`
-    + `relation["landuse"~"^(${AREA_LANDUSE.join('|')})$"]["type"="multipolygon"](${bbox});`
     + `way["natural"~"^(${AREA_NATURAL.join('|')})$"](${bbox});`
-    + `relation["natural"~"^(${AREA_NATURAL.join('|')})$"]["type"="multipolygon"](${bbox});`
     + `way["waterway"~"^(${WATERWAYS.join('|')})$"](${bbox});`
+    + `way["highway"~"^(${ROAD_CLASSES.join('|')})$"](${bbox});`
     + `);out geom;`;
   let lastError = null;
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -68,13 +102,14 @@ export async function fetchOsmChunk({ minLat, minLon, maxLat, maxLon }) {
       clearTimeout(timeout);
     }
   }
-  log.warn(`map features unavailable: ${lastError?.message || 'no endpoint answered'}`);
-  return { buildings: [], areas: [], waterways: [] };
+  log.warn(`map features unavailable: ${lastError?.message || 'no endpoint answered'} — retrying in ${BREAKER_MS / 1000} s`);
+  blockedUntil = Date.now() + BREAKER_MS;
+  return null;
 }
 
 /** Backwards-compatible helper: only the building footprints. */
 export async function fetchBuildings(bbox) {
-  return (await fetchOsmChunk(bbox)).buildings;
+  return (await fetchOsmChunk(bbox))?.buildings || [];
 }
 
 /** Rings of a way or multipolygon relation, as arrays of `{lat, lon}`. */
@@ -96,9 +131,21 @@ function parseElements(elements) {
   const buildings = [];
   const areas = [];
   const waterways = [];
+  const roads = [];
   for (const el of elements) {
     const tags = el?.tags;
     if (!tags) continue;
+    if (tags.highway && el.type === 'way' && el.geometry?.length >= 2) {
+      roads.push({
+        kind: tags.highway,
+        name: tags.name || tags.ref || null,
+        surface: tags.surface || null,
+        maxspeed: Number(tags.maxspeed) || null,
+        oneway: tags.oneway === 'yes',
+        points: el.geometry,
+      });
+      continue;
+    }
     if (tags.building) {
       const rings = ringsOf(el);
       if (!rings.length) continue;
@@ -131,7 +178,7 @@ function parseElements(elements) {
       rings,
     });
   }
-  return { buildings, areas, waterways };
+  return { buildings, areas, waterways, roads };
 }
 
 /* ------------------------------------------------------------------ *

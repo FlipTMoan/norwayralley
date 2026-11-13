@@ -64,8 +64,11 @@ test('car rides on the road surface without sinking or sliding off', () => {
   let maxSpeed = 0;
   let offRoad = 0;
   const frames = 60 * 25;
+  let simulated = 0;
   for (let i = 0; i < frames; i++) {
     const state = car.update(1 / 60, input);
+    simulated++;
+    if (state.progress > 0.9) break; // stop before the car runs off the end
     const surface = car.groundAt(car.pos.x, car.pos.z);
     worstSink = Math.max(worstSink, surface - car.pos.y);
     if (car.grounded) worstHover = Math.max(worstHover, car.pos.y - surface);
@@ -78,8 +81,8 @@ test('car rides on the road surface without sinking or sliding off', () => {
   const lateral = route.nearest(car.pos.x, car.pos.z).distance;
   assert.ok(worstSink <= 0.15, `body sank ${worstSink.toFixed(3)} m into the road`);
   assert.ok(worstHover <= 0.25, `body hovered ${worstHover.toFixed(3)} m above the road`);
-  assert.ok(maxSpeed > 20, `car only reached ${(maxSpeed * 3.6).toFixed(0)} km/h uphill`);
-  assert.ok(offRoad < frames * 0.02, `off the road for ${offRoad} frames`);
+  assert.ok(maxSpeed > 30, `car only reached ${(maxSpeed * 3.6).toFixed(0)} km/h uphill`);
+  assert.ok(offRoad < simulated * 0.02, `off the road for ${offRoad} of ${simulated} frames`);
   assert.ok(lateral < route.roadWidth, `drifted ${lateral.toFixed(2)} m from the centre line`);
   assert.ok(car.roadLift > 0.15, 'car rides on the ribbon lift when on the road');
 });

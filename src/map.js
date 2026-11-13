@@ -27,7 +27,7 @@ function markerIcon(label, color) {
   });
 }
 
-export function createMapPicker({ getTerrain, onRoute }) {
+export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
   const root = document.getElementById('mapPicker');
   const mapEl = document.getElementById('mapCanvas');
   const statusEl = document.getElementById('mapStatus');
@@ -35,6 +35,7 @@ export function createMapPicker({ getTerrain, onRoute }) {
   const clearBtn = document.getElementById('mapClear');
   const closeBtn = document.getElementById('mapClose');
   const stageBtn = document.getElementById('mapUseStage');
+  const freeBtn = document.getElementById('mapFreeDrive');
   const profileEl = document.getElementById('mapProfile');
   if (!root || !mapEl) log.error('map picker DOM is missing');
   let map = null;
@@ -54,6 +55,7 @@ export function createMapPicker({ getTerrain, onRoute }) {
   function updateButtons() {
     if (generateBtn) generateBtn.disabled = busy || !points.a || !points.b;
     if (generateBtn) generateBtn.textContent = busy ? 'ROUTING…' : 'GENERATE ROUTE';
+    if (freeBtn) freeBtn.disabled = busy || !points.a || !onFreeDrive;
     if (clearBtn) clearBtn.disabled = busy;
   }
 
@@ -109,7 +111,7 @@ export function createMapPicker({ getTerrain, onRoute }) {
       if (!points.a || (points.a && points.b)) {
         clearMarkers();
         place({ lat, lon }, 'a');
-        setStatus('Start set. Click the finish point — anywhere in Norway.');
+        setStatus('Start set. Click the finish point for a stage, or press FREE DRIVE HERE.');
       } else {
         place({ lat, lon }, 'b');
         setStatus('Both points set. Press GENERATE ROUTE to build that world.');
@@ -172,7 +174,7 @@ export function createMapPicker({ getTerrain, onRoute }) {
     ensureMap();
     lastRoute = route;
     clearMarkers();
-    setStatus('Click anywhere in Norway to set the START point, then the FINISH.');
+    setStatus('Click anywhere in Norway to set the START point, then the FINISH — or FREE DRIVE from the start.');
     root.classList.remove('hidden');
     visible = true;
     // Leaflet needs a size recalculation after the container is shown. Fit the
@@ -238,6 +240,27 @@ export function createMapPicker({ getTerrain, onRoute }) {
       }
     });
   }
+  freeBtn?.addEventListener('click', async () => {
+    if (!points.a || busy || !onFreeDrive) return;
+    busy = true;
+    updateButtons();
+    setStatus('Streaming the world around your start point…');
+    try {
+      const answer = await onFreeDrive({ a: points.a });
+      setStatus(answer.message, answer.ok ? 'ok' : 'err');
+      if (answer.ok) {
+        busy = false;
+        close();
+        return;
+      }
+    } catch (error) {
+      log.error('free drive failed', error);
+      setStatus(error.message || 'Free drive failed.', 'err');
+    } finally {
+      busy = false;
+      updateButtons();
+    }
+  });
   clearBtn?.addEventListener('click', () => {
     clearMarkers();
     setStatus('Cleared. Click the map to set a new START point.');

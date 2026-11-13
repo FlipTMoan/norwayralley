@@ -140,6 +140,7 @@ let distantPeaks = null;
 let showBasemap = false;
 let loaded = false;
 let hasStarted = false;
+let freeDrive = false; // streaming world without a stage: no finish, no timer goal
 let time = 0;
 let phase = 'loading'; // loading | intro | countdown | building | racing | finished
 let stageTime = 0;
@@ -374,11 +375,13 @@ async function enterStreamingWorld(geometry) {
     roadGroup = null;
     terrainMesh = null;
     route = world.route;
+    freeDrive = false;
     minimapBase = world.minimapCanvas;
 
     car.setRoute(route);
     updateRouteHud();
     updateMinimapRoute();
+    $('progressWrap').classList.remove('hidden');
     resetStage();
 
     document.title = `Retro Norway Rally — ${title}`;
@@ -398,6 +401,74 @@ async function enterStreamingWorld(geometry) {
 
     log.info(`streamed world ready: ${route.name}, ${route.length.toFixed(0)} m route`);
     return { route, world };
+  } finally {
+    setWorldLoading(false);
+  }
+}
+
+/**
+ * Free drive: stream the world around a point and let the player go wherever
+ * the OpenStreetMap roads lead. Chunks keep loading ahead of the car; the
+ * car is put on the nearest road as soon as the first chunk's roads arrive.
+ */
+async function enterFreeDrive(center) {
+  const title = `Free drive at ${center.lat.toFixed(2)}°N ${center.lon.toFixed(2)}°E`;
+  setWorldLoading(true, 0.02, 'Planning the free-drive world…');
+  try {
+    const world = await createStreamingWorld({
+      center,
+      freeDrive: true,
+      title,
+      onProgress: (p, text) => setWorldLoading(true, p, text),
+    });
+    setWorldLoading(true, 0.95, 'Warming up…');
+    await nextFrame();
+
+    teardownWorld();
+    terrain = world;
+    basemapTexture = null;
+    showBasemap = false;
+    if (builderActive) closeRouteBuilder();
+    clearPickMarkers();
+
+    scene.add(world.group);
+    car = new Car(scene, terrain);
+    water = buildWater(terrain);
+    scene.add(water);
+    vegetation = null;
+    roadGroup = null;
+    terrainMesh = null;
+    route = world.roads;
+    freeDrive = true;
+    minimapBase = world.minimapCanvas;
+    world.onSpawnSnapped = (pose) => {
+      // Only move a car that has not driven off yet.
+      if (terrain === world && car && car.speed < 1) {
+        car.reset(pose);
+        toast('On the road. Drive anywhere — the world streams in ahead of you.');
+      }
+    };
+
+    car.setRoute(route);
+    updateRouteHud();
+    updateMinimapRoute();
+    $('progressWrap').classList.add('hidden');
+    resetStage();
+
+    document.title = `Retro Norway Rally — ${title}`;
+    const label = $('minimapLabel');
+    if (label) label.innerHTML = `FREE DRIVE <span>N↑</span>`;
+    try {
+      camera.position.set(car.pos.x - 12, car.pos.y + 9, car.pos.z + 18);
+      camera.lookAt(car.pos.x, car.pos.y, car.pos.z);
+      renderer.compile(scene, camera);
+      retro.render(scene, camera, time);
+    } catch (error) {
+      log.warn('free-drive warm-up failed (continuing)', error);
+    }
+    log.info(`free drive ready at ${center.lat.toFixed(4)}, ${center.lon.toFixed(4)}`);
+    toast('Free drive. Roads, houses and forests stream in as you go.');
+    return world;
   } finally {
     setWorldLoading(false);
   }
@@ -452,6 +523,8 @@ function updateRouteHud() {
 }
 
 function setRoute(nextRoute, { announce = false, pad = true } = {}) {
+  freeDrive = false;
+  $('progressWrap').classList.remove('hidden');
   if (terrain?.streaming) {
     // The streamed world carves the road per chunk, rebuilds the meshes,
     // regrows the forest with the 6 m clearance rule and re-places houses.
@@ -1111,7 +1184,7 @@ function updateCamera(dt) {
     // Showroom: the car turns slowly on the start pad while a low
     // three-quarter camera holds still, so the player can look it over.
     car.yaw = wrapAngle(car.yaw + dt * 0.45);
-    const angle = (car.spawnYaw ?? 0) + 0.75;
+    const angle = (car.spawnYaw ?? 0) + 0.4;
     const radius = 9.5;
     cameraTarget.set(
       car.pos.x + Math.sin(angle) * radius,
@@ -1125,7 +1198,7 @@ function updateCamera(dt) {
     const dx = car.pos.x - camera.position.x;
     const dz = car.pos.z - camera.position.z;
     const dl = Math.hypot(dx, dz) || 1;
-    tempLook.set(car.pos.x - (dz / dl) * 4.2, car.pos.y + 0.8, car.pos.z + (dx / dl) * 4.2);
+    tempLook.set(car.pos.x - (dz / dl) * 3.6, car.pos.y + 0.8, car.pos.z + (dx / dl) * 3.6);
     lookSmooth.lerp(tempLook, 1 - Math.exp(-4 * dt));
     camera.lookAt(lookSmooth);
     camera.fov = damp(camera.fov, 50, 4, dt);
@@ -1157,8 +1230,11 @@ function updateCamera(dt) {
     camera.updateProjectionMatrix();
   } else {
     const speed = car.speed;
-    let back = 7.0 + speed * 0.045;
-    const height = 2.8 + speed * 0.018;
+    let back = 6.6 + speed * 0.03;
+    const height = 2.5 + speed * 0.012;
+    // Sense of speed: the lens widens and the horizon rushes as you go faster.
+    camera.fov = damp(camera.fov, 62 + Math.min(24, speed * 0.5), 3, dt);
+    camera.updateProjectionMatrix();
     // If the ground behind the car rises sharply, pull the boom in before
     // resorting to a helicopter view.
     for (let i = 0; i < 5; i++) {
@@ -1655,6 +1731,15 @@ $('osrmGo').addEventListener('click', async () => {
 
 const mapPicker = createMapPicker({
   getTerrain: () => terrain,
+  onFreeDrive: async ({ a }) => {
+    try {
+      await enterFreeDrive(a);
+      return { ok: true, message: 'Free drive ready.' };
+    } catch (error) {
+      log.warn(`free drive failed: ${error.message}`);
+      return { ok: false, message: error.message };
+    }
+  },
   onRoute: async ({ a, b, profile }) => {
     const started = performance.now();
     try {
@@ -1791,7 +1876,7 @@ function frame(now) {
       const dx = car.pos.x - route.finish.x;
       const dz = car.pos.z - route.finish.z;
       const distFinish = Math.hypot(dx, dz);
-      if (car.progress > 0.94 && distFinish < 13) finishStage();
+      if (!freeDrive && car.progress > 0.94 && distFinish < 13) finishStage();
     }
     if (phase === 'finished') {
       car.vel.multiplyScalar(Math.exp(-2.2 * dt));
@@ -1840,6 +1925,7 @@ window.__rally = {
   openRouteBuilder,
   closeRouteBuilder,
   openMap: () => mapPicker.open(terrain, route),
+  freeDrive: (lat, lon) => enterFreeDrive({ lat, lon }),
   mapPicker,
   toggleDebug,
   dumpLog,

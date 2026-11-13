@@ -1,0 +1,268 @@
+import * as THREE from 'three';
+import { clamp, lerp, smoothstep } from './geo.js';
+import { buildRibbon } from './stage.js';
+
+/**
+ * Real roads from OpenStreetMap for the streamed world.
+ *
+ * Every chunk's Overpass answer carries the `highway=*` centre lines that
+ * cross it. They become: a carve into the chunk's height field (the same
+ * ruled-surface carve the stage road gets), a ribbon mesh (tarmac or gravel
+ * by class / `surface=*`), and segments in a spatial index (`RoadNetwork`)
+ * that the car, the trees, the houses and the road signs query for "how far
+ * is the nearest road". In free-drive mode the network *is* the route: the
+ * car rides on whatever road it finds and chunks keep streaming in ahead.
+ */
+
+/** Half width in metres per OSM highway class. */
+export const ROAD_HALF = {
+  motorway: 5.0, trunk: 4.2, primary: 3.8, secondary: 3.4, tertiary: 3.2,
+  unclassified: 2.8, residential: 2.8, living_street: 2.4, service: 2.2, track: 2.0,
+};
+const UNPAVED = /^(gravel|unpaved|dirt|ground|compacted|fine_gravel|earth|grass|sand|mud|pebblestone)$/;
+
+export function isPaved(road) {
+  if (road.surface) return !UNPAVED.test(road.surface);
+  return road.kind !== 'track';
+}
+
+/** Resample a world polyline to `step` metres, keeping the original vertices. */
+function resample(points, step) {
+  const out = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    const n = Math.max(1, Math.ceil(len / step));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
+    }
+  }
+  return out;
+}
+
+/**
+ * Project, clip and resample a chunk's OSM roads, and give every sample a
+ * smoothed road height (`roadY`). Samples closer than `avoid.distance` to
+ * `avoid.index` (the stage route) are cut out so the OSRM stage road and its
+ * OSM twin never overlap.
+ */
+export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = null, pad = 60 } = {}) {
+  const minX = x0 - pad;
+  const maxX = x0 + size + pad;
+  const minZ = z0 - pad;
+  const maxZ = z0 + size + pad;
+  const inside = (p) => p.x >= minX && p.x <= maxX && p.z >= minZ && p.z <= maxZ;
+  const out = [];
+  for (const road of roads || []) {
+    const half = ROAD_HALF[road.kind];
+    if (!half) continue;
+    const world = road.points.map((p) => terrain.worldFromLatLon(p.lat, p.lon));
+    if (!world.some(inside)) continue;
+    const samples = resample(world, 5);
+    // Split into runs that are inside the padded chunk and away from the route.
+    let run = [];
+    const flush = () => {
+      if (run.length >= 3) out.push(finishRun(run, road, half, terrain));
+      run = [];
+    };
+    for (const p of samples) {
+      const keep = inside(p) && !(avoid && avoid.index.distanceTo(p.x, p.z, avoid.distance + 1) < avoid.distance);
+      if (keep) run.push(p); else flush();
+    }
+    flush();
+  }
+  return out;
+}
+
+function finishRun(points, road, half, terrain) {
+  const raw = points.map((p) => terrain.sample(p.x, p.z));
+  const w = 6; // ±30 m of longitudinal smoothing
+  const samples = [];
+  let s = 0;
+  for (let i = 0; i < points.length; i++) {
+    let sum = 0;
+    let n = 0;
+    for (let k = Math.max(0, i - w); k <= Math.min(points.length - 1, i + w); k++) { sum += raw[k]; n++; }
+    if (i > 0) s += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+    samples.push({ x: points[i].x, z: points[i].z, roadY: sum / n, y: sum / n, s });
+  }
+  return { kind: road.kind, name: road.name, half, paved: isPaved(road), maxspeed: road.maxspeed, samples, length: s };
+}
+
+/**
+ * Carve polylines into a height grid: each cell within `half + blend` of a
+ * segment is pulled toward the height interpolated along that segment
+ * (nearest segment wins), exactly like the stage-road carve.
+ * `grid` = { heights, x0, z0, cell, n } with `n` the stored grid side.
+ */
+export function carvePolylines(grid, polylines, { lift = 0.12, blend = 6 } = {}) {
+  const { heights, x0, z0, cell, n } = grid;
+  const bestD = new Float32Array(heights.length).fill(Infinity);
+  const targets = new Float32Array(heights.length);
+  for (const line of polylines) {
+    const reach = line.half + 1.0 + blend;
+    const s = line.samples;
+    for (let k = 0; k + 1 < s.length; k++) {
+      const a = s[k];
+      const b = s[k + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const len2 = dx * dx + dz * dz || 1;
+      const gi0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - x0) / cell) - 1);
+      const gi1 = Math.min(n - 1, Math.ceil((Math.max(a.x, b.x) + reach - x0) / cell) + 1);
+      const gj0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - z0) / cell) - 1);
+      const gj1 = Math.min(n - 1, Math.ceil((Math.max(a.z, b.z) + reach - z0) / cell) + 1);
+      for (let j = gj0; j <= gj1; j++) {
+        const z = z0 + j * cell;
+        for (let i = gi0; i <= gi1; i++) {
+          const x = x0 + i * cell;
+          const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
+          const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t)) - (line.half + 1.0);
+          const idx = j * n + i;
+          if (d > blend || d >= bestD[idx]) continue;
+          bestD[idx] = d;
+          targets[idx] = lerp(a.roadY, b.roadY, t) + lift;
+        }
+      }
+    }
+  }
+  let touched = 0;
+  for (let idx = 0; idx < heights.length; idx++) {
+    const d = bestD[idx];
+    if (d > blend) continue;
+    const w = d <= 0 ? 1 : 1 - smoothstep(d / blend);
+    if (w <= 0.001) continue;
+    heights[idx] = lerp(heights[idx], targets[idx], w);
+    touched++;
+  }
+  return touched;
+}
+
+/** Ribbon meshes for prepared roads (call after the carve, heights settled). */
+export function buildRoadMeshes(polylines, terrain) {
+  if (!polylines.length) return null;
+  const group = new THREE.Group();
+  group.name = 'osmRoads';
+  for (const line of polylines) {
+    const route = { samples: line.samples, roadWidth: line.half };
+    group.add(buildRibbon(route, terrain, 0, line.samples.length - 1, { paved: line.paved }));
+  }
+  return group;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Spatial index                                                       *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Segments of every loaded chunk's roads in 48 m buckets. Implements the
+ * part of the StageRoute interface the car and the HUD use, so a free
+ * drive can hand it to `car.setRoute()` directly.
+ */
+export class RoadNetwork {
+  constructor({ cell = 48, spawn = { x: 0, z: 0, yaw: 0 }, name = 'Free drive' } = {}) {
+    this.cell = cell;
+    this.buckets = new Map();
+    this.byChunk = new Map();
+    this.spawn = spawn;
+    this.free = true;
+    this.name = name;
+    this.source = 'osm';
+    this.roadWidth = 3.0;
+    this.length = 0;
+    this.samples = [];
+    this.start = { x: spawn.x, z: spawn.z };
+    this.finish = { x: spawn.x, z: spawn.z };
+    this.segmentCount = 0;
+  }
+
+  key(bx, bz) { return `${bx},${bz}`; }
+
+  setChunk(chunkKey, polylines) {
+    this.removeChunk(chunkKey);
+    const owned = [];
+    for (const line of polylines) {
+      const s = line.samples;
+      for (let k = 0; k + 1 < s.length; k++) {
+        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, half: line.half, paved: line.paved, chunk: chunkKey };
+        const bx = Math.floor(((seg.ax + seg.bx) / 2) / this.cell);
+        const bz = Math.floor(((seg.az + seg.bz) / 2) / this.cell);
+        const key = this.key(bx, bz);
+        let list = this.buckets.get(key);
+        if (!list) this.buckets.set(key, (list = []));
+        list.push(seg);
+        owned.push({ key, seg });
+      }
+    }
+    this.byChunk.set(chunkKey, owned);
+    this.segmentCount += owned.length;
+  }
+
+  removeChunk(chunkKey) {
+    const owned = this.byChunk.get(chunkKey);
+    if (!owned) return;
+    for (const { key, seg } of owned) {
+      const list = this.buckets.get(key);
+      if (!list) continue;
+      const i = list.indexOf(seg);
+      if (i >= 0) list.splice(i, 1);
+      if (!list.length) this.buckets.delete(key);
+    }
+    this.byChunk.delete(chunkKey);
+    this.segmentCount -= owned.length;
+  }
+
+  /** Nearest road segment (StageRoute-compatible answer). */
+  nearest(x, z, limit = 120) {
+    const bx = Math.floor(x / this.cell);
+    const bz = Math.floor(z / this.cell);
+    const r = Math.ceil(limit / this.cell);
+    let best = null;
+    let bestD = Infinity;
+    let bestT = 0;
+    for (let dj = -r; dj <= r; dj++) {
+      for (let di = -r; di <= r; di++) {
+        const list = this.buckets.get(this.key(bx + di, bz + dj));
+        if (!list) continue;
+        for (const seg of list) {
+          const dx = seg.bx - seg.ax;
+          const dz = seg.bz - seg.az;
+          const l2 = dx * dx + dz * dz || 1;
+          const t = clamp(((x - seg.ax) * dx + (z - seg.az) * dz) / l2, 0, 1);
+          const d = Math.hypot(x - (seg.ax + dx * t), z - (seg.az + dz * t));
+          if (d < bestD) { bestD = d; best = seg; bestT = t; }
+        }
+      }
+    }
+    if (!best) {
+      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, paved: false };
+    }
+    const dx = best.bx - best.ax;
+    const dz = best.bz - best.az;
+    const l = Math.hypot(dx, dz) || 1;
+    return {
+      distance: bestD,
+      index: 0,
+      progress: 0,
+      point: { x: best.ax + dx * bestT, z: best.az + dz * bestT },
+      tangent: { x: dx / l, z: dz / l },
+      width: best.half,
+      paved: best.paved,
+    };
+  }
+
+  /** A pose on the nearest road to (x, z), or null when no road is near. */
+  poseNear(x, z, limit = 400) {
+    const q = this.nearest(x, z, limit);
+    if (!Number.isFinite(q.distance) || q.distance > limit) return null;
+    return { x: q.point.x, z: q.point.z, yaw: Math.atan2(q.tangent.x, q.tangent.z) };
+  }
+
+  startPose() {
+    return this.spawn;
+  }
+
+  snapToTerrain() { return this; }
+}

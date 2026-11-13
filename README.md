@@ -207,6 +207,11 @@ offline world with the topo basemap. Otherwise pick the area on the 2D map.
 ```
 index.html                 UI shell and HUD markup
 src/main.js                renderer, game loop, cameras, route builder, HUD
+src/landcover.js           land cover grid per chunk: OSM polygons + NIBIO SR16 tiles → cover, species, density, ground tints
+src/water.js               river/stream ribbons and lake polygons from OSM
+src/signs.js               NVDB road signs: fetch, sign-face textures, placement along the stage road
+src/roads.js               OSM roads per chunk: carve, ribbons, RoadNetwork spatial index (free drive)
+src/buildings.js           Overpass fetch per chunk (buildings, areas, waterways) and footprint-oriented houses
 src/terrain.js             GeoTIFF loading, height field, road carving, minimap
 src/lod.js                 chunked terrain quadtree/LOD with edge skirts
 src/worldgen.js            Kartverket WCS DEM fetch + on-demand world generation
@@ -229,11 +234,49 @@ stage time, route builder state, `generateRoute`, `fetchOsrm`,
 `terrainStats()`, `toggleDebug()`, `dumpLog()` and the `perf` monitor for
 debugging in the browser console.
 
+### Free drive
+
+Open the **2D MAP**, click one point anywhere in Norway and press **FREE DRIVE
+HERE**. The world streams in around that point and keeps loading 2 km chunks
+ahead of the car as you drive. Real roads come from OpenStreetMap: every
+chunk's `highway=*` lines are carved into the terrain and drawn as tarmac or
+gravel ribbons, and the car is placed on the nearest road as soon as the
+first chunk's roads arrive. There is no finish and no stage time to beat;
+`N` scouts a timed stage from wherever you are, `R` returns to the start.
+
+In a normal stage the same OSM roads appear as side roads (cut away where
+they would overlap the OSRM stage road).
+
+## Map data: forests, fields, water, houses and road signs
+
+In a streamed world (any route picked on the 2D map) every 2 km chunk asks
+three open services for what is really there, and draws it low-poly:
+
+| Feature | Source | How it is used |
+|---|---|---|
+| Forest species and density | **NIBIO SR16** forest-resource map (WMS, 16 m raster, NLOD): `SRRTRESLAG` (spruce / pine / deciduous) and `SRRKRONEDEK` (crown cover) tiles are read back pixel by pixel | Spruce cones, pine umbrellas and birch crowns are instanced per 16 m cell with a density that follows the canopy cover; the road corridor gets priority within a per-chunk budget |
+| Fields, pasture, bog, built-up areas, lakes | **OpenStreetMap** polygons (`landuse=*`, `natural=*`) via the Overpass API, rasterised into the same 16 m grid | The ground mesh and minimap are tinted per cell: golden striped fields, green pasture, brown bog; no trees grow on them |
+| Rivers and streams, lakes | OpenStreetMap `waterway=*` lines and `natural=water` polygons | Water ribbons draped into the valley floor (never flowing uphill), flat lake polygons at the shore level |
+| Buildings | OpenStreetMap footprints (`building=*`, `out geom`) | Each footprint's minimum-area rectangle gives the house its heading and size; `building=*` picks a family (house, cabin, barn, shed, boathouse, church with tower, industrial hall, apartment block) for height, roof pitch and colours |
+| Roads (free drive, side roads) | OpenStreetMap `highway=*` centre lines | Carved into the chunk heights and drawn as ribbons (asphalt or gravel by class / `surface=*`); indexed so the car, trees, houses and signs know where the nearest road is |
+| Road signs | **Statens vegvesen NVDB API v4** (`Skiltplate`, type 96) plus `Fartsgrense` (type 105) | Real sign plates on posts beside the stage road, facing oncoming traffic; speed-limit signs are synthesised where the limit changes and no plate is registered |
+
+Everything is fetched per chunk, cached with the chunk, and degrades
+gracefully. NIBIO and NVDB answer in a second or two; the public Overpass
+mirrors can be slow or down, so OSM features arrive separately, are retried
+every 45 s, and a circuit breaker skips Overpass for a minute after every
+mirror failed. Degradation: if a service is unreachable the chunk simply has no trees from
+SR16 (a sparse default forest is used), no houses, or no signs.
+
 ## Credits
 
 - Terrain: **Kartverket NHM DTM 1 m**, CC BY 4.0.
 - Topo basemap: **Kartverket** open topographic map, CC BY 4.0.
 - Routing: **OSRM** / **OpenStreetMap** contributors.
+- Forest species and crown cover: **Skogressurskart SR16 © NIBIO**, NLOD.
+- Land use, water, buildings: **© OpenStreetMap contributors**, ODbL (Overpass API).
+- Road signs and speed limits: *Inneholder data under norsk lisens for offentlige
+  data (NLOD) tilgjengeliggjort av Statens vegvesen* (NVDB API Les v4).
 - Scene packaging: the bundled **3d_terrain** project.
 - Built with **Three.js** and **Vite**.
 

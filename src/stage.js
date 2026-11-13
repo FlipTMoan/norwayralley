@@ -58,7 +58,7 @@ class MinHeap {
  *  query used for road grip, progress and the HUD.                     *
  * ------------------------------------------------------------------ */
 export class StageRoute {
-  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = 4.2 } = {}) {
+  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = 3.2 } = {}) {
     this.terrain = terrain;
     this.name = name;
     this.source = source;
@@ -451,7 +451,7 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
     smooth: 3,
     spacing: 4,
     simplifyEpsilon: 2.2,
-    roadWidth: 4.2,
+    roadWidth: 3.2,
   });
 }
 
@@ -723,7 +723,7 @@ export function buildOsrmRoute(terrain, geometry, { requireInside = true } = {})
     smooth: 1,
     spacing: 5,
     simplifyEpsilon: 2,
-    roadWidth: profile === 'driving' ? 4.8 : 3.4,
+    roadWidth: profile === 'driving' ? 3.4 : 2.4,
   });
   if (route.length < 20) {
     throw new Error(`That road is too short to make a stage (${Math.round(route.length)} m).${snapText}`);
@@ -896,7 +896,7 @@ export function buildRoadVisuals(route, terrain, { bounds = null, gates = 'both'
   return group;
 }
 
-function buildRibbon(route, terrain, from, to) {
+export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
   const samples = route.samples;
   const count = to - from + 1;
   const half = route.roadWidth;
@@ -906,10 +906,10 @@ function buildRibbon(route, terrain, from, to) {
   const colors = new Float32Array(count * ROWS * 3);
   const indices = [];
 
-  const cGravel = new THREE.Color(0x7d7769);
-  const cGravelDark = new THREE.Color(0x625d52);
-  const cShoulder = new THREE.Color(0x4d5146);
-  const cEdge = new THREE.Color(0x8f8877);
+  const cGravel = new THREE.Color(paved ? 0x4b4d4f : 0x7d7769);
+  const cGravelDark = new THREE.Color(paved ? 0x434547 : 0x625d52);
+  const cShoulder = new THREE.Color(paved ? 0x5a5a52 : 0x4d5146);
+  const cEdge = new THREE.Color(paved ? 0xd9d6c8 : 0x8f8877);
   const cSkirt = new THREE.Color(0x333a35);
   const tmp = new THREE.Color();
 

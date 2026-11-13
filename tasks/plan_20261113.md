@@ -41,32 +41,48 @@ Requested (user, 2026-11-13):
 
 ## C. Land cover from NIBIO (forests, fields, bog, water) — after research
 Research agent is checking which services are CORS-callable from a static site.
-- [ ] `landcover.js`: per chunk, fetch an AR5 WMS image (arealtype +
+- [x] `landcover.js`: per chunk, fetch an AR5 WMS image (arealtype +
       treslag/bonitet) at ~4 m/pixel, read pixels in a canvas, classify by
       legend colour into a class grid {forest-conifer, forest-deciduous,
       forest-mixed, field, pasture, bog, open, built, water} + density.
-- [ ] If NIBIO has no CORS: fallback to Overpass polygons (`landuse=forest`
+- [x] (not needed: SR16 has CORS *) If NIBIO has no CORS: fallback to Overpass polygons (`landuse=forest`
       /`natural=wood` with `leaf_type`, `landuse=farmland|meadow`,
       `natural=water`, `natural=wetland`) rasterised client-side.
-- [ ] Trees: `scatterChunk` samples the class grid — density and species per
+- [x] Trees: `scatterChunk` samples the class grid — density and species per
       cell (spruce/pine cones vs birch/deciduous blobs, size from bonitet);
       none on fields, water, built-up or roads.
-- [ ] Fields: chunk mesh gets a per-chunk land-cover texture (canvas) so
+- [x] Fields: chunk mesh (vertex tint) gets a per-chunk land-cover texture (canvas) so
       fields read as flat light patches with furrow stripes; bog brownish.
-- [ ] Attribution line in the start screen / HUD foot (NIBIO AR5, CC BY 4.0).
+- [x] Attribution line in the start screen / HUD foot (NIBIO AR5, CC BY 4.0).
 
 ## D. Waterways (OSM) and lakes
-- [ ] Overpass per chunk: `waterway=river|stream|canal` lines, `natural=water`
+- [x] Overpass per chunk: `waterway=river|stream|canal` lines, `natural=water`
       polygons. Rivers → ribbon mesh (water material) following the terrain;
       lakes → flat water polygon at the lake level, terrain under it
       flattened in the carve pass. Streams narrower.
 
 ## E. Buildings from OSM footprints
-- [ ] Overpass `out geom` instead of `out center`; minimum-area bounding
+- [x] Overpass `out geom` instead of `out center`; minimum-area bounding
       rectangle of the footprint → true yaw and size; `building=*` type →
       height/roof/colour family (house, barn/farm, garage/shed, church,
       industrial/commercial, apartments).
-- [ ] One Overpass request per chunk shared by buildings, landuse, water.
+- [x] One Overpass request per chunk shared by buildings, landuse, water.
 
 ## F. Docs
 - [ ] README, CHANGES.md (new), ARCHITECTURE.md (new), help text.
+
+## G. Road signs (added 2026-11-13, user request)
+- [x] `signs.js`: NVDB API v4 Skiltplate + Fartsgrense per chunk, sign textures, posts along the route.
+- [x] Integrate in stream.js (rebuild on route change).
+
+## H. Car feel (user feedback 2026-11-13)
+- [x] Faster: 430 Nm, less damping → ~160 km/h; chase FOV widens with speed.
+- [x] Roads narrowed to real gravel widths (3.2–3.4 m half width).
+- [x] Proportions: bigger wheels in larger arches, tucked flanks, narrower flatter roof, seated headlamps.
+
+## I. Free drive (user request 2026-11-13)
+- [x] `roads.js`: OSM highways per chunk → carve, ribbons, RoadNetwork index.
+- [x] `createStreamingWorld({ center, freeDrive })`, car rides the network, spawn snaps to the first road.
+- [x] Map picker button FREE DRIVE HERE; HUD hides progress; no finish.
+- [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
+- [ ] Verify live in the browser (Overpass mirrors unreachable from this machine at the time of writing).

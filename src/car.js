@@ -4,8 +4,8 @@ import { ROAD_RIBBON_LIFT, ROAD_CROWN, ROAD_SHOULDER } from './stage.js';
 
 // Porsche 911 (classic rally spec) proportions, metres.
 const WHEELBASE = 2.45;
-const TRACK = 1.55;
-const WHEEL_RADIUS = 0.33;
+const TRACK = 1.62;
+const WHEEL_RADIUS = 0.35;
 const FRONT_AXLE = 1.25;
 const REAR_AXLE = FRONT_AXLE - WHEELBASE;
 const WHEEL_TRAVEL = { down: 0.14, up: 0.2 };
@@ -27,16 +27,16 @@ const GEAR_RATIOS = [-3.40, 3.55, 2.35, 1.72, 1.32, 1.04, 0.84];
 const REVERSE = 0;
 const FINAL_DRIVE = 3.9;
 const IDLE_RPM = 900;
-const REDLINE_RPM = 6800;
+const REDLINE_RPM = 7200;
 const PEAK_TORQUE_RPM = 4200;
-const MAX_TORQUE = 285;            // Nm at peak
-const AUTO_UPSHIFT = 6100;
+const MAX_TORQUE = 430;            // Nm at peak (rally tune)
+const AUTO_UPSHIFT = 6500;
 const AUTO_DOWNSHIFT = 1950;
 const SHIFT_TIME = 0.28;
 
 const SURFACES = {
-  road: { mu: 1.02, rolling: 0.55, drag: 0.0018 },
-  gravel: { mu: 0.76, rolling: 2.2, drag: 0.0042 },
+  road: { mu: 1.02, rolling: 0.5, drag: 0.0011 },
+  gravel: { mu: 0.76, rolling: 2.0, drag: 0.003 },
 };
 
 function makeNumberTexture(text) {
@@ -162,10 +162,10 @@ const BODY = {
   hump: curveFn([[2.14, 0.12], [1.95, 0.16], [1.5, 0.12], [1.0, 0.05], [0.7, 0.0], [-0.8, 0.0], [-1.4, 0.05], [-1.9, 0.04], [-2.14, 0.0]]),
   // overall width: narrow nose, flared rear hips
   width: curveFn([[2.14, 1.2], [2.0, 1.5], [1.6, 1.62], [0.8, 1.68], [0.0, 1.7], [-1.0, 1.74], [-1.4, 1.8], [-1.9, 1.7], [-2.14, 1.4]]),
-  floor: 0.27,
+  floor: 0.3,
   // glasshouse: roof line and width
-  roof: curveFn([[0.74, 0.86], [0.45, 1.12], [0.2, 1.26], [-0.4, 1.32], [-0.95, 1.22], [-1.35, 1.09], [-1.62, 0.98]]),
-  roofWidth: curveFn([[0.74, 1.46], [0.2, 1.46], [-0.4, 1.44], [-1.2, 1.4], [-1.62, 1.3]]),
+  roof: curveFn([[0.74, 0.86], [0.45, 1.12], [0.2, 1.25], [-0.4, 1.3], [-0.95, 1.2], [-1.35, 1.08], [-1.62, 0.98]]),
+  roofWidth: curveFn([[0.74, 1.34], [0.2, 1.34], [-0.4, 1.32], [-1.2, 1.28], [-1.62, 1.2]]),
 };
 
 /** Cross-section of the lower body at station z. */
@@ -179,21 +179,22 @@ function bodyRing(z) {
   let arch = BODY.floor;
   for (const axle of [FRONT_AXLE, REAR_AXLE]) {
     const dz = z - axle;
-    const R = 0.47;
-    if (Math.abs(dz) < R) arch = Math.max(arch, 0.2 + Math.sqrt(R * R - dz * dz) * 1.0);
+    const R = 0.52;
+    if (Math.abs(dz) < R) arch = Math.max(arch, 0.24 + Math.sqrt(R * R - dz * dz));
   }
   const inArch = arch > BODY.floor + 0.01;
   const half = [];
   // floor from the centre outwards (the outer part lifts into the arch)
-  for (const u of [0, 0.3, 0.52, 0.56, 0.8, 0.97]) {
-    half.push({ x: u * w2, y: inArch && u > 0.54 ? arch : BODY.floor });
+  for (const u of [0, 0.3, 0.46, 0.5, 0.72, 0.86]) {
+    half.push({ x: u * w2, y: inArch && u > 0.48 ? arch : BODY.floor });
   }
-  // sill corner, then up the flank to the shoulder
+  // sill corner, then the flank: widest at the hip line, tucked in below it
   for (const a of [0.35, 0.7, 1.0]) {
     const ang = a * Math.PI / 2;
-    half.push({ x: inArch ? w2 : w2 - r + Math.sin(ang) * r, y: inArch ? arch + a * 0.02 : BODY.floor + r - Math.cos(ang) * r });
+    half.push({ x: inArch ? w2 * 0.9 : w2 * 0.88 - r + Math.sin(ang) * r, y: inArch ? arch + a * 0.02 : BODY.floor + r - Math.cos(ang) * r });
   }
-  half.push({ x: w2 + 0.01, y: (shoulder + BODY.floor) / 2 });
+  half.push({ x: w2 * 1.0, y: Math.max(inArch ? arch + 0.04 : 0, BODY.floor + 0.3) });
+  half.push({ x: w2 * 0.97, y: (shoulder + BODY.floor + 0.3) / 2 });
   // over the top: fender crown, bonnet / lid dip in the middle
   for (let i = 0; i <= 8; i++) {
     const u = 1 - i / 8;
@@ -214,7 +215,7 @@ function roofRing(z, paint, glass) {
   const pts = [];
   for (let i = 0; i <= 12; i++) {
     const u = -1 + (i / 6);
-    const dome = Math.sqrt(Math.max(0, 1 - Math.abs(u) ** 2.4));
+    const dome = Math.sqrt(Math.max(0, 1 - Math.abs(u) ** 3.2));
     const painted = slope < 0.38 && Math.abs(u) < 0.62 && top - base > 0.3;
     pts.push({ x: u * w2, y: base + (top - base) * dome, c: painted ? paint : glass });
   }
@@ -314,10 +315,22 @@ export class Car {
     roof.castShadow = true;
     g.add(roof);
 
+    // Headlamps sit in the front face of each fender crown, tilted up the
+    // way the 911's do, with a chrome bezel around the lens.
+    const lampZ = 2.0;
+    const crest = bodyRing(lampZ).pts.filter((p) => p.x > 0).reduce((a, b) => (b.y > a.y ? b : a));
+    const lampTilt = Math.PI / 2 - 0.5;
     for (const side of [-1, 1]) {
-      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.1, 14), lightMat);
-      lamp.rotation.x = Math.PI / 2;
-      lamp.position.set(side * 0.55, 0.75, 2.07);
+      const lamp = new THREE.Group();
+      lamp.position.set(side * crest.x, crest.y - 0.1, lampZ + 0.06);
+      lamp.rotation.x = lampTilt;
+      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.125, 0.11, 0.16, 16), lightMat);
+      lens.position.y = -0.05;
+      lamp.add(lens);
+      const bezel = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.022, 8, 20), chrome);
+      bezel.rotation.x = Math.PI / 2;
+      bezel.position.y = 0.03;
+      lamp.add(bezel);
       g.add(lamp);
       const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.16), paintDark);
       mirror.position.set(side * 0.93, 0.98, 0.5);
@@ -369,11 +382,11 @@ export class Car {
     }
 
     this.wheels = [];
-    const tireFront = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.26, 18);
+    const tireFront = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.3, 18);
     tireFront.rotateZ(Math.PI / 2);
-    const tireRear = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.31, 18);
+    const tireRear = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.36, 18);
     tireRear.rotateZ(Math.PI / 2);
-    const hubGeo = new THREE.CylinderGeometry(0.19, 0.19, 0.33, 10);
+    const hubGeo = new THREE.CylinderGeometry(0.21, 0.21, 0.38, 10);
     hubGeo.rotateZ(Math.PI / 2);
     const positions = [
       [-TRACK / 2, FRONT_AXLE, true],
@@ -499,9 +512,8 @@ export class Car {
    * stage.js). On the road the car rides on the ribbon, and the lift fades
    * out across the shoulder so leaving the road is a kerb, not a cliff.
    */
-  surfaceLift(distance) {
+  surfaceLift(distance, half = this.route?.roadWidth) {
     if (!this.route) return 0;
-    const half = this.route.roadWidth;
     const top = ROAD_RIBBON_LIFT + ROAD_CROWN;
     if (distance <= half) return top;
     if (distance <= half + ROAD_SHOULDER) return lerp(top, ROAD_RIBBON_LIFT, (distance - half) / ROAD_SHOULDER);
@@ -589,9 +601,10 @@ export class Car {
 
     if (this.route) {
       this.roadQuery = this.route.nearest(this.pos.x, this.pos.z);
-      this.onRoad = this.roadQuery.distance <= this.route.roadWidth + 1.0;
+      const half = this.roadQuery.width ?? this.route.roadWidth;
+      this.onRoad = this.roadQuery.distance <= half + 1.0;
       this.progress = this.roadQuery.progress;
-      this.roadLift = this.surfaceLift(this.roadQuery.distance);
+      this.roadLift = this.surfaceLift(this.roadQuery.distance, half);
     } else {
       this.roadQuery = null;
       this.onRoad = false;
@@ -639,7 +652,7 @@ export class Car {
     this.distance += Math.abs(this.vF) * dt;
     this.airTime = this.grounded ? Math.max(0, this.airTime - dt * 3) : this.airTime + dt;
 
-    if (this.roadQuery && speed > 4) {
+    if (this.roadQuery && speed > 4 && !this.route.free) {
       const q = this.roadQuery;
       const dot = (this.vel.x * q.tangent.x + this.vel.y * q.tangent.z) / Math.max(0.001, speed);
       this.wrongWay = dot < -0.35;
@@ -684,7 +697,7 @@ export class Car {
       // Rolling resistance, aero drag and the extra cost of rough ground.
       vF -= Math.sign(vF) * surface.rolling * h;
       vF -= vF * Math.abs(vF) * surface.drag * h;
-      vF -= vF * (this.onRoad ? 0.08 : 0.22) * h;
+      vF -= vF * (this.onRoad ? 0.02 : 0.12) * h;
       if (drivetrain.throttle === 0 && drivetrain.brake === 0 && Math.abs(vF) < 3.5) {
         vF *= Math.exp(-4.5 * h);
       }

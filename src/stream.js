@@ -3,7 +3,11 @@ import { clamp, hash2, lerp, smoothstep, localProjection } from './geo.js';
 import { terrainColor } from './terrain.js';
 import { fetchDem } from './worldgen.js';
 import { makeRoute, buildRoadVisuals, buildRouteIndex } from './stage.js';
-import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
+import { fetchOsmChunk, overpassBlocked, buildChunkHouses } from './buildings.js';
+import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './landcover.js';
+import { buildChunkWater } from './water.js';
+import { fetchRoadSigns, buildChunkSigns } from './signs.js';
+import { prepareChunkRoads, carvePolylines, buildRoadMeshes, RoadNetwork } from './roads.js';
 import { logger } from './log.js';
 
 /**
@@ -101,6 +105,7 @@ function buildChunkGeometry(chunk, step) {
       const gx = (at(gi + step, gj) - at(gi - step, gj)) / (2 * stride);
       const gz = (at(gi, gj + step) - at(gi, gj - step)) / (2 * stride);
       terrainColor(height, Math.hypot(gx, gz), x, z, color);
+      if (chunk.cover) tintByCover(chunk.cover, x, z, color);
       colors[idx * 3] = color.r;
       colors[idx * 3 + 1] = color.g;
       colors[idx * 3 + 2] = color.b;
@@ -181,71 +186,154 @@ function buildChunkGeometry(chunk, step) {
  * snapped to the chunk's carved height field, and the whole thing is seeded
  * from the chunk coordinates so revisiting a chunk regrows the same forest.
  */
+/* One shared set of low-poly tree geometries (instances only carry matrices). */
+let treeGeometry = null;
+function treeGeometries() {
+  if (treeGeometry) return treeGeometry;
+  const spruceTrunk = new THREE.CylinderGeometry(0.16, 0.26, 1.8, 5);
+  spruceTrunk.translate(0, 0.9, 0);
+  const spruceCrown = new THREE.ConeGeometry(1.5, 6.4, 6);
+  spruceCrown.translate(0, 1.4 + 3.2, 0);
+  const pineTrunk = new THREE.CylinderGeometry(0.18, 0.3, 5.2, 5);
+  pineTrunk.translate(0, 2.6, 0);
+  const pineCrown = new THREE.ConeGeometry(2.3, 2.8, 6);
+  pineCrown.translate(0, 5.0 + 1.4, 0);
+  const birchTrunk = new THREE.CylinderGeometry(0.13, 0.2, 2.8, 5);
+  birchTrunk.translate(0, 1.4, 0);
+  const birchCrown = new THREE.IcosahedronGeometry(2.0, 0);
+  birchCrown.scale(1, 1.25, 1);
+  birchCrown.translate(0, 4.1, 0);
+  treeGeometry = {
+    [SPECIES.SPRUCE]: { trunk: spruceTrunk, crown: spruceCrown, trunkColor: 0x4a3525, hue: 0.33, sat: [0.3, 0.45], light: [0.15, 0.22], scale: [1.2, 2.4] },
+    [SPECIES.PINE]: { trunk: pineTrunk, crown: pineCrown, trunkColor: 0x8a5a3a, hue: 0.24, sat: [0.3, 0.42], light: [0.22, 0.3], scale: [1.1, 2.2] },
+    [SPECIES.DECIDUOUS]: { trunk: birchTrunk, crown: birchCrown, trunkColor: 0xd9d6cc, hue: 0.26, sat: [0.38, 0.55], light: [0.3, 0.42], scale: [0.9, 1.9] },
+  };
+  return treeGeometry;
+}
+
+const TREE_BUDGET = 2600;           // instances per chunk, all species
+const TREES_PER_CELL = 4.5;         // at crown cover 1.0 in a 16 m cell
+
+/**
+ * Per-chunk forest from the land cover (NIBIO SR16 species and crown cover,
+ * OSM forest polygons), with a budget that favours the road corridor. Until
+ * the land cover has arrived the chunk gets a sparse default scatter.
+ */
 function scatterChunk(world, chunk) {
   const rand = mulberry32((hash2(chunk.ci, chunk.cj, 7) * 4294967296) >>> 0);
   const group = new THREE.Group();
   group.name = 'scatter';
   const index = world.routeIndex;
+  const geo = treeGeometries();
+  const lc = chunk.cover;
 
-  const treeCapacity = 340;
-  const trunkGeo = new THREE.CylinderGeometry(0.22, 0.32, 2.2, 5);
-  const crownGeo = new THREE.ConeGeometry(1.7, 5.2, 5);
-  const rockGeo = new THREE.IcosahedronGeometry(1, 0);
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x4a3525, flatShading: true });
-  const crownMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-  const rockMat = new THREE.MeshLambertMaterial({ color: 0x777069, flatShading: true });
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCapacity);
-  const crowns = new THREE.InstancedMesh(crownGeo, crownMat, treeCapacity);
-  trunks.castShadow = true;
-  crowns.castShadow = true;
-  crowns.receiveShadow = true;
+  // Plan: a list of {x, z, species, scale} to instance.
+  const plan = [];
+  const want = (x, z, species, scale) => plan.push({ x, z, species, scale });
+  const spawn = world.route ? world.route.samples[0] : world.roads.spawn;
+  const ok = (x, z, h) => h >= 1.5 && h <= 760 && world.slope(x, z) <= 0.62
+    && !(index && index.distanceTo(x, z, 20) < 6)
+    && !(spawn && Math.hypot(x - spawn.x, z - spawn.z) < 16)
+    && !(world.roads.segmentCount && world.roads.nearest(x, z, 48).distance < world.roads.nearest(x, z, 48).width + 3);
+
+  if (lc) {
+    // Expected trees per cell, weighted toward the road where detail matters.
+    // The road distance is sampled on a coarse 32² grid (a per-cell lookup
+    // over the whole chunk would cost millions of bucket visits).
+    const COARSE = 32;
+    const coarseCell = CHUNK / COARSE;
+    const near = new Float32Array(COARSE * COARSE);
+    for (let j = 0; j < COARSE; j++) {
+      for (let i = 0; i < COARSE; i++) {
+        const d = index ? index.distanceTo(chunk.x0 + (i + 0.5) * coarseCell, chunk.z0 + (j + 0.5) * coarseCell, 260) : 0;
+        near[j * COARSE + i] = d < 260 ? 1 : 0.4;
+      }
+    }
+    const expected = new Float32Array(lc.cover.length);
+    let total = 0;
+    for (let k = 0; k < lc.cover.length; k++) {
+      if (lc.cover[k] !== COVER.FOREST) continue;
+      const c = lc.centre(k);
+      const ci = clamp(Math.floor((c.x - chunk.x0) / coarseCell), 0, COARSE - 1);
+      const cj = clamp(Math.floor((c.z - chunk.z0) / coarseCell), 0, COARSE - 1);
+      expected[k] = lc.density[k] * TREES_PER_CELL * near[cj * COARSE + ci];
+      total += expected[k];
+    }
+    const scaleDown = total > TREE_BUDGET ? TREE_BUDGET / total : 1;
+    for (let k = 0; k < lc.cover.length; k++) {
+      if (!expected[k]) continue;
+      const n = Math.floor(expected[k] * scaleDown + rand());
+      const c = lc.centre(k);
+      for (let t = 0; t < n; t++) {
+        const x = c.x + (rand() - 0.5) * lc.cell;
+        const z = c.z + (rand() - 0.5) * lc.cell;
+        if (!ok(x, z, world.sample(x, z))) continue;
+        let species = lc.species[k] || SPECIES.SPRUCE;
+        // Mixed stands: a few birches among the conifers and vice versa.
+        if (rand() < 0.12) species = species === SPECIES.DECIDUOUS ? SPECIES.SPRUCE : SPECIES.DECIDUOUS;
+        const [lo, hi] = geo[species].scale;
+        want(x, z, species, (lo + rand() * (hi - lo)) * (0.75 + lc.density[k] * 0.35));
+      }
+    }
+  } else {
+    // No land cover yet: a thin default forest so the ground is not bare.
+    let attempts = 0;
+    while (plan.length < 260 && attempts < 3000) {
+      attempts++;
+      const x = chunk.x0 + rand() * CHUNK;
+      const z = chunk.z0 + rand() * CHUNK;
+      const h = world.sample(x, z);
+      if (h < 6 || !ok(x, z, h)) continue;
+      const species = rand() < 0.7 ? SPECIES.SPRUCE : rand() < 0.5 ? SPECIES.PINE : SPECIES.DECIDUOUS;
+      const [lo, hi] = geo[species].scale;
+      want(x, z, species, lo + rand() * (hi - lo));
+    }
+  }
 
   const matrix = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const yAxis = new THREE.Vector3(0, 1, 0);
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
-  const crownColor = new THREE.Color();
-
+  const color = new THREE.Color();
   let trees = 0;
-  let attempts = 0;
-  while (trees < treeCapacity && attempts < treeCapacity * 14) {
-    attempts++;
-    const x = chunk.x0 + rand() * CHUNK;
-    const z = chunk.z0 + rand() * CHUNK;
-    const h = world.sample(x, z);
-    if (h < 6 || h > 720) continue;
-    if (world.slope(x, z) > 0.62) continue;
-    // Phase 4 placement rule: less than 6 m from the road → cancel the tree.
-    if (index && index.distanceTo(x, z, 20) < 6) continue;
-    const scale = 0.55 + rand() * 0.95;
-    q.setFromAxisAngle(yAxis, rand() * Math.PI * 2);
-    pos.set(x, h + 1.1 * scale, z);
-    scl.setScalar(scale);
-    matrix.compose(pos, q, scl);
-    trunks.setMatrixAt(trees, matrix);
-    pos.set(x, h + 4.1 * scale, z);
-    matrix.compose(pos, q, scl);
-    crowns.setMatrixAt(trees, matrix);
-    crownColor.setHSL(0.31 + rand() * 0.035, 0.27 + rand() * 0.16, 0.18 + rand() * 0.10);
-    crowns.setColorAt(trees, crownColor);
-    trees++;
+  for (const species of [SPECIES.SPRUCE, SPECIES.PINE, SPECIES.DECIDUOUS]) {
+    const items = plan.filter((p) => p.species === species);
+    if (!items.length) continue;
+    const g = geo[species];
+    const trunks = new THREE.InstancedMesh(g.trunk, new THREE.MeshLambertMaterial({ color: g.trunkColor, flatShading: true }), items.length);
+    const crowns = new THREE.InstancedMesh(g.crown, new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), items.length);
+    trunks.castShadow = true;
+    crowns.castShadow = true;
+    crowns.receiveShadow = true;
+    items.forEach((p, i) => {
+      const h = world.sample(p.x, p.z);
+      q.setFromAxisAngle(yAxis, rand() * Math.PI * 2);
+      pos.set(p.x, h - 0.2, p.z);
+      scl.set(p.scale * (0.9 + rand() * 0.2), p.scale, p.scale * (0.9 + rand() * 0.2));
+      matrix.compose(pos, q, scl);
+      trunks.setMatrixAt(i, matrix);
+      crowns.setMatrixAt(i, matrix);
+      color.setHSL(g.hue + (rand() - 0.5) * 0.04, g.sat[0] + rand() * (g.sat[1] - g.sat[0]), g.light[0] + rand() * (g.light[1] - g.light[0]));
+      crowns.setColorAt(i, color);
+    });
+    trunks.instanceMatrix.needsUpdate = true;
+    crowns.instanceMatrix.needsUpdate = true;
+    if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
+    group.add(trunks, crowns);
+    trees += items.length;
   }
-  trunks.count = trees;
-  crowns.count = trees;
-  trunks.instanceMatrix.needsUpdate = true;
-  crowns.instanceMatrix.needsUpdate = true;
-  if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
-  if (trees) group.add(trunks, crowns);
   chunk.trees = trees;
 
-  // A few boulders per chunk.
+  // A few boulders per chunk, on open ground only.
+  const rockGeo = new THREE.IcosahedronGeometry(1, 0);
+  const rockMat = new THREE.MeshLambertMaterial({ color: 0x777069, flatShading: true });
   const rockCapacity = 60;
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCapacity);
   rocks.castShadow = true;
   rocks.receiveShadow = true;
   let placedRocks = 0;
-  attempts = 0;
+  let attempts = 0;
   while (placedRocks < rockCapacity && attempts < rockCapacity * 12) {
     attempts++;
     const x = chunk.x0 + rand() * CHUNK;
@@ -253,6 +341,10 @@ function scatterChunk(world, chunk) {
     const h = world.sample(x, z);
     if (h < 3) continue;
     if (index && index.distanceTo(x, z, 16) < 8) continue;
+    if (lc) {
+      const c = lc.coverAt(x, z);
+      if (c === COVER.FIELD || c === COVER.WATER || c === COVER.BUILT || c === COVER.PASTURE) continue;
+    }
     const scale = 0.5 + rand() * 2.4;
     q.setFromAxisAngle(yAxis, rand() * Math.PI * 2);
     pos.set(x, h + scale * 0.32, z);
@@ -270,30 +362,98 @@ function scatterChunk(world, chunk) {
 /* ------------------------------------------------------------------ *
  *  Phase 5: real buildings for one chunk (Overpass API).               *
  * ------------------------------------------------------------------ */
-async function addChunkBuildings(world, chunk) {
-  if (world.disposed || chunk.state !== 'ready') return;
+function chunkBbox(world, chunk) {
   const a = world.projection.latLonFromWorld(chunk.x0, chunk.z0);
   const b = world.projection.latLonFromWorld(chunk.x0 + CHUNK, chunk.z0 + CHUNK);
-  const bbox = {
+  return {
     minLat: Math.min(a.lat, b.lat),
     maxLat: Math.max(a.lat, b.lat),
     minLon: Math.min(a.lon, b.lon),
     maxLon: Math.max(a.lon, b.lon),
   };
+}
+
+/** Everything that comes from the Overpass answer: roads, houses, water, areas. */
+function applyChunkOsm(world, chunk, osm, hooks) {
+  chunk.osm = osm;
   try {
-    const osm = await fetchOsmChunk(bbox);
-    if (world.disposed || chunk.state !== 'ready') return;
-    chunk.osm = osm;                       // areas + waterways for the land cover pass
-    const placements = osm.buildings;
-    chunk.buildingPlacements = placements;
-    const houses = buildChunkHouses(placements, world, world.routeIndex, (hash2(chunk.ci, chunk.cj, 23) * 4294967296) >>> 0);
+    hooks.roads(chunk);          // carve + ribbons + network (changes heights)
+  } catch (error) {
+    log.warn(`roads skipped for ${chunk.key}: ${error.message}`);
+  }
+  try {
+    chunk.buildingPlacements = osm.buildings;
+    const houses = buildChunkHouses(osm.buildings, world, hooks.clearance(), (hash2(chunk.ci, chunk.cj, 23) * 4294967296) >>> 0);
     if (houses) {
       chunk.buildingGroup = houses;
       chunk.group.add(houses);
-      houseCount += houses.userData.count || 0;
+      hooks.houses(houses.userData.count || 0);
     }
   } catch (error) {
-    log.debug(`buildings skipped for ${chunk.key}: ${error.message}`);
+    log.warn(`houses skipped for ${chunk.key}: ${error.message}`);
+  }
+  try {
+    const water = buildChunkWater(osm, world, { x0: chunk.x0, z0: chunk.z0, size: CHUNK });
+    if (water) {
+      chunk.waterGroup = water;
+      chunk.group.add(water);
+    }
+  } catch (error) {
+    log.warn(`water skipped for ${chunk.key}: ${error.message}`);
+  }
+  if (chunk.cover) {
+    addOsmAreas(chunk.cover, osm.areas, world.projection);
+    hooks.coverReady(chunk);
+  }
+}
+
+/**
+ * Fetch the map features of one chunk. NIBIO SR16 (forest) and NVDB (signs)
+ * answer in a second or two; the Overpass answer (roads, houses, water,
+ * fields) can be slow or down, so it is awaited separately and retried
+ * later by `world.update` when it failed.
+ */
+async function addChunkFeatures(world, chunk, hooks) {
+  if (world.disposed || chunk.state !== 'ready') return;
+  const bbox = chunkBbox(world, chunk);
+  const alive = () => !world.disposed && chunk.state === 'ready';
+
+  fetchRoadSigns(bbox).then((signData) => {
+    if (!alive()) return;
+    chunk.signData = signData;
+    hooks.signs(chunk);
+  }).catch((error) => log.warn(`signs skipped for ${chunk.key}: ${error.message}`));
+
+  const osmPromise = requestChunkOsm(world, chunk, hooks);
+
+  try {
+    const cover = await buildLandCover({
+      x0: chunk.x0, z0: chunk.z0, size: CHUNK, projection: world.projection, areas: [],
+    });
+    if (!alive()) return;
+    chunk.cover = cover;
+    if (chunk.osm) addOsmAreas(cover, chunk.osm.areas, world.projection);
+    hooks.coverReady(chunk);
+  } catch (error) {
+    log.warn(`land cover skipped for ${chunk.key}: ${error.message}`);
+  }
+  await osmPromise;
+}
+
+/** One Overpass attempt for a chunk; on failure schedule a retry. */
+async function requestChunkOsm(world, chunk, hooks) {
+  if (chunk.osmPending || chunk.osm) return;
+  chunk.osmPending = true;
+  try {
+    const osm = await fetchOsmChunk(chunkBbox(world, chunk));
+    if (world.disposed || chunk.state !== 'ready') return;
+    if (osm) applyChunkOsm(world, chunk, osm, hooks);
+    else chunk.osmRetryAt = performance.now() + 45000;
+  } catch (error) {
+    log.warn(`OSM features skipped for ${chunk.key}: ${error.message}`);
+    chunk.osmRetryAt = performance.now() + 45000;
+  } finally {
+    chunk.osmPending = false;
   }
 }
 
@@ -302,10 +462,14 @@ async function addChunkBuildings(world, chunk) {
  * ------------------------------------------------------------------ */
 export async function createStreamingWorld({
   geometry,
+  center = null,
+  freeDrive = false,
   title = 'Streamed stage',
   onProgress = null,
 } = {}) {
-  const coordinates = geometry?.coordinates;
+  // Free drive: no stage route, the world simply streams around the car and
+  // the roads come from OpenStreetMap as the chunks arrive.
+  const coordinates = freeDrive ? [center, center] : geometry?.coordinates;
   if (!coordinates || coordinates.length < 2) throw new Error('The route has no coordinates.');
 
   const anchor = coordinates[0];
@@ -448,6 +612,8 @@ export async function createStreamingWorld({
     route: null,
     routeIndex: null,
     buckets: new Map(),
+    freeDrive,
+    roads: new RoadNetwork({ spawn: { x: 0, z: 0, yaw: 0 }, name: title }),
 
     worldFromLatLon: (lat, lon) => projection.worldFromLatLon(lat, lon),
     latLonFromWorld: (x, z) => projection.latLonFromWorld(x, z),
@@ -578,6 +744,7 @@ export async function createStreamingWorld({
         triangles: Math.round(triangles),
         trees: treeCount,
         houses: houseCount,
+        roads: world.roads.segmentCount,
       };
     },
 
@@ -801,6 +968,15 @@ export async function createStreamingWorld({
       trees: 0,
       buildingPlacements: null,
       buildingGroup: null,
+      waterGroup: null,
+      signData: null,
+      signGroup: null,
+      osmRoads: null,
+      osmRoadGroup: null,
+      cover: null,
+      osm: null,
+      osmPending: false,
+      osmRetryAt: 0,
       roadVisuals: null,
     };
     chunk.mesh.name = `streamChunk-${ci}-${cj}`;
@@ -856,8 +1032,8 @@ export async function createStreamingWorld({
     chunk.group.visible = true;
     group.add(chunk.group);
 
-    // Phase 5: real buildings arrive a moment later (network request).
-    addChunkBuildings(world, chunk);
+    // Real buildings, water and land cover arrive a moment later (network).
+    addChunkFeatures(world, chunk, featureHooks);
 
     triangles = 0;
     for (const c of chunks.values()) {
@@ -866,6 +1042,121 @@ export async function createStreamingWorld({
       triangles += (g.index?.count || 0) / 3;
     }
     processWaiters();
+  }
+
+  function rescatter(chunk) {
+    if (chunk.scatterGroup) {
+      disposeObject(chunk.scatterGroup);
+      chunk.group.remove(chunk.scatterGroup);
+    }
+    treeCount = Math.max(0, treeCount - (chunk.trees || 0));
+    chunk.scatterGroup = scatterChunk(world, chunk);
+    chunk.group.add(chunk.scatterGroup);
+    treeCount += chunk.trees;
+  }
+
+  const featureHooks = {
+    houses: (n) => { houseCount += n; },
+    signs: (c) => refreshChunkSigns(c),
+    roads: (c) => refreshChunkOsmRoads(c),
+    clearance: () => clearanceIndex,
+    coverReady: (c) => {
+      rebuildChunkGeometries(c);
+      drawChunkMinimap(world, c);
+      rescatter(c);
+    },
+  };
+
+  /** "How far is the nearest road" for houses and trees: route and OSM roads. */
+  const clearanceIndex = {
+    distanceTo(x, z, limit = 40) {
+      const a = world.routeIndex ? world.routeIndex.distanceTo(x, z, limit) : Infinity;
+      const q = world.roads.nearest(x, z, Math.min(limit, 96));
+      const b = Number.isFinite(q.distance) ? Math.max(0, q.distance - q.width + 2.5) : Infinity;
+      return Math.min(a, b);
+    },
+  };
+
+  /** OSM roads of one chunk: carve, ribbons, and the shared road network. */
+  function refreshChunkOsmRoads(chunk) {
+    if (chunk.osmRoadGroup) {
+      disposeObject(chunk.osmRoadGroup);
+      chunk.group.remove(chunk.osmRoadGroup);
+      chunk.osmRoadGroup = null;
+    }
+    if (!chunk.osm) return;
+    const route = world.route;
+    const roads = prepareChunkRoads(chunk.osm.roads, world, { x0: chunk.x0, z0: chunk.z0, size: CHUNK }, {
+      avoid: route ? { index: world.routeIndex, distance: route.roadWidth + 7 } : null,
+    });
+    chunk.osmRoads = roads;
+    world.roads.setChunk(chunk.key, roads);
+    if (!roads.length) return;
+    const touched = carvePolylines(
+      { heights: chunk.heights, x0: chunk.x0, z0: chunk.z0, cell: CELL, n: GSIZE },
+      roads,
+      { lift: ROAD_LIFT, blend: 6 },
+    );
+    if (touched) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < chunk.heights.length; i++) {
+        const h = chunk.heights[i];
+        if (h < lo) lo = h;
+        if (h > hi) hi = h;
+      }
+      chunk.minH = lo;
+      chunk.maxH = hi;
+      rebuildChunkGeometries(chunk);
+    }
+    chunk.osmRoadGroup = buildRoadMeshes(roads, world);
+    if (chunk.osmRoadGroup) chunk.group.add(chunk.osmRoadGroup);
+    if (world.freeDrive && !world.roads.snapped) {
+      // First roads near the spawn: put the car on the nearest one.
+      const pose = world.roads.poseNear(world.roads.spawn.x, world.roads.spawn.z, 600);
+      if (pose) {
+        world.roads.spawn = pose;
+        world.roads.start = { x: pose.x, z: pose.z };
+        world.roads.finish = { x: pose.x, z: pose.z };
+        world.roads.snapped = true;
+        world.onSpawnSnapped?.(pose);
+      }
+    }
+    rescatter(chunk);
+  }
+
+  /** Real road signs beside the stage road, limited to this chunk's square. */
+  function refreshChunkSigns(chunk) {
+    if (chunk.signGroup) {
+      disposeObject(chunk.signGroup);
+      chunk.group.remove(chunk.signGroup);
+      chunk.signGroup = null;
+    }
+    const route = world.route;
+    const roadRef = route || (world.roads.segmentCount ? world.roads : null);
+    if (!roadRef || !chunk.signData) return;
+    const inside = (x, z) => x >= chunk.x0 && x < chunk.x0 + CHUNK && z >= chunk.z0 && z < chunk.z0 + CHUNK;
+    const signs = chunk.signData.signs.filter((sg) => {
+      const w = world.worldFromLatLon(sg.lat, sg.lon);
+      return inside(w.x, w.z);
+    });
+    // Speed-limit changes are synthesised from the route samples that lie in
+    // this chunk only, so neighbouring chunks never place the same plate twice.
+    const samples = route ? route.samples.filter((p) => inside(p.x, p.z)) : [];
+    if (!signs.length && !samples.length) return;
+    const local = {
+      samples,
+      roadWidth: roadRef.roadWidth,
+      length: roadRef.length,
+      nearest: (x, z) => roadRef.nearest(x, z),
+    };
+    const group = buildChunkSigns({ signs, speedLimits: chunk.signData.speedLimits }, world, local, {
+      seed: (hash2(chunk.ci, chunk.cj, 31) * 4294967296) >>> 0,
+    });
+    if (group) {
+      chunk.signGroup = group;
+      chunk.group.add(group);
+    }
   }
 
   function refreshChunkRoad(chunk) {
@@ -911,6 +1202,7 @@ export async function createStreamingWorld({
     chunk.mesh.geometry.dispose();
     treeCount = Math.max(0, treeCount - (chunk.trees || 0));
     houseCount = Math.max(0, houseCount - (chunk.buildingGroup?.userData.count || 0));
+    world.roads.removeChunk(chunk.key);
     chunks.delete(chunk.key);
     triangles = 0;
     for (const c of chunks.values()) {
@@ -1072,6 +1364,16 @@ export async function createStreamingWorld({
       }
     }
 
+    // Overpass retries for chunks whose map features never arrived.
+    if (!overpassBlocked()) {
+      const now = performance.now();
+      for (const chunk of chunks.values()) {
+        if (chunk.state === 'ready' && !chunk.osm && !chunk.osmPending && chunk.osmRetryAt && chunk.osmRetryAt < now) {
+          requestChunkOsm(world, chunk, featureHooks);
+        }
+      }
+    }
+
     // LOD geometry builds: one per frame, nearest chunk first.
     let budget = 1;
     const loaded = [...chunks.values()]
@@ -1104,14 +1406,7 @@ export async function createStreamingWorld({
       rebuildChunkGeometries(chunk);
       // Regrow the forest (the 6 m clearance rule applies to the new road)
       // and re-place the houses from their cached footprints.
-      if (chunk.scatterGroup) {
-        disposeObject(chunk.scatterGroup);
-        chunk.group.remove(chunk.scatterGroup);
-      }
-      treeCount = Math.max(0, treeCount - (chunk.trees || 0));
-      chunk.scatterGroup = scatterChunk(world, chunk);
-      chunk.group.add(chunk.scatterGroup);
-      treeCount += chunk.trees;
+      rescatter(chunk);
       if (chunk.buildingGroup) {
         disposeObject(chunk.buildingGroup);
         chunk.group.remove(chunk.buildingGroup);
@@ -1132,6 +1427,8 @@ export async function createStreamingWorld({
         }
       }
       refreshChunkRoad(chunk);
+      refreshChunkOsmRoads(chunk);
+      refreshChunkSigns(chunk);
     }
     redrawMinimap();
   };
@@ -1168,6 +1465,7 @@ export async function createStreamingWorld({
         const gz = (at(gi, gj + 2) - at(gi, gj - 2)) / (2 * CELL * 2);
         const shade = clamp(0.72 + (-gx * 0.7 - gz * 0.7) * 1.2, 0.38, 1.2);
         terrainColor(height, Math.hypot(gx, gz), chunk.x0 + gi * CELL, chunk.z0 + gj * CELL, color);
+        if (chunk.cover) tintByCover(chunk.cover, chunk.x0 + gi * CELL, chunk.z0 + gj * CELL, color);
         minimapCtx.fillStyle = `rgb(${clamp(color.r * 255 * shade, 0, 255) | 0},${clamp(color.g * 255 * shade, 0, 255) | 0},${clamp(color.b * 255 * shade, 0, 255) | 0})`;
         minimapCtx.fillRect(origin.x + i * cell, origin.y + j * cell, cell + 0.5, cell + 0.5);
       }
@@ -1182,6 +1480,19 @@ export async function createStreamingWorld({
   }
 
   // ---- build the route ------------------------------------------------------
+  if (freeDrive) {
+    const spawn = points[0];
+    world.roads.spawn = { x: spawn.x, z: spawn.z, yaw: 0 };
+    world.roads.start = { x: spawn.x, z: spawn.z };
+    world.roads.finish = { x: spawn.x, z: spawn.z };
+    onProgress?.(0.62, 'Loading the first terrain chunks…');
+    await world.ensureReady(spawn.x, spawn.z, {
+      rings: 1,
+      onTick: (p) => onProgress?.(0.62 + p * 0.3, 'Loading the first terrain chunks…'),
+    });
+    log.info(`free-drive world ready at ${anchor.lat.toFixed(4)}, ${anchor.lon.toFixed(4)}`);
+    return world;
+  }
   onProgress?.(0.45, 'Smoothing the master track…');
   const profile = geometry.profile || 'driving';
   const route = makeRoute(points, world, {
@@ -1190,7 +1501,7 @@ export async function createStreamingWorld({
     smooth: 1,
     spacing: 5,
     simplifyEpsilon: 2,
-    roadWidth: profile === 'driving' ? 4.8 : 3.4,
+    roadWidth: profile === 'driving' ? 3.4 : 2.4,
   });
   if (route.length < 20) {
     throw new Error(`That road is too short to make a stage (${Math.round(route.length)} m).`);

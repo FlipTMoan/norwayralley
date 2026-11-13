@@ -35,3 +35,37 @@ _Updated 2026-11-13._
   height, roof pitch and colours.
 - `npm test`: Node tests for the carve, the car physics and the footprint fit.
 - GitHub Pages deploy workflow with the `/norwayralley/` base path.
+
+### Added later the same day (map data + car feel)
+- **Forests from NIBIO SR16**: per chunk, the `SRRTRESLAG` (species) and
+  `SRRKRONEDEK` (crown cover) WMS tiles are read back and classified by
+  colour into a 16 m land-cover grid; spruce, pine and birch are instanced
+  with density following the canopy cover, budgeted toward the road.
+- **Fields, pasture, bog, built-up land** from OpenStreetMap polygons tint
+  the ground mesh and minimap (striped golden fields); no trees on them.
+- **Rivers, streams and lakes** from OpenStreetMap (`water.js`): ribbons draped
+  into the valley floor that never flow uphill, flat lake polygons.
+- **Road signs from Statens vegvesen NVDB v4** (`signs.js`): real `Skiltplate`
+  objects as textured plates on posts beside the stage road, facing oncoming
+  traffic; speed-limit signs synthesised from `Fartsgrense` where the limit
+  changes and no plate is registered. ~40 Norwegian sign faces drawn
+  procedurally (speed limits, warnings, yield/stop, prohibitions, crossings,
+  road names, chevrons).
+- **Car**: 430 Nm rally tune and less drag (about 160 km/h on gravel, was
+  ~95), chase camera widens its field of view with speed, bigger wheels in
+  larger arches, flanks tucked below the hips, narrower flatter roof,
+  headlamps seated in the fender crowns with chrome bezels.
+- **Roads narrowed** to real Norwegian gravel widths (6.4–6.8 m instead of
+  8.4–9.6 m), which also restores the sense of speed and scale.
+- Docs: `ARCHITECTURE.md` (new), README map-data section and credits, on-screen
+  attribution for NIBIO, OpenStreetMap and Statens vegvesen.
+- **Free drive mode** (`FREE DRIVE HERE` on the 2D map): the world streams
+  around one point with no stage or finish. OpenStreetMap roads are carved
+  into every chunk and drawn as tarmac/gravel ribbons (`roads.js`); a
+  `RoadNetwork` spatial index stands in for the stage route so the car rides
+  on real roads, trees and houses keep clear of them, and signs line them.
+  Side roads also appear in normal stages.
+- Robustness: Overpass requests are queued (2 at a time), tried on three
+  mirrors, skipped for a minute after a total failure and retried per chunk;
+  SR16 forests and NVDB signs no longer wait for Overpass.
+- Fixed a freeze when planning forests (per-cell route distance lookups).
