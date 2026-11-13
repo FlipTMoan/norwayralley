@@ -650,10 +650,10 @@ export class Car {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const material = new THREE.PointsMaterial({
       color: 0xcfc3a1,
-      size: 0.7,
+      size: 0.42,
       sizeAttenuation: true,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.32,
       depthWrite: false,
     });
     const points = new THREE.Points(geometry, material);
