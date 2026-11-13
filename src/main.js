@@ -19,6 +19,7 @@ import { buildChunkWater } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { buildCorridorGeometry, corridorMesh } from './corridor.js';
 import { Session, encodeState, makeCallsign, spawnOffset, paintForSlot } from './multiplayer.js';
+import { TrackMarks } from './tracks.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
@@ -141,6 +142,7 @@ let car = null;
 let route = null;
 let roadGroup = null;
 let corridorGroup = null;  // 1 m embankment / cutting mesh along the baked stage
+let tracks = null;         // tyre tracks laid by the player's car
 let vegetation = null;
 let minimapBase = null;
 let basemapTexture = null;
@@ -390,6 +392,7 @@ function teardownWorld() {
   }
   if (roadGroup) { disposeGroup(roadGroup); roadGroup = null; }
   if (corridorGroup) { disposeGroup(corridorGroup); corridorGroup = null; }
+  if (tracks) { tracks.dispose(); tracks = null; }
   if (vegetation) { disposeGroup(vegetation); vegetation = null; }
   if (distantPeaks) { disposeGroup(distantPeaks); distantPeaks = null; }
   if (water) { disposeGroup(water); water = null; }
@@ -2432,6 +2435,11 @@ function frame(now) {
       ? { throttle: 0, brake: 0, steer: 0, handbrake: false, jump: false, frozen: true }
       : input;
     carState = car.update(dt, effective);
+    if (!tracks || tracks.car !== car) {
+      tracks?.dispose();
+      tracks = new TrackMarks(scene, car);
+    }
+    tracks.update(car);
 
     if (phase === 'racing' && car) {
       const dx = car.pos.x - route.finish.x;

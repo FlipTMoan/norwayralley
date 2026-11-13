@@ -69,6 +69,9 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- **Tyre tracks** (`tracks.js`): wheels leave dark ruts on gravel and open
+  ground and black rubber on asphalt while sliding; a ring buffer of quads
+  per wheel (about 350 m each) laid on the ground as you drive.
 - Rooms: every player's car is painted by grid slot (host red, then blue,
   yellow, green, white, orange, purple, teal), identical on every screen.
 - Rooms: a starting grid (host on the line, joiners in pairs 6 m apart) so
