@@ -69,6 +69,10 @@ _Updated 2026-11-13._
   mirrors, skipped for a minute after a total failure and retried per chunk;
   SR16 forests and NVDB signs no longer wait for Overpass.
 - Fixed a freeze when planning forests (per-cell route distance lookups).
+- Friends panel: the host is in the room as soon as it opens — typing your
+  own code into JOIN no longer destroys the room, JOIN is disabled while
+  hosting, HOST again shows the existing code, and CLOSE AND DRIVE returns
+  to the start card.
 - **Play with friends** (`multiplayer.js`): peer-to-peer rooms with a
   4-letter code (WebRTC data channels, PeerJS signalling). The host relays
   positions at 12 Hz and shares the current stage with joiners; other

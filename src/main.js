@@ -487,7 +487,20 @@ function bindSession(s) {
   s.addEventListener('route', (e) => applySharedRoute(e.detail.route));
 }
 
+function syncFriendsButtons() {
+  const hosting = Boolean(session?.isHost);
+  const joined = Boolean(session && !session.isHost);
+  $('friendsJoin').disabled = hosting;
+  $('friendsCode').disabled = hosting;
+  $('friendsHost').textContent = hosting ? `HOSTING ${session.code}` : joined ? 'HOST A NEW ROOM' : 'HOST A ROOM';
+  $('friendsRoomRole').textContent = hosting ? 'YOU HOST ROOM' : joined ? 'YOU ARE IN ROOM' : 'ROOM';
+}
+
 async function hostRoom() {
+  if (session?.isHost) {
+    friendsStatus(`You already host room ${session.code}. Friends join with that code; close this panel and drive.`, 'ok');
+    return;
+  }
   leaveRoom();
   const s = new Session({ name: myCallsign, kind: carKind });
   bindSession(s);
@@ -497,14 +510,22 @@ async function hostRoom() {
     session = s;
     $('friendsCodeOut').textContent = code;
     $('friendsRoom').classList.remove('hidden');
-    friendsStatus(`Room ${code}. Friends press JOIN and type this code.`, 'ok');
+    friendsStatus(`You are in. Friends press JOIN and type ${code}. Close this panel and START ENGINE whenever you like.`, 'ok');
     updatePlayersBadge();
   } catch (error) {
     friendsStatus(error.message, 'err');
   }
+  syncFriendsButtons();
 }
 
 async function joinRoom(code) {
+  const wanted = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (session?.isHost) {
+    friendsStatus(wanted === session.code
+      ? `That is your own room — you are already in it. Close this panel and drive; friends join with ${session.code}.`
+      : `You host room ${session.code}. Press LEAVE first if you want to join a different room.`, 'ok');
+    return;
+  }
   leaveRoom();
   const s = new Session({ name: myCallsign, kind: carKind });
   bindSession(s);
@@ -514,10 +535,12 @@ async function joinRoom(code) {
     session = s;
     $('friendsCodeOut').textContent = s.code;
     $('friendsRoom').classList.remove('hidden');
+    friendsStatus(`Joined room ${s.code}. Close this panel and START ENGINE; you will drive the host's stage.`, 'ok');
     updatePlayersBadge();
   } catch (error) {
     friendsStatus(error.message, 'err');
   }
+  syncFriendsButtons();
 }
 
 function leaveRoom() {
@@ -528,6 +551,7 @@ function leaveRoom() {
   for (const id of [...ghosts.keys()]) disposeGhost(id);
   $('friendsRoom')?.classList.add('hidden');
   updatePlayersBadge();
+  if ($('friendsJoin')) syncFriendsButtons();
 }
 
 function makeLabel(text) {
@@ -2234,6 +2258,7 @@ $('friendsBtn').addEventListener('click', () => {
   $('friendsPanel').classList.remove('hidden');
 });
 $('friendsClose').addEventListener('click', () => $('friendsPanel').classList.add('hidden'));
+$('friendsDrive').addEventListener('click', () => $('friendsPanel').classList.add('hidden'));
 $('friendsName').addEventListener('change', () => {
   myCallsign = $('friendsName').value.trim().slice(0, 14) || myCallsign;
   try { localStorage.setItem('rally.callsign', myCallsign); } catch { /* private mode */ }
