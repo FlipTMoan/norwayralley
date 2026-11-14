@@ -1136,9 +1136,11 @@ const mm = $('minimap');
 const mmCtx = mm.getContext('2d');
 const MM_SIZE = mm.width;
 
-// The minimap is a north-up window that follows the car: WINDOW_M metres
-// across (a little wider at speed), terrain sampled live so it works in the
-// baked world, a streamed stage and free drive alike.
+// The minimap is a north-up window around the car: mmWindow metres across
+// (a little wider at speed), terrain sampled live so it works in the baked
+// world, a streamed stage and free drive alike. The window holds still while
+// the car moves inside its inner half and re-centres on the car once it is
+// halfway from the centre to the edge, so the map does not swim.
 const MM_CELLS = 80;
 const mmTerrain = document.createElement('canvas');
 mmTerrain.width = MM_CELLS;
@@ -1146,35 +1148,40 @@ mmTerrain.height = MM_CELLS;
 const mmTerrainCtx = mmTerrain.getContext('2d', { willReadFrequently: true });
 const mmPixels = mmTerrainCtx.createImageData(MM_CELLS, MM_CELLS);
 let mmWindow = 1400;
-let mmLast = { x: Infinity, z: Infinity, window: 0, t: 0 };
+let mmCenter = { x: Infinity, z: Infinity }; // world position at the middle of the window
+let mmLast = { window: 0, t: 0 };
 const mmColor = new THREE.Color();
 
 /** Metres per minimap pixel for the current window. */
 function mmScale() { return MM_SIZE / mmWindow; }
 
 function worldToMap(x, z) {
-  const cx = car ? car.pos.x : 0;
-  const cz = car ? car.pos.z : 0;
   const k = mmScale();
-  return { x: MM_SIZE / 2 + (x - cx) * k, y: MM_SIZE / 2 + (z - cz) * k };
+  return { x: MM_SIZE / 2 + (x - mmCenter.x) * k, y: MM_SIZE / 2 + (z - mmCenter.z) * k };
 }
 
 function mapToWorld(px, py) {
   const k = mmScale();
-  return { x: car.pos.x + (px - MM_SIZE / 2) / k, z: car.pos.z + (py - MM_SIZE / 2) / k };
+  return { x: mmCenter.x + (px - MM_SIZE / 2) / k, z: mmCenter.z + (py - MM_SIZE / 2) / k };
 }
 
-/** Re-sample the hillshaded terrain layer around the car (cheap, throttled). */
+/**
+ * Re-sample the hillshaded terrain layer (with the road network) around the
+ * window centre. The centre jumps to the car when the car is halfway from
+ * the centre to the edge (or on a forced refresh); a zoom change or the
+ * slow periodic refresh re-renders around the current centre.
+ */
 function refreshMinimapTerrain(force = false) {
   if (!terrain || !car) return;
-  const moved = Math.hypot(car.pos.x - mmLast.x, car.pos.z - mmLast.z);
-  // The window zooms with speed, so compare it with a tolerance: an exact
-  // match never happened while moving and the terrain was redrawn every frame.
-  if (!force && moved < mmWindow / MM_CELLS * 2 && Math.abs(mmLast.window - mmWindow) < mmWindow * 0.04 && time - mmLast.t < 0.6) return;
-  mmLast = { x: car.pos.x, z: car.pos.z, window: mmWindow, t: time };
+  const off = Math.hypot(car.pos.x - mmCenter.x, car.pos.z - mmCenter.z);
+  const recenter = force || off > mmWindow / 4;
+  const rezoom = Math.abs(mmLast.window - mmWindow) > mmWindow * 0.04;
+  if (!recenter && !rezoom && time - mmLast.t < 2.5) return;
+  if (recenter) mmCenter = { x: car.pos.x, z: car.pos.z };
+  mmLast = { window: mmWindow, t: time };
   const cell = mmWindow / MM_CELLS;
-  const x0 = car.pos.x - mmWindow / 2;
-  const z0 = car.pos.z - mmWindow / 2;
+  const x0 = mmCenter.x - mmWindow / 2;
+  const z0 = mmCenter.z - mmWindow / 2;
   const heights = new Float32Array((MM_CELLS + 2) * (MM_CELLS + 2));
   for (let j = 0; j < MM_CELLS + 2; j++) {
     for (let i = 0; i < MM_CELLS + 2; i++) {
@@ -1215,7 +1222,7 @@ function refreshMinimapTerrain(force = false) {
     mmTerrainCtx.strokeStyle = 'rgba(236,232,220,.6)';
     mmTerrainCtx.lineWidth = 1;
     mmTerrainCtx.beginPath();
-    for (const seg of network.segmentsNear(car.pos.x, car.pos.z, mmWindow * 0.75)) {
+    for (const seg of network.segmentsNear(mmCenter.x, mmCenter.z, mmWindow * 0.75)) {
       mmTerrainCtx.moveTo((seg.ax - x0) * scale, (seg.az - z0) * scale);
       mmTerrainCtx.lineTo((seg.bx - x0) * scale, (seg.bz - z0) * scale);
     }
@@ -1283,8 +1290,8 @@ function drawMinimap() {
     }
   }
 
-  // The car, always at the centre, pointing its way.
-  const c = { x: MM_SIZE / 2, y: MM_SIZE / 2 };
+  // The car, wherever it is in the window, pointing its way.
+  const c = worldToMap(car.pos.x, car.pos.z);
   const fw = car.forward();
   const rx = -fw.z;
   const rz = fw.x;

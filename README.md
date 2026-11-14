@@ -88,6 +88,10 @@ new pair. **NEW STAGE** (`N`) in the STAGE panel scouts a random stage from
 where you are; **MENU** (`Esc`) returns to the start screen to change car,
 gearbox or sliding without losing the stage, and `R` restarts it.
 
+The minimap (bottom right) is a north-up window that holds still while you
+drive inside its inner half and re-centres on the car once you are halfway
+to its edge.
+
 The map opens on the stage you are driving (yellow line) with a red YOU pin
 on the car, or centred on the car in free drive; zoom out for the whole
 country. It shows Norway only: it cannot be panned or zoomed out beyond the

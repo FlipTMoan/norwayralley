@@ -23,6 +23,14 @@ _Updated 2026-11-14._
   demo tile). The footprints stay in the collision index, so a hidden house
   cannot be driven through either once you reach it (it appears first).
 
+### Changed — minimap holds still, re-centres at the halfway mark
+- The minimap window no longer follows the car every frame: it stays put
+  while the car moves inside its inner half and jumps to re-centre once the
+  car is halfway from the centre to the edge (or when the stage changes).
+  The car marker moves across the map; zoom changes and a slow periodic
+  refresh re-render around the current centre. The cached layer and the
+  live overlay now share one centre, so nothing drifts.
+
 ### Added — F10 debug window
 - `F10` (and still `F3`) opens the debug window; it now shows the car's
   latitude/longitude, altitude, heading and world position, whether the
