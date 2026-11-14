@@ -46,7 +46,7 @@ always serve it over http. Everything the game needs at runtime is either in
 | `N` | Scout a new stage |
 | `1` / `2` / `3` | Camera: straight above / chase / driver's seat (`C` cycles) |
 | `M` | Mute sound |
-| `F10` (or `F3`) | Debug window: coordinates, altitude, heading, ground/road/water state, fps, draw calls, streaming and cache stats |
+| `F10` (or `F3`) | Debug window: coordinates, altitude, heading, ground/road/water state, fps, draw calls, streaming and cache stats. On a phone: tap the speedometer three times quickly, or open the game with `?debug=1` in the address |
 | `Esc` | Close the route map, or back to the start screen (MENU) |
 
 Touch controls appear automatically on narrow screens.

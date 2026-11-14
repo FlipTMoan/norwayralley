@@ -1980,6 +1980,19 @@ let debugVisible = debugParam === '1' || debugParam === 'true' || debugParam ===
 if (debugVisible) debugPanel.classList.remove('hidden');
 let debugNext = 0;
 
+// Phones have no F10: three quick taps on the speedometer open the window
+// (and ?debug=1 in the address opens it from the start).
+let speedTaps = [];
+$('speedBox').addEventListener('pointerdown', () => {
+  const now = performance.now();
+  speedTaps = speedTaps.filter((t) => now - t < 900);
+  speedTaps.push(now);
+  if (speedTaps.length >= 3) {
+    speedTaps = [];
+    toggleDebug();
+  }
+});
+
 function toggleDebug() {
   debugVisible = !debugVisible;
   debugPanel.classList.toggle('hidden', !debugVisible);

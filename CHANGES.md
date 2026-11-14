@@ -23,6 +23,10 @@ _Updated 2026-11-14._
   demo tile). The footprints stay in the collision index, so a hidden house
   cannot be driven through either once you reach it (it appears first).
 
+### Added — debug window on phones
+- Three quick taps on the speedometer toggle the debug window (no F10 on a
+  phone); `?debug=1` in the address still opens it from the start.
+
 ### Fixed — junctions smooth in every direction
 - A road's terrace sides used to run on over a crossing or joining road and
   blend to the natural ground under it, which showed as wedges and cut lines
