@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
-import { smoothRoadHeights, meanSpacing } from './corridor.js';
+import { smoothRoadHeights, meanSpacing, RIBBON_SHOULDER } from './corridor.js';
 import { cache } from './cache.js';
 
 /** How far the gravel ribbon floats above the carved ground. The car rides on
  *  the ribbon, so car.js adds the same offsets when it is on the road. */
 export const ROAD_RIBBON_LIFT = 0.16;
 export const ROAD_CROWN = 0.06;
-export const ROAD_SHOULDER = 0.9;
+export const ROAD_SHOULDER = RIBBON_SHOULDER;
 
 const log = logger('stage');
 

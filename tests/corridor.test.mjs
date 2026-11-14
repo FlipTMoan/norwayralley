@@ -71,3 +71,20 @@ test('the car rides the embankment over a dip instead of falling in', () => {
   }
   assert.ok(worstDrop < 0.5, `car dropped ${worstDrop.toFixed(2)} m below the carriageway`);
 });
+
+test('the corridor mesh leaves the carriageway to the ribbon (no second surface under the road)', async () => {
+  const { buildCorridorGeometry, RIBBON_SHOULDER } = await import('../src/corridor.js');
+  const half = 3.2;
+  const samples = Array.from({ length: 12 }, (_, i) => ({ x: 0, z: i * 5, roadY: 100 }));
+  const geometry = buildCorridorGeometry([{ half, samples }], { sampleBase: () => 95 });
+  const pos = geometry.attributes.position;
+  let inside = 0;
+  for (let i = 0; i < pos.count; i++) if (Math.abs(pos.getX(i)) < half + RIBBON_SHOULDER - 1e-6) inside++;
+  assert.equal(inside, 0, 'no corridor vertex inside the ribbon');
+  // No triangle spans from the left strip to the right strip.
+  const idx = geometry.index.array;
+  for (let t = 0; t < idx.length; t += 3) {
+    const xs = [pos.getX(idx[t]), pos.getX(idx[t + 1]), pos.getX(idx[t + 2])];
+    assert.ok(Math.max(...xs) < 0 || Math.min(...xs) > 0, `triangle crosses the road: ${xs}`);
+  }
+});

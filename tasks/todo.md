@@ -92,6 +92,8 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Map opens on the current stage + car pin; Leaflet animations off.
 - [x] LOAD 4400 / KEEP 5300 / LEAD 2800.
 - [x] Local cache (≤10 GB, IndexedDB, LRU) in front of DEM/Overpass/NVDB/SR16/OSRM/tiles; start-screen size + CLEAR.
+- [x] Rooms: any player's stage change propagates (guest → host → others); verified live with two tabs.
+- [x] Roads drawn once: corridor mesh covers only the slopes outside the ribbon.
 - [ ] Next: 1 m corridor tiles — `tasks/plan_20261114_terrain.md`.
 
 ## O. Houses + country mask 2026-11-14 (user requests)

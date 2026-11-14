@@ -17,6 +17,13 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Fixed — roads were drawn twice
+- The corridor mesh drew the carriageway too (an earth slab 14 cm under the
+  ribbon), so the road read as two interleaved layers. It now starts where
+  the ribbon ends (`RIBBON_SHOULDER`, shared with stage.js) and covers only
+  the slopes outward, as two strips with nothing under the road. One smooth
+  surface per place. Test in `tests/corridor.test.mjs`.
+
 ### Fixed — everyone in a room drives the same stage
 - Only the host used to share its stage; a guest who picked a new stage,
   loaded a saved route or scouted with N silently drove something else.

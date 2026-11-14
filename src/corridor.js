@@ -20,6 +20,7 @@ import { terrainColor } from './terrain.js';
 export const FILL_SLOPE = 1.5;    // metres of run per metre of drop on an embankment
 export const CUT_SLOPE = 1.0;     // cuttings stand steeper
 export const SHOULDER = 1.0;      // flat shoulder beyond the road's half width
+export const RIBBON_SHOULDER = 0.9; // the road ribbon (stage.js) covers this far beyond the half width
 export const MAX_REACH = 24;      // slopes taller than this just end in a face
 export const CARVE_MARGIN = 0.3;  // coarse heights sit this far under the fine slopes
 export const ROAD_LIFT = 0.12;    // carriageway sits a hair above the carved ground
@@ -173,14 +174,17 @@ const ROCK_DARK = new THREE.Color(0x56554f);
 export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = ROAD_LIFT, maxVertices = 160000 } = {}) {
   const usable = lines.filter((l) => l && l.samples && l.samples.length >= 2);
   if (!usable.length) return null;
+  // One surface per place: the ribbon draws the carriageway and its own
+  // shoulder, so the corridor only starts where the ribbon ends and covers
+  // the slopes outward — two strips, nothing under the road.
   const cols = (half) => {
-    const shoulder = half + SHOULDER;
+    const edge = half + RIBBON_SHOULDER;
     const reach = corridorReach(half);
-    const list = [];
-    for (let d = -reach; d <= -shoulder - 8; d += 2) list.push(d);
-    for (let d = -shoulder - 8; d <= shoulder + 8; d += 1) list.push(d);
-    for (let d = shoulder + 8 + 2; d <= reach; d += 2) list.push(d);
-    return list;
+    const side = [];
+    for (let d = edge; d <= edge + 8; d += 1) side.push(d);
+    for (let d = edge + 10; d < reach; d += 2) side.push(d);
+    side.push(reach);
+    return [...side.map((d) => -d).reverse(), ...side];
   };
   let total = 0;
   for (const l of usable) total += (l.length ?? polylineLength(l.samples)) * cols(l.half ?? l.roadWidth).length;
@@ -231,6 +235,7 @@ export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = R
     const nc = offsets.length;
     for (let i = 0; i + 1 < st.length; i++) {
       for (let c = 0; c + 1 < nc; c++) {
+        if (offsets[c] < 0 && offsets[c + 1] > 0) continue; // the gap under the ribbon
         const a = baseVertex + i * nc + c;
         const b = a + 1;
         const cc = a + nc;
