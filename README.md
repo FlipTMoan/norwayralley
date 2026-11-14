@@ -81,7 +81,8 @@ where you are; **MENU** (`Esc`) returns to the start screen to change car,
 gearbox or sliding without losing the stage, and `R` restarts it.
 
 The map shows Norway only: it cannot be panned or zoomed out beyond the
-country, and everything outside is shaded.
+country, and every other country and the open sea are shaded (national
+outline from geoBoundaries, CC BY 4.0).
 
 **Saved routes.** The second row of the map footer keeps a named list on
 this device: type a name and press **SAVE CURRENT** to store the stage or

@@ -17,6 +17,23 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Fixed — houses were missing (Overpass mirror order)
+- From some networks overpass-api.de and overpass.private.coffee hang for
+  the whole 25 s timeout while overpass.openstreetmap.fr answers in 0.4 s.
+  The game tried the mirrors in order, so every chunk waited 75 s and the
+  60 s breaker often tripped first: no houses, side roads or fields.
+  `buildings.js` now remembers the mirror that answered last and asks it
+  alone; with none known (or after a failure) it races the live mirrors and
+  keeps the first to answer, cancelling the rest; a failed mirror sits out
+  for two minutes. Demo tile features now arrive in ~6 s; a free drive at
+  Jørpeland showed 1 230 houses within 20 s. `tests/overpass.test.mjs`.
+
+### Changed — the 2D map masks every other country
+- A world polygon with Norway cut out (geoBoundaries gbOpen ADM0 outline,
+  CC BY 4.0, simplified to ~1 km, Svalbard/Jan Mayen left out) shades
+  Sweden, Finland, Denmark, Russia and the open sea. It hides above zoom 11
+  where its coarseness would shade real shoreline.
+
 ### Added — menu, saved routes, Norway-only map
 - STAGE panel: **MENU** replaces RESTART (R still restarts, Esc opens the
   menu). It returns to the start screen with the stage kept, so the car,

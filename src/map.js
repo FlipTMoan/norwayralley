@@ -4,6 +4,10 @@ import { logger } from './log.js';
 import { NORWAY_BOUNDS, isInNorway } from './worldgen.js';
 import { parseLatLon } from './geo.js';
 import { listRoutes, saveRoute, deleteRoute, describeSaved } from './saved.js';
+// Mainland Norway and its larger islands as [lat, lon] rings (geoBoundaries
+// gbOpen ADM0, CC BY 4.0; simplified to ~1 km). Svalbard and Jan Mayen are
+// outside the game's box and left out.
+import NORWAY_RINGS from './norway-outline.json';
 
 /**
  * 2D route picker (Phase 2 of the V3 plan).
@@ -116,8 +120,9 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
     if (map) return map;
     log.info('creating Leaflet map');
     // Norway only: the map cannot be panned or zoomed out beyond the
-    // country's box, tiles are only requested inside it, and everything
-    // outside is shaded.
+    // country's box, tiles are only requested inside it, and every other
+    // country (and the sea beyond the coast) is shaded by a world polygon
+    // with Norway cut out of it.
     const norway = norwayBounds();
     map = L.map(mapEl, {
       zoomControl: true,
@@ -129,11 +134,14 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
       maxBoundsViscosity: 1.0,
     }).setView([64.5, 12], 4);
     L.tileLayer(TILE_URL, { attribution: ATTRIBUTION, maxZoom: 19, bounds: norway }).addTo(map);
-    L.polygon([
-      [[-89, -180], [89, -180], [89, 180], [-89, 180]],
-      [[NORWAY_BOUNDS.minLat, NORWAY_BOUNDS.minLon], [NORWAY_BOUNDS.maxLat, NORWAY_BOUNDS.minLon],
-        [NORWAY_BOUNDS.maxLat, NORWAY_BOUNDS.maxLon], [NORWAY_BOUNDS.minLat, NORWAY_BOUNDS.maxLon]],
-    ], { stroke: false, fillColor: '#0b100d', fillOpacity: 0.82, interactive: false }).addTo(map);
+    const mask = L.polygon(
+      [[[-89, -180], [89, -180], [89, 180], [-89, 180]], ...NORWAY_RINGS],
+      { stroke: false, fillColor: '#0b100d', fillOpacity: 0.78, interactive: false, fillRule: 'evenodd' },
+    ).addTo(map);
+    // The outline is ~1 km coarse: close in it would shade real shoreline,
+    // so it only shows at country and regional zooms.
+    const toggleMask = () => { if (map.getZoom() > 11) map.removeLayer(mask); else if (!map.hasLayer(mask)) mask.addTo(map); };
+    map.on('zoomend', toggleMask);
     boundsRect = L.rectangle([[-1, -1], [1, 1]], {
       color: '#f0ce58',
       weight: 2,

@@ -27,7 +27,9 @@ const OVERPASS_ENDPOINTS = [
 ];
 
 const MAX_PER_CHUNK = 220;
-const REQUEST_TIMEOUT = 25000;     // per endpoint attempt
+const ATTEMPT_TIMEOUT = 12000;     // the mirror that answered last time
+const RACE_TIMEOUT = 20000;        // when racing the mirrors for a first answer
+const PENALTY_MS = 120000;         // a mirror that failed is skipped for this long
 const MAX_CONCURRENT = 2;          // public Overpass instances allow two slots per client
 const BREAKER_MS = 60000;          // after every mirror failed, skip Overpass for this long
 
@@ -35,6 +37,22 @@ let blockedUntil = 0;
 /** True while Overpass is considered down (every mirror failed recently). */
 export function overpassBlocked() {
   return Date.now() < blockedUntil;
+}
+
+// Some public mirrors hang for the whole timeout from some networks while
+// another answers in half a second. Remember the one that answered last and
+// ask it alone; when none is known (or it fails), race the live ones and keep
+// the first to answer. A mirror that failed sits out for a while.
+let preferred = null;
+const downUntil = new Map();
+/** Test hook / diagnostics: which mirror is being used, and the penalty list. */
+export function overpassState() {
+  return { preferred, down: [...downUntil.entries()].filter(([, t]) => t > Date.now()).map(([e]) => e) };
+}
+export function resetOverpassState() {
+  preferred = null;
+  downUntil.clear();
+  blockedUntil = 0;
 }
 
 let inFlight = 0;
@@ -70,6 +88,30 @@ export function fetchOsmChunk(bbox) {
   return withSlot(() => fetchOsmChunkNow(bbox));
 }
 
+/** One POST to one mirror; resolves to the parsed features or throws. */
+async function askMirror(endpoint, query, timeoutMs, controller = new AbortController()) {
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(query),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return parseElements(data.elements || []);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function markDown(endpoint, error) {
+  downUntil.set(endpoint, Date.now() + PENALTY_MS);
+  if (preferred === endpoint) preferred = null;
+  log.debug(`overpass mirror failed (${endpoint}): ${error?.message || error}`);
+}
+
 async function fetchOsmChunkNow({ minLat, minLon, maxLat, maxLon }) {
   const bbox = `${minLat.toFixed(6)},${minLon.toFixed(6)},${maxLat.toFixed(6)},${maxLon.toFixed(6)}`;
   // Ways only for land cover and water: multipolygon *relations* for forests
@@ -82,27 +124,48 @@ async function fetchOsmChunkNow({ minLat, minLon, maxLat, maxLon }) {
     + `way["waterway"~"^(${WATERWAYS.join('|')})$"](${bbox});`
     + `way["highway"~"^(${ROAD_CLASSES.join('|')})$"](${bbox});`
     + `);out geom;`;
+  const now = Date.now();
+  const live = OVERPASS_ENDPOINTS.filter((e) => (downUntil.get(e) || 0) <= now);
+  const candidates = live.length ? live : OVERPASS_ENDPOINTS;
   let lastError = null;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+  // 1. The mirror that answered last time, on its own.
+  if (preferred && candidates.includes(preferred)) {
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        body: 'data=' + encodeURIComponent(query),
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      return parseElements(data.elements || []);
+      return await askMirror(preferred, query, ATTEMPT_TIMEOUT);
     } catch (error) {
       lastError = error;
-      log.debug(`overpass attempt failed (${endpoint}): ${error.message}`);
-    } finally {
-      clearTimeout(timeout);
+      markDown(preferred, error);
     }
   }
+
+  // 2. Race the others: the first good answer wins and cancels the rest.
+  const racers = candidates.filter((e) => e !== preferred);
+  if (racers.length) {
+    const controllers = racers.map(() => new AbortController());
+    let winner = null;
+    try {
+      const result = await Promise.any(racers.map((endpoint, i) => askMirror(endpoint, query, RACE_TIMEOUT, controllers[i])
+        .then((features) => {
+          if (!winner) {
+            winner = endpoint;
+            controllers.forEach((c, j) => { if (j !== i) c.abort(); });
+          }
+          return features;
+        })
+        .catch((error) => {
+          if (!winner) markDown(endpoint, error); // a loser cancelled by the winner is not "down"
+          lastError = error;
+          throw error;
+        })));
+      if (preferred !== winner) log.info(`overpass: using ${winner}`);
+      preferred = winner;
+      return result;
+    } catch {
+      // every racer failed; fall through to the breaker
+    }
+  }
+
   log.warn(`map features unavailable: ${lastError?.message || 'no endpoint answered'} — retrying in ${BREAKER_MS / 1000} s`);
   blockedUntil = Date.now() + BREAKER_MS;
   // Let the UI explain why houses and roads are missing (main.js shows a toast).
