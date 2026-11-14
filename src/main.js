@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, damp, formatCoord, formatTime, wrapAngle } from './geo.js';
-import { loadTerrain, buildWater, buildVegetation, buildMinimap, loadBasemapTexture, buildBasemapMesh, terrainColor } from './terrain.js';
+import { loadTerrain, buildWater, buildVegetation, buildMinimap, loadBasemapTexture, terrainColor } from './terrain.js';
 import { createTerrainLOD } from './lod.js';
 import {
   generateRallyRoute,
@@ -146,9 +146,7 @@ let tracks = null;         // tyre tracks laid by the player's car
 let vegetation = null;
 let minimapBase = null;
 let basemapTexture = null;
-let basemapMesh = null;
 let distantPeaks = null;
-let showBasemap = false;
 let loaded = false;
 let hasStarted = false;
 let freeDrive = false; // streaming world without a stage: no finish, no timer goal
@@ -227,19 +225,11 @@ let cameraMode = 'chase';
 const cameraUp = new THREE.Vector3(0, 0, 1);
 
 function setCameraMode(mode) {
-  if (builderActive || !CAMERA_MODES.includes(mode)) return;
+  if (!CAMERA_MODES.includes(mode)) return;
   cameraMode = mode;
   if (mode !== 'top') camera.up.set(0, 1, 0);
   toast(CAMERA_NAMES[mode]);
 }
-let pickMode = null;
-let pickMarkers = [];
-let builderActive = false;
-let builderA = null;
-let builderB = null;
-let builderBusy = false;
-let builderRequest = 0;
-let builderPointer = null;
 let currentRandom = mulberry32(0x5eed1234);
 let lastOsrmProfile = 'driving';
 
@@ -248,13 +238,6 @@ const audio = new RallyAudio();
 const keys = new Set();
 const touch = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 const input = { throttle: 0, brake: 0, steer: 0, handbrake: false, jump: false };
-
-const builderCamera = {
-  yaw: 0.72,
-  pitch: 0.86,
-  distance: 1500,
-  target: new THREE.Vector3(0, 380, 0),
-};
 
 /* ------------------------------------------------------------------ */
 /*  Small helpers                                                      */
@@ -346,17 +329,8 @@ function rebuildTerrainSurface() {
     disposeGroup(terrainMesh);
     terrainMesh = null;
   }
-  if (basemapMesh) {
-    disposeGroup(basemapMesh);
-    basemapMesh = null;
-  }
   terrainMesh = log.time('build terrain LOD', () => createTerrainLOD(terrain));
   scene.add(terrainMesh);
-  if (basemapTexture) {
-    basemapMesh = buildBasemapMesh(terrain, basemapTexture);
-    basemapMesh.visible = showBasemap;
-    scene.add(basemapMesh);
-  }
   minimapBase = buildMinimap(terrain, basemapTexture?.image || null);
   const stats = terrainMesh.userData.stats?.();
   log.info(`terrain chunks ready: ${stats?.chunks ?? 0} chunks, ${stats?.triangles ?? 0} tris`);
@@ -409,7 +383,6 @@ function teardownWorld() {
     disposeGroup(terrainMesh);
     terrainMesh = null;
   }
-  if (basemapMesh) { disposeGroup(basemapMesh); basemapMesh = null; }
   if (basemapTexture) { basemapTexture.dispose?.(); basemapTexture = null; }
   minimapBase = null;
   route = null;
@@ -751,9 +724,6 @@ async function enterStreamingWorld(geometry) {
     teardownWorld();
     terrain = world;
     basemapTexture = null;
-    showBasemap = false;
-    if (builderActive) closeRouteBuilder();
-    clearPickMarkers();
 
     scene.add(world.group);
     car = new Car(scene, terrain, carKind);
@@ -829,9 +799,6 @@ async function enterFreeDrive(center) {
     teardownWorld();
     terrain = world;
     basemapTexture = null;
-    showBasemap = false;
-    if (builderActive) closeRouteBuilder();
-    clearPickMarkers();
 
     scene.add(world.group);
     car = new Car(scene, terrain, carKind);
@@ -895,7 +862,6 @@ async function applyRouteGeometry(geometry) {
     });
     if (fits) {
       const result = buildOsrmRoute(terrain, geometry);
-      if (builderActive) closeRouteBuilder();
       setRoute(result.route, { announce: true });
       return { result, generated: false };
     }
@@ -903,16 +869,6 @@ async function applyRouteGeometry(geometry) {
   const result = await enterStreamingWorld(geometry);
   toast(`${result.route.name} — ${(result.route.length / 1000).toFixed(2)} km. Streamed world ready.`);
   return { result, generated: true };
-}
-
-function setBasemap(on) {
-  showBasemap = Boolean(on) && Boolean(basemapTexture);
-  if (basemapMesh) basemapMesh.visible = showBasemap;
-  const toggle = $('builderTopo');
-  if (toggle) toggle.checked = showBasemap;
-  if (on && !basemapTexture) {
-    toast('This scene has no topo basemap. The route picker still works on the 3D terrain.', 'error');
-  }
 }
 
 /** Stage panel + minimap labels shared by the legacy and streaming paths. */
@@ -926,8 +882,6 @@ function updateRouteHud() {
   $('startCoord').textContent = formatCoord(startLL);
   $('finishCoord').textContent = formatCoord(finishLL);
   updateBestLabel();
-  $('osrmStatus').textContent = '';
-  $('osrmStatus').className = 'hint';
 }
 
 function setRoute(nextRoute, { announce = false, pad = true } = {}) {
@@ -1080,7 +1034,7 @@ async function scoutNewStage() {
       const geometry = await fetchOsrmGeometrySegmented({ a, b, profile: lastOsrmProfile });
       await applyRouteGeometry(geometry);
     } catch (error) {
-      toast(error.message || 'No road stage found from here. Try the 2D map.', 'error');
+      toast(error.message || 'No road stage found from here. Click the minimap to pick one.', 'error');
     }
     return;
   }
@@ -1095,357 +1049,37 @@ async function scoutNewStage() {
       // The previous pad may have been cleared from the height field; make
       // sure the visible mountain still matches the terrain the car drives on.
       rebuildTerrainSurface();
-      toast(error.message || 'No stage found. Try the picker instead.', 'error');
+      toast(error.message || 'No stage found. Click the minimap to pick one.', 'error');
     }
   }, 30);
 }
 
 /* ------------------------------------------------------------------ */
-/*  3-D route builder: pick a start and a finish, then route to OSRM.  */
+/*  Off-road A* stage between two map picks (inside the loaded world)  */
 /* ------------------------------------------------------------------ */
-function makePickMarker(color) {
-  const group = new THREE.Group();
-  const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.24, 0.32, 7.4, 6),
-    new THREE.MeshBasicMaterial({ color }),
-  );
-  pole.position.y = 3.7;
-  group.add(pole);
-  const flag = new THREE.Mesh(
-    new THREE.PlaneGeometry(3.0, 1.7),
-    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, toneMapped: false }),
-  );
-  flag.position.set(1.5, 6.4, 0);
-  group.add(flag);
-  const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.7, 1.7, 0.25, 10),
-    new THREE.MeshBasicMaterial({ color, toneMapped: false }),
-  );
-  base.position.y = 0.12;
-  group.add(base);
-  return group;
-}
-
-function clearPickMarkers() {
-  for (const m of pickMarkers) {
-    scene.remove(m);
-    disposeGroup(m);
-  }
-  pickMarkers = [];
-}
-
-function addPickMarker(point, color) {
-  const marker = makePickMarker(color);
-  marker.position.set(point.x, terrain.sample(point.x, point.z) + 0.1, point.z);
-  scene.add(marker);
-  pickMarkers.push(marker);
-}
-
-function setBuilderStatus(text, kind = '') {
-  const el = $('builderStatus');
-  if (!el) return;
-  el.textContent = text;
-  el.className = `builder-status ${kind}`.trim();
-}
-
-function updateBuilderUi() {
-  const hasA = Boolean(builderA);
-  const hasB = Boolean(builderB);
-  $('builderStepA').classList.toggle('active', !hasA);
-  $('builderStepA').classList.toggle('done', hasA);
-  $('builderStepB').classList.toggle('active', hasA && !hasB);
-  $('builderStepB').classList.toggle('done', hasB);
-  $('builderStepRoute').classList.toggle('active', hasA && hasB);
-  const ready = hasA && hasB && !builderBusy;
-  $('builderOsrm').disabled = !ready;
-  $('builderOffroad').disabled = !ready;
-  $('builderOsrm').textContent = builderBusy ? 'ROUTING…' : 'OSRM ROUTE';
-  $('builderA').textContent = hasA
-    ? formatCoord(terrain.latLonFromWorld(builderA.x, builderA.z))
-    : '—';
-  $('builderB').textContent = hasB
-    ? formatCoord(terrain.latLonFromWorld(builderB.x, builderB.z))
-    : '—';
-}
-
-function snapBuilderCamera() {
-  if (!terrain) return;
-  const bounds = worldBounds();
-  const cp = Math.cos(builderCamera.pitch);
-  const tx = builderCamera.target.x;
-  const tz = builderCamera.target.z;
-  const ty = Math.max(terrain.sample(tx, tz) + 30, builderCamera.target.y);
-  builderCamera.target.set(tx, ty, tz);
-  const px = tx + Math.sin(builderCamera.yaw) * cp * builderCamera.distance;
-  const pz = tz + Math.cos(builderCamera.yaw) * cp * builderCamera.distance;
-  const py = Math.max(
-    ty + Math.sin(builderCamera.pitch) * builderCamera.distance,
-    terrain.sample(px, pz) + 20,
-  );
-  camera.position.set(px, py, pz);
-  camera.lookAt(builderCamera.target);
-}
-
-function openRouteBuilder() {
-  if (!terrain) return;
-  if (builderActive) return;
-  builderActive = true;
-  builderBusy = false;
-  builderRequest++;
-  builderA = null;
-  builderB = null;
-  pickMode = 'start';
-  clearPickMarkers();
-  setBasemap(true);
-
-  // Open looking at the middle of the current stage, high enough to see the
-  // whole 2 km tile while still reading the mountain in 3-D.
-  const cx = route ? (route.start.x + route.finish.x) / 2 : 0;
-  const cz = route ? (route.start.z + route.finish.z) / 2 : 0;
-  const bounds = worldBounds();
-  builderCamera.target.set(
-    clamp(cx, bounds.minX + 100, bounds.maxX - 100),
-    terrain.sample(cx, cz) + 35,
-    clamp(cz, bounds.minZ + 100, bounds.maxZ - 100),
-  );
-  builderCamera.yaw = 0.72;
-  builderCamera.pitch = 0.86;
-  builderCamera.distance = 1550;
-  snapBuilderCamera();
-
-  $('builderPanel').classList.remove('hidden');
-  $('hud').classList.add('building');
-  setBuilderStatus('Click the mountain to place the START point. Drag to orbit, right-drag to pan, wheel to zoom.');
-  updateBuilderUi();
-  toast('3D ROUTE BUILDER — pick a start and a finish, then let OSRM find the road.');
-}
-
-function closeRouteBuilder({ restoreBasemap = true } = {}) {
-  builderActive = false;
-  builderBusy = false;
-  builderRequest++;
-  pickMode = null;
-  builderPointer = null;
-  clearPickMarkers();
-  $('builderPanel').classList.add('hidden');
-  $('hud').classList.remove('building');
-  if (restoreBasemap) setBasemap(false);
-}
-
-function applyBuilderRoute(next) {
-  closeRouteBuilder();
-  setRoute(next, { announce: true });
-}
-
-async function requestBuilderOsrm() {
-  if (!builderA || !builderB || builderBusy || !terrain) return;
-  const requestId = ++builderRequest;
-  builderBusy = true;
-  updateBuilderUi();
-  const profile = $('builderProfile').value;
-  setBuilderStatus(`Asking OSRM (${profile}) for a road between the two points…`);
-  const a = terrain.latLonFromWorld(builderA.x, builderA.z);
-  const b = terrain.latLonFromWorld(builderB.x, builderB.z);
-  try {
-    const geometry = await fetchOsrmGeometry({ a, b, profile });
-    lastOsrmProfile = profile;
-    // A streamed world is unbounded, so its route never has to fit inside it.
-    const result = buildOsrmRoute(terrain, geometry, { requireInside: !terrain.streaming });
-    if (!builderActive || requestId !== builderRequest) return;
-    const snap = result.snapped?.a != null
-      ? ` · snap ${Math.round(result.snapped.a)} m / ${Math.round(result.snapped.b)} m`
-      : '';
-    setBuilderStatus(
-      `OSRM found ${(result.distance / 1000).toFixed(2)} km in ${Math.round(result.duration / 60)} min${snap}.`,
-      'ok',
-    );
-    applyBuilderRoute(result.route);
-  } catch (error) {
-    if (!builderActive || requestId !== builderRequest) return;
-    setBuilderStatus(`${error.message} The OFF-ROAD ROUTE button is still available.`, 'err');
-    toast(error.message, 'error');
-  } finally {
-    if (requestId === builderRequest) {
-      builderBusy = false;
-      if (builderActive) updateBuilderUi();
+function offroadRoute(a, b) {
+  const points = [a, b].map((ll) => terrain.worldFromLatLon(ll.lat, ll.lon));
+  for (const p of points) {
+    if (!terrain.inside(p.x, p.z, 40)) {
+      throw new Error('Off-road routes need both points inside the loaded world (the dashed outline on the map).');
     }
+    if (terrain.sample(p.x, p.z) < 3) throw new Error('That point is in the water. Pick dry ground.');
+    if (terrain.slope(p.x, p.z) > 0.9) throw new Error('That point is on a cliff. Pick gentler ground.');
   }
-}
-
-function requestBuilderOffroad() {
-  if (!builderA || !builderB || builderBusy || !terrain) return;
-  const requestId = ++builderRequest;
-  builderBusy = true;
-  updateBuilderUi();
-  setBuilderStatus('Routing across the mountain with the off-road A* router…');
-  const a = { ...builderA };
-  const b = { ...builderB };
+  const [wa, wb] = points;
   // On a streamed world the A* grid only covers a loaded window around the
-  // two picks; the legacy worlds use their full height field.
-  const astarWindow = terrain.streaming
+  // two picks; the baked world uses its full height field.
+  const window = terrain.streaming
     ? {
-      minX: Math.min(a.x, b.x) - 2400,
-      maxX: Math.max(a.x, b.x) + 2400,
-      minZ: Math.min(a.z, b.z) - 2400,
-      maxZ: Math.max(a.z, b.z) + 2400,
+      minX: Math.min(wa.x, wb.x) - 2400,
+      maxX: Math.max(wa.x, wb.x) + 2400,
+      minZ: Math.min(wa.z, wb.z) - 2400,
+      maxZ: Math.max(wa.z, wb.z) + 2400,
     }
     : null;
-  setTimeout(() => {
-    try {
-      const next = generateRallyRoute(terrain, a, b, { name: 'Custom A↔B Stage', window: astarWindow });
-      if (!builderActive || requestId !== builderRequest) return;
-      applyBuilderRoute(next);
-    } catch (error) {
-      if (!builderActive || requestId !== builderRequest) return;
-      setBuilderStatus(`${error.message} Try two points on gentler ground.`, 'err');
-      toast(error.message || 'Those points are not connected by drivable ground.', 'error');
-    } finally {
-      if (requestId === builderRequest) {
-        builderBusy = false;
-        if (builderActive) updateBuilderUi();
-      }
-    }
-  }, 30);
-}
-
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-
-/** World-space bounds of the currently loaded area (legacy worlds are centred). */
-function worldBounds() {
-  if (terrain?.streaming) return terrain.bounds;
-  if (!terrain) return { minX: -1, maxX: 1, minZ: -1, maxZ: 1 };
-  return {
-    minX: -terrain.sizeX / 2,
-    maxX: terrain.sizeX / 2,
-    minZ: -terrain.sizeZ / 2,
-    maxZ: terrain.sizeZ / 2,
-  };
-}
-
-function pickTerrainPoint(event) {
-  if (!terrain) return null;
-  const pickables = terrain.streaming
-    ? terrain.pickables()
-    : (terrainMesh?.userData.pickables || [terrainMesh]);
-  if (!pickables.length) {
-    toast('That part of the world is still streaming in. Try again in a moment.', 'error');
-    return null;
-  }
-  const rect = canvas.getBoundingClientRect();
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObjects(pickables, false);
-  if (!hits.length) {
-    toast('Click directly on the mountain, not the sky.', 'error');
-    return null;
-  }
-  const hit = hits[0].point;
-  if (hit.y < 3) {
-    toast('That is the fjord. Pick dry ground.', 'error');
-    return null;
-  }
-  if (terrain.slope(hit.x, hit.z) > 0.9) {
-    toast('That face is a cliff. Pick gentler ground.', 'error');
-    return null;
-  }
-  return { x: hit.x, z: hit.z };
-}
-
-function handleTerrainClick(event) {
-  if (!builderActive || !pickMode) return;
-  const point = pickTerrainPoint(event);
-  if (!point) return;
-
-  if (!builderA || (builderA && builderB)) {
-    // A new click after a complete pair starts a fresh route.
-    builderRequest++;
-    builderBusy = false;
-    clearPickMarkers();
-    builderA = point;
-    builderB = null;
-    addPickMarker(builderA, 0x7be08e);
-    pickMode = 'finish';
-    setBuilderStatus('Start set. Now click the FINISH point on the map.');
-    updateBuilderUi();
-    return;
-  }
-
-  builderB = point;
-  addPickMarker(builderB, 0xffc94a);
-  pickMode = 'start';
-  updateBuilderUi();
-  setBuilderStatus('Both points set. Asking OSRM for a road…');
-  requestBuilderOsrm();
-}
-
-/* Pointer handling for the map camera: a tap places A/B, a drag orbits,
- * right-drag pans and the wheel zooms. */
-function builderPointerDown(event) {
-  if (!builderActive) return;
-  if (event.button !== 0 && event.button !== 2) return;
-  builderPointer = {
-    id: event.pointerId,
-    button: event.button,
-    lastX: event.clientX,
-    lastY: event.clientY,
-    moved: 0,
-  };
-  try {
-    canvas.setPointerCapture(event.pointerId);
-  } catch {
-    // Synthetic events and some touch stacks cannot capture; dragging still works.
-  }
-  event.preventDefault();
-}
-
-function builderPointerMove(event) {
-  if (!builderActive || !builderPointer || event.pointerId !== builderPointer.id) return;
-  const dx = event.clientX - builderPointer.lastX;
-  const dy = event.clientY - builderPointer.lastY;
-  builderPointer.lastX = event.clientX;
-  builderPointer.lastY = event.clientY;
-  builderPointer.moved += Math.abs(dx) + Math.abs(dy);
-  if (builderPointer.moved < 4) return;
-
-  if (builderPointer.button === 0) {
-    builderCamera.yaw -= dx * 0.006;
-    builderCamera.pitch = clamp(builderCamera.pitch + dy * 0.004, 0.22, 1.38);
-  } else {
-    const speed = builderCamera.distance * 0.00135;
-    const bounds = worldBounds();
-    const cy = Math.cos(builderCamera.yaw);
-    const sy = Math.sin(builderCamera.yaw);
-    builderCamera.target.x += (-cy * dx + sy * dy) * speed;
-    builderCamera.target.z += (sy * dx + cy * dy) * speed;
-    builderCamera.target.x = clamp(builderCamera.target.x, bounds.minX + 80, bounds.maxX - 80);
-    builderCamera.target.z = clamp(builderCamera.target.z, bounds.minZ + 80, bounds.maxZ - 80);
-    builderCamera.target.y = terrain.sample(builderCamera.target.x, builderCamera.target.z) + 35;
-  }
-}
-
-function builderPointerUp(event) {
-  if (!builderActive || !builderPointer || event.pointerId !== builderPointer.id) return;
-  const wasTap = builderPointer.moved < 6 && builderPointer.button === 0;
-  const pointerId = builderPointer.id;
-  builderPointer = null;
-  try {
-    canvas.releasePointerCapture(pointerId);
-  } catch {
-    // The pointer may already be released or synthetic.
-  }
-  if (wasTap) handleTerrainClick(event);
-}
-
-function builderWheel(event) {
-  if (!builderActive) return;
-  event.preventDefault();
-  builderCamera.distance = clamp(
-    builderCamera.distance * Math.exp(event.deltaY * 0.0012),
-    230,
-    3800,
-  );
+  const next = generateRallyRoute(terrain, wa, wb, { name: 'Custom A↔B Stage', window });
+  setRoute(next, { announce: true });
+  return next;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1467,7 +1101,6 @@ const mmPixels = mmTerrainCtx.createImageData(MM_CELLS, MM_CELLS);
 let mmWindow = 1400;
 let mmLast = { x: Infinity, z: Infinity, window: 0, t: 0 };
 const mmColor = new THREE.Color();
-let mmPick = { a: null, b: null, busy: false };
 
 /** Metres per minimap pixel for the current window. */
 function mmScale() { return MM_SIZE / mmWindow; }
@@ -1584,32 +1217,6 @@ function drawMinimap() {
     mmCtx.strokeRect(f.x - 4, f.y - 4, 8, 8);
   }
 
-  // Points being picked: 3D builder or minimap clicks.
-  const picks = builderActive ? [[builderA, '#8fe6a3'], [builderB, '#ffc94a']] : [[mmPick.a, '#8fe6a3'], [mmPick.b, '#ffc94a']];
-  if (picks[0][0] && picks[1][0]) {
-    const a = worldToMap(picks[0][0].x, picks[0][0].z);
-    const b = worldToMap(picks[1][0].x, picks[1][0].z);
-    mmCtx.strokeStyle = 'rgba(255,255,255,.75)';
-    mmCtx.setLineDash([4, 4]);
-    mmCtx.lineWidth = 1.5;
-    mmCtx.beginPath();
-    mmCtx.moveTo(a.x, a.y);
-    mmCtx.lineTo(b.x, b.y);
-    mmCtx.stroke();
-    mmCtx.setLineDash([]);
-  }
-  for (const [point, color] of picks) {
-    if (!point) continue;
-    const p = worldToMap(point.x, point.z);
-    mmCtx.fillStyle = color;
-    mmCtx.beginPath();
-    mmCtx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-    mmCtx.fill();
-    mmCtx.strokeStyle = '#101513';
-    mmCtx.lineWidth = 1.5;
-    mmCtx.stroke();
-  }
-
   // Other players in the room.
   if (session) {
     for (const [, peer] of session.peers) {
@@ -1654,38 +1261,6 @@ function drawMinimap() {
   mmCtx.fillText(`${barM} m`, 9, MM_SIZE - 16);
 }
 
-/**
- * Click the minimap twice to route a stage between the two spots (OSRM via
- * the same path as the 2D map); Escape clears. Works wherever you are,
- * including free drive.
- */
-mm.addEventListener('click', async (event) => {
-  if (!car || !terrain || !loaded || builderActive || mmPick.busy) return;
-  const rect = mm.getBoundingClientRect();
-  const px = ((event.clientX - rect.left) / rect.width) * MM_SIZE;
-  const py = ((event.clientY - rect.top) / rect.height) * MM_SIZE;
-  const w = mapToWorld(px, py);
-  if (!mmPick.a || (mmPick.a && mmPick.b)) {
-    mmPick = { a: { x: w.x, z: w.z }, b: null, busy: false };
-    toast('Start set on the minimap. Click the finish.');
-    return;
-  }
-  mmPick.b = { x: w.x, z: w.z };
-  mmPick.busy = true;
-  toast('Routing between the two spots…');
-  try {
-    const a = terrain.latLonFromWorld(mmPick.a.x, mmPick.a.z);
-    const b = terrain.latLonFromWorld(mmPick.b.x, mmPick.b.z);
-    const geometry = await fetchOsrmGeometrySegmented({ a, b, profile: lastOsrmProfile });
-    await applyRouteGeometry(geometry);
-  } catch (error) {
-    toast(error.message || 'No road between those spots.', 'error');
-  } finally {
-    mmPick = { a: null, b: null, busy: false };
-  }
-});
-mm.title = 'Click two spots to route a stage between them (Esc clears)';
-
 /* ------------------------------------------------------------------ */
 /*  Camera                                                             */
 /* ------------------------------------------------------------------ */
@@ -1693,34 +1268,8 @@ const lookSmooth = new THREE.Vector3(0, 0, 0);
 const cameraTarget = new THREE.Vector3();
 const tempLook = new THREE.Vector3();
 
-function updateBuilderCamera(dt) {
-  const cp = Math.cos(builderCamera.pitch);
-  const target = builderCamera.target;
-  if (terrain?.streaming) terrain.setFocus(target.x, target.z); // keep the viewed area loaded
-  const desired = new THREE.Vector3(
-    target.x + Math.sin(builderCamera.yaw) * cp * builderCamera.distance,
-    target.y + Math.sin(builderCamera.pitch) * builderCamera.distance,
-    target.z + Math.cos(builderCamera.yaw) * cp * builderCamera.distance,
-  );
-  const ground = terrain.sample(desired.x, desired.z) + 20;
-  if (desired.y < ground) desired.y = ground;
-  camera.position.lerp(desired, 1 - Math.exp(-9 * dt));
-  const targetGround = terrain.sample(target.x, target.z) + 30;
-  if (target.y < targetGround) target.y = damp(target.y, targetGround, 8, dt);
-  camera.lookAt(target);
-  const fov = damp(camera.fov, 56, 4, dt);
-  if (Math.abs(camera.fov - fov) > 0.01) {
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
-  }
-}
-
 function updateCamera(dt) {
   if (!car || !terrain) return;
-  if (builderActive) {
-    updateBuilderCamera(dt);
-    return;
-  }
   const f = car.forward();
 
   if (!hasStarted || phase === 'intro') {
@@ -1859,7 +1408,7 @@ window.addEventListener('keydown', (event) => {
     if (event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
   }
   if (event.code === 'KeyR') {
-    if (loaded && hasStarted && !builderActive) {
+    if (loaded && hasStarted) {
       resetStage({ countdownNow: true });
       toast('Stage restarted.');
     }
@@ -1870,7 +1419,6 @@ window.addEventListener('keydown', (event) => {
   if (/^Digit[123]$/.test(event.code)) {
     setCameraMode(CAMERA_MODES[Number(event.code.slice(5)) - 1]);
   }
-  if (event.code === 'Escape' && !mmPick.busy) mmPick = { a: null, b: null, busy: false };
   if (event.code === 'KeyM') {
     audio.setMuted(!audio.muted);
     toast(audio.muted ? 'Sound off.' : 'Sound on.');
@@ -1892,10 +1440,7 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyG' && car) {
     setGearbox(!car.autoShift);
   }
-  if (event.code === 'KeyN' && loaded && hasStarted && !builderActive) scoutNewStage();
-  if (event.code === 'Escape') {
-    if (builderActive) closeRouteBuilder();
-  }
+  if (event.code === 'KeyN' && loaded && hasStarted) scoutNewStage();
   if (event.code === 'Enter' && loaded && !hasStarted) beginCountdown();
   if (event.code === 'F3') {
     event.preventDefault();
@@ -2009,7 +1554,6 @@ function updateBestFromStorage() {
 /*  Countdown / timer / finish                                         */
 /* ------------------------------------------------------------------ */
 function updateGamePhase(dt) {
-  if (builderActive) return;
   if (phase === 'countdown') {
     countdown -= dt;
     const n = Math.ceil(countdown);
@@ -2222,76 +1766,10 @@ $('restart').addEventListener('click', () => {
   resetStage({ countdownNow: true });
   toast('Stage restarted.');
 });
-$('routeBuilder').addEventListener('click', () => {
-  if (builderActive) closeRouteBuilder();
-  else openRouteBuilder();
-});
 $('resultRestart').addEventListener('click', () => {
   resetStage({ countdownNow: true });
 });
 $('resultNew').addEventListener('click', scoutNewStage);
-$('builderClose').addEventListener('click', () => closeRouteBuilder());
-$('builderOsrm').addEventListener('click', requestBuilderOsrm);
-$('builderOffroad').addEventListener('click', requestBuilderOffroad);
-$('builderTopo').addEventListener('change', () => setBasemap($('builderTopo').checked));
-$('builderProfile').addEventListener('change', () => {
-  if (builderA && builderB && !builderBusy) {
-    setBuilderStatus(`Profile set to ${$('builderProfile').value}. Press OSRM ROUTE to try it.`);
-  }
-});
-$('osrmFill').addEventListener('click', () => {
-  if (!route || !terrain) return;
-  const fromA = builderA || route.start;
-  const fromB = builderB || route.finish;
-  const a = terrain.latLonFromWorld(fromA.x, fromA.z);
-  const b = terrain.latLonFromWorld(fromB.x, fromB.z);
-  $('osrmALat').value = a.lat.toFixed(6);
-  $('osrmALon').value = a.lon.toFixed(6);
-  $('osrmBLat').value = b.lat.toFixed(6);
-  $('osrmBLon').value = b.lon.toFixed(6);
-  $('osrmStatus').textContent = builderA && builderB
-    ? 'Coordinates filled from the two route-builder points. Hit FETCH.'
-    : 'Coordinates filled from the current stage. Hit FETCH.';
-  $('osrmStatus').className = 'hint';
-});
-$('osrmGo').addEventListener('click', async () => {
-  if (!terrain) return;
-  const a = {
-    lat: Number($('osrmALat').value),
-    lon: Number($('osrmALon').value),
-  };
-  const b = {
-    lat: Number($('osrmBLat').value),
-    lon: Number($('osrmBLon').value),
-  };
-  if (![a.lat, a.lon, b.lat, b.lon].every(Number.isFinite)) {
-    $('osrmStatus').textContent = 'Enter four coordinates (latitude and longitude).';
-    $('osrmStatus').className = 'hint err';
-    return;
-  }
-  $('osrmStatus').textContent = 'Asking OSRM for a road…';
-  $('osrmStatus').className = 'hint';
-  try {
-    if (!isInNorway(a.lat, a.lon) || !isInNorway(b.lat, b.lon)) {
-      throw new Error('Those coordinates are outside Norway. The generator covers Norway only.');
-    }
-    const profile = $('osrmProfile').value;
-    lastOsrmProfile = profile;
-    // Phase 1: long routes are fetched as ~4 km segments and merged.
-    const geometry = await fetchOsrmGeometrySegmented({ a, b, profile });
-    const { result, generated } = await applyRouteGeometry(geometry);
-    const snap = result.snapped?.a != null
-      ? ` · snap ${Math.round(result.snapped.a)} m / ${Math.round(result.snapped.b)} m`
-      : '';
-    $('osrmStatus').textContent = `OSRM: ${(result.distance / 1000).toFixed(2)} km, ${Math.round(result.duration / 60)} min (${result.profile})${snap}.`;
-    $('osrmStatus').className = 'hint ok';
-    if (generated) $('osrmStatus').textContent += ' Streamed world ready.';
-  } catch (error) {
-    $('osrmStatus').textContent = error.message;
-    $('osrmStatus').className = 'hint err';
-    toast(error.message, 'error');
-  }
-});
 
 const mapPicker = createMapPicker({
   getTerrain: () => terrain,
@@ -2306,6 +1784,12 @@ const mapPicker = createMapPicker({
   },
   onRoute: async ({ a, b, profile }) => {
     const started = performance.now();
+    if (profile === 'offroad') {
+      // Let the status line paint before the synchronous A* run.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const next = offroadRoute(a, b);
+      return { ok: true, message: `Off-road stage: ${(next.length / 1000).toFixed(2)} km.` };
+    }
     try {
       // Phase 1: segment long straight lines into ~4 km OSRM hops and merge
       // them into one master track before the world is planned around it.
@@ -2359,23 +1843,15 @@ document.querySelector('#stageInfo .panel-title').addEventListener('click', () =
 });
 setGearbox(gearboxAuto, { announce: false });
 
-$('mapPickerBtn').addEventListener('click', () => {
+// The minimap is the way into the route picker: click it to open the 2D map.
+mm.addEventListener('click', () => {
   if (!loaded || !terrain) {
     toast('The mountain is still loading.', 'error');
     return;
   }
-  if (builderActive) closeRouteBuilder();
   mapPicker.open(terrain, route);
 });
-
-canvas.addEventListener('pointerdown', builderPointerDown);
-canvas.addEventListener('pointermove', builderPointerMove);
-canvas.addEventListener('pointerup', builderPointerUp);
-canvas.addEventListener('pointercancel', () => { builderPointer = null; });
-canvas.addEventListener('wheel', builderWheel, { passive: false });
-canvas.addEventListener('contextmenu', (event) => {
-  if (builderActive) event.preventDefault();
-});
+mm.title = 'Click to open the map and pick a route';
 
 /* ------------------------------------------------------------------ */
 /*  Debug overlay + performance watchdog                               */
@@ -2457,7 +1933,7 @@ function frame(now) {
   let carState = null;
   if (car && loaded) {
     const active = phase === 'racing' || phase === 'finished';
-    const frozen = phase === 'countdown' || phase === 'intro' || builderActive;
+    const frozen = phase === 'countdown' || phase === 'intro';
     const effective = frozen
       ? { throttle: 0, brake: 0, steer: 0, handbrake: false, jump: false, frozen: true }
       : input;
@@ -2481,10 +1957,10 @@ function frame(now) {
     if (session) session.sendState(encodeState(car, { name: myCallsign, kind: carKind }), now);
     audio.update({
       speed: car.speed,
-      throttle: phase === 'racing' && !builderActive ? input.throttle : 0,
+      throttle: phase === 'racing' ? input.throttle : 0,
       onRoad: car.onRoad,
       drifting: car.drifting,
-      running: !builderActive && (phase === 'racing' || phase === 'countdown'),
+      running: phase === 'racing' || phase === 'countdown',
     });
   }
 
@@ -2519,9 +1995,6 @@ window.__rally = {
   get route() { return route; },
   get phase() { return phase; },
   get stageTime() { return stageTime; },
-  get builder() { return { active: builderActive, a: builderA, b: builderB, busy: builderBusy }; },
-  openRouteBuilder,
-  closeRouteBuilder,
   openMap: () => mapPicker.open(terrain, route),
   freeDrive: (lat, lon) => enterFreeDrive({ lat, lon }),
   setCar: (kind) => setCarKind(kind),

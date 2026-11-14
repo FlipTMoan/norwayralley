@@ -3,8 +3,8 @@
 A browser arcade rally game on real 1 m Norwegian terrain: the bundled
 Preikestolen (Lysefjorden) DTM from Kartverket, plus on-demand worlds generated
 anywhere in Norway straight from the national height model. Low-poly
-PS1-style visuals, drift-heavy arcade physics, generated rally stages, a 3D
-topo-map route builder, and real-road routing through OSRM.
+PS1-style visuals, drift-heavy arcade physics, generated rally stages, and
+real-road routing through OSRM from a map you open by clicking the minimap.
 
 ## Run it
 
@@ -39,7 +39,7 @@ npm run preview
 | `1` / `2` / `3` | Camera: straight above / chase / driver's seat (`C` cycles) |
 | `M` | Mute sound |
 | `F3` | Toggle the debug/performance overlay |
-| `Esc` | Close the route builder or the 2D map |
+| `Esc` | Close the route map |
 
 Touch controls appear automatically on narrow screens.
 
@@ -64,14 +64,20 @@ shaders and shadows…" on the loading screen and is the slowest one-time step.
 
 ## Make your own route
 
-Two pickers are available:
+**Click the minimap** (bottom right) to open the route map, a Leaflet /
+OpenStreetMap picker covering the whole country. Click a start and a finish
+**anywhere in Norway**, or type `lat, lon` in the field and press Enter to
+place the next pin. Choose how to route:
 
-- **ROUTE BUILDER** — the 3-D topo-map picker described below.
-- **2D MAP** — a full Leaflet/OpenStreetMap picker covering the whole country.
-  Click a start and a finish **anywhere in Norway**, choose `driving`, `cycling`
-  or `foot`, and press **GENERATE ROUTE**. The game asks OSRM for the road,
-  then either drives it on the loaded terrain or generates a new world around
-  it. **USE CURRENT STAGE** seeds the map with the active stage's endpoints.
+- `driving`, `cycling` or `foot` ask OSRM for a real road or trail. The game
+  then drives it on the loaded terrain or generates a new world around it.
+- `off-road (A*)` uses the game's own router across the mountain. Both points
+  must lie inside the loaded world (the dashed outline on the map).
+
+Press **GENERATE ROUTE**. **USE CURRENT STAGE** puts the pins on the active
+stage's endpoints so it can be re-routed. A third click on the map starts a
+new pair. **NEW STAGE** (`N`) in the STAGE panel scouts a random stage from
+where you are, **RESTART** (`R`) reruns the current one.
 
 ### Drive anywhere in Norway
 
@@ -99,29 +105,14 @@ Generated worlds are not cached between reloads; they are rebuilt from the
 national DTM each time. The baked Preikestolen scene still loads instantly and
 works offline.
 
-### 3D route builder
+### Routing tips
 
-1. Click **ROUTE BUILDER** in the STAGE panel.
-2. The terrain is draped with the Kartverket topo map from the bundled
-   `3d_terrain` scene, so roads and trails are visible.
-3. Click the **start** point, then the **finish** point. The game asks OSRM
-   for a route immediately.
-4. Choose the OSRM profile first if needed: **foot**, **cycling**, or
-   **driving**. Foot is the default because public roads do not cross the
-   Preikestolen plateau; the mapped hiking trails do.
-5. If OSRM cannot find a usable route, read the status line (it reports how
-   far OSRM had to snap each point) and press **OFF-ROAD ROUTE** to build a
-   stage with the game's own A* router instead.
-
-Map camera controls:
-
-- drag with the left mouse button to orbit,
-- drag with the right mouse button to pan,
-- use the mouse wheel to zoom,
-- click without dragging to place A or B.
-
-The builder rejects clicks in the fjord and on cliff faces. Every finished
-stage still gets a level start pad, whichever router produced it.
+Public roads do not cross the Preikestolen plateau, but the mapped hiking
+trails do, so pick `foot` there. If OSRM cannot find a usable route the status
+line says how far it had to snap each point; switch to `off-road (A*)` to
+build a stage across the mountain instead. Off-road rejects points in the
+fjord and on cliff faces. Every finished stage gets a level start pad,
+whichever router produced it.
 
 ### Why OSRM sometimes fails here
 
@@ -145,9 +136,8 @@ builder still works only inside the loaded world.
   `public/terrain/scenes/index.json` and each scene's `scene.json` /
   `index.json`, then loads its DTM and optional `basemap_kv_topo.jpg`. Open
   another scene with `?scene=<name>`.
-- **3D topo-map route builder**: pick two points on the draped Kartverket map,
-  rotate/pan/zoom the camera, and let OSRM or the off-road A* router build the
-  stage.
+- **Route map**: click the minimap, pick two points anywhere in Norway (or
+  type them), and let OSRM or the off-road A* router build the stage.
 - **Flat start pad**: the start of every stage is levelled and blended into the
   mountain, so the car never spawns on a sideways slope or rolls away during
   the countdown.
@@ -167,9 +157,8 @@ builder still works only inside the loaded world.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.
-- **OSRM routing**: the route builder and the advanced **OSRM ROAD ROUTER**
-  panel can fetch real OpenStreetMap roads/trails. The 2D map can additionally
-  generate a world around a route that lies outside the loaded terrain. Snap
+- **OSRM routing**: the route map fetches real OpenStreetMap roads/trails and
+  generates a world around a route that lies outside the loaded terrain. Snap
   distances, degenerate routes and routes too long for a 6 km world are
   reported instead of silently making a bad stage.
 - **Game loop**: countdown, stage timer, best time in `localStorage`, progress
@@ -206,7 +195,7 @@ offline world with the topo basemap. Otherwise pick the area on the 2D map.
 
 ```
 index.html                 UI shell and HUD markup
-src/main.js                renderer, game loop, cameras, route builder, HUD
+src/main.js                renderer, game loop, cameras, HUD, route map wiring
 src/landcover.js           land cover grid per chunk: OSM polygons + NIBIO SR16 tiles → cover, species, density, ground tints
 src/water.js               river/stream ribbons and lake polygons from OSM
 src/signs.js               NVDB road signs: fetch, sign-face textures, placement along the stage road
@@ -229,14 +218,14 @@ public/vendor/geotiff.js   vendored GeoTIFF reader
 ```
 
 `window.__rally` exposes the live scene, camera, terrain, car, route, phase,
-stage time, route builder state, `generateRoute`, `fetchOsrm`,
+stage time, `openMap()`, `generateRoute`, `fetchOsrm`,
 `driveGeometry`, `generateWorld`, `screenFromWorld`, the 2D `mapPicker`,
 `terrainStats()`, `toggleDebug()`, `dumpLog()` and the `perf` monitor for
 debugging in the browser console.
 
 ### Free drive
 
-Open the **2D MAP**, click one point anywhere in Norway and press **FREE DRIVE
+Click the minimap, click one point anywhere in Norway and press **FREE DRIVE
 HERE**. The point is first snapped to the nearest drivable road with OSRM
 (heading included), then the world streams in around it and keeps loading
 2 km chunks ahead of the car as you drive. Real roads come from OpenStreetMap: every

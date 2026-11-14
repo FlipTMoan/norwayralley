@@ -605,9 +605,9 @@ export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
     response = await fetch(url, { signal: controller.signal });
   } catch (error) {
     if (error.name === 'AbortError') {
-      throw new Error('OSRM took too long to answer. Use OFF-ROAD ROUTE, or try again.');
+      throw new Error('OSRM took too long to answer. Choose off-road routing, or try again.');
     }
-    throw new Error('OSRM could not be reached. Check the connection, or use OFF-ROAD ROUTE.');
+    throw new Error('OSRM could not be reached. Check the connection, or choose off-road routing.');
   } finally {
     clearTimeout(timeout);
   }
@@ -629,7 +629,7 @@ export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
   const straight = haversine(a, b);
   if (routeData.distance < 25 || (straight > 80 && routeData.distance < straight * 0.35)) {
     throw new Error(
-      `OSRM snapped both points to the same road or trail (${Math.round(routeData.distance)} m route for a ${Math.round(straight)} m gap).${snapText} Pick points on a mapped road/trail, or use OFF-ROAD ROUTE.`,
+      `OSRM snapped both points to the same road or trail (${Math.round(routeData.distance)} m route for a ${Math.round(straight)} m gap).${snapText} Pick points on a mapped road/trail, or route by off-road.`,
     );
   }
   // A public road two kilometres outside the tile is not a rally stage. Foot
@@ -638,7 +638,7 @@ export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
   const snapLimit = profile === 'driving' ? 400 : 750;
   if ((snappedA != null && snappedA > snapLimit) || (snappedB != null && snappedB > snapLimit)) {
     throw new Error(
-      `OSRM snapped a point ${Math.round(Math.max(snappedA ?? 0, snappedB ?? 0))} m away from where you picked, too far to make a fair stage.${snapText} Pick points nearer to a mapped road/trail, or use OFF-ROAD ROUTE.`,
+      `OSRM snapped a point ${Math.round(Math.max(snappedA ?? 0, snappedB ?? 0))} m away from where you picked, too far to make a fair stage.${snapText} Pick points nearer to a mapped road/trail, or route by off-road.`,
     );
   }
 

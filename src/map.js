@@ -2,14 +2,16 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { logger } from './log.js';
 import { NORWAY_BOUNDS, isInNorway } from './worldgen.js';
+import { parseLatLon } from './geo.js';
 
 /**
  * 2D route picker (Phase 2 of the V3 plan).
  *
- * A Leaflet map sits over the game. Click once for the start and once for the
- * finish, then "Generate route" sends the two lat/lon pairs to OSRM. The
- * result comes back as a GeoJSON line which `main.js` turns into a StageRoute
- * and hands to the 3D world.
+ * A Leaflet map sits over the game, opened by clicking the minimap. Click once
+ * for the start and once for the finish (or type "lat, lon"), then "Generate
+ * route" hands the two lat/lon pairs to `main.js`: OSRM for the road profiles,
+ * the game's own A* for "off-road". One point plus FREE DRIVE streams the
+ * world around that spot instead.
  */
 
 const log = logger('map');
@@ -32,7 +34,7 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
   const mapEl = document.getElementById('mapCanvas');
   const statusEl = document.getElementById('mapStatus');
   const generateBtn = document.getElementById('mapGenerate');
-  const clearBtn = document.getElementById('mapClear');
+  const coordEl = document.getElementById('mapCoord');
   const closeBtn = document.getElementById('mapClose');
   const stageBtn = document.getElementById('mapUseStage');
   const freeBtn = document.getElementById('mapFreeDrive');
@@ -56,7 +58,6 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
     if (generateBtn) generateBtn.disabled = busy || !points.a || !points.b;
     if (generateBtn) generateBtn.textContent = busy ? 'ROUTING…' : 'GENERATE ROUTE';
     if (freeBtn) freeBtn.disabled = busy || !points.a || !onFreeDrive;
-    if (clearBtn) clearBtn.disabled = busy;
   }
 
   function clearMarkers() {
@@ -100,26 +101,28 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
       interactive: false,
     }).addTo(map);
 
-    map.on('click', (event) => {
-      // Leaflet calls the longitude `lng`; the game uses `lon` everywhere.
-      const lat = event.latlng.lat;
-      const lon = event.latlng.lng;
-      if (!isInNorway(lat, lon)) {
-        setStatus('That spot is outside Norway. Pick a start and finish inside the country.', 'err');
-        return;
-      }
-      if (!points.a || (points.a && points.b)) {
-        clearMarkers();
-        place({ lat, lon }, 'a');
-        setStatus('Start set. Click the finish point for a stage, or press FREE DRIVE HERE.');
-      } else {
-        place({ lat, lon }, 'b');
-        setStatus('Both points set. Press GENERATE ROUTE to build that world.');
-      }
-      updateButtons();
-    });
+    // Leaflet calls the longitude `lng`; the game uses `lon` everywhere.
+    map.on('click', (event) => pick(event.latlng.lat, event.latlng.lng));
 
     return map;
+  }
+
+  /** Place the next pin: A, then B, then start over with a new A. */
+  function pick(lat, lon) {
+    if (busy) return;
+    if (!isInNorway(lat, lon)) {
+      setStatus('That spot is outside Norway. Pick a start and finish inside the country.', 'err');
+      return;
+    }
+    if (!points.a || (points.a && points.b)) {
+      clearMarkers();
+      place({ lat, lon }, 'a');
+      setStatus('Start set. Click the finish point for a stage, or press FREE DRIVE HERE.');
+    } else {
+      place({ lat, lon }, 'b');
+      setStatus('Both points set. Press GENERATE ROUTE to build that world.');
+    }
+    updateButtons();
   }
 
   const norwayBounds = () => L.latLngBounds(
@@ -216,7 +219,7 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
       if (!points.a || !points.b || busy) return;
       busy = true;
       updateButtons();
-      setStatus('Asking OSRM for a road…');
+      setStatus(profileEl?.value === 'offroad' ? 'Routing across the terrain…' : 'Asking OSRM for a road…');
       const started = performance.now();
       try {
         const answer = await onRoute({
@@ -261,9 +264,16 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
       updateButtons();
     }
   });
-  clearBtn?.addEventListener('click', () => {
-    clearMarkers();
-    setStatus('Cleared. Click the map to set a new START point.');
+  coordEl?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const ll = parseLatLon(coordEl.value);
+    if (!ll) {
+      setStatus('Type a coordinate pair like 58.98, 6.19 and press Enter.', 'err');
+      return;
+    }
+    coordEl.value = '';
+    pick(ll.lat, ll.lon);
+    map?.setView([ll.lat, ll.lon], Math.max(map.getZoom(), 12));
   });
   closeBtn?.addEventListener('click', close);
   stageBtn?.addEventListener('click', useStage);

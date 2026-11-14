@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-13._
+_Updated 2026-11-14._
 
 Retro Norway Rally is a static, browser-only Three.js game. There is no
 backend: terrain, map features and road signs are fetched straight from
@@ -14,7 +14,7 @@ flowchart LR
   subgraph UI["index.html + main.js"]
     HUD[HUD / start screen / cameras]
     LOOP[frame loop]
-    MAP[map.js 2D picker]
+    MM[minimap] -->|click| MAP[map.js route map]
   end
   subgraph World
     TERRAIN[terrain.js<br/>baked GeoTIFF world]
@@ -41,7 +41,7 @@ flowchart LR
 
 | Module | Responsibility |
 |---|---|
-| `main.js` | Renderer, lights, game phases (`loading → intro → countdown → racing → finished`), input, three cameras (`1` overhead, `2` chase, `3` driver's seat), HUD, route builder, debug handle `window.__rally`. |
+| `main.js` | Renderer, lights, game phases (`loading → intro → countdown → racing → finished`), input, three cameras (`1` overhead, `2` chase, `3` driver's seat), HUD, minimap (click → route map), off-road A* from map picks, debug handle `window.__rally`. |
 | `car.js` | Raycast-style arcade car: drivetrain, slip tyres, single-DOF suspension with bounded travel, per-wheel ground following, anti-tunnelling; the lofted Porsche 911 body. |
 | `stage.js` | `StageRoute` (4–5 m samples with `nearest()` to the closest segment), A* rally router, OSRM fetch and segmentation, the gravel ribbon, posts and gates. Exports the ribbon lift constants the car rides on. |
 | `terrain.js` | The baked demo world (GeoTIFF → height field), `carveRoad` / `flattenPad`, terrain colouring, sea, vegetation, minimap. |
@@ -51,6 +51,7 @@ flowchart LR
 | `buildings.js` | One Overpass request per chunk (`out geom`); footprint → oriented rectangle → typed house instances. |
 | `signs.js` | NVDB (Statens vegvesen) sign plates and speed limits → textured plates on posts along the route. |
 | `roads.js` | OSM `highway=*` per chunk: carve into the heights, tarmac/gravel ribbons, `RoadNetwork` (48 m buckets) answering `nearest(x, z)` for the car, trees, houses and signs. In free drive the network is the car's route. |
+| `map.js` | The route map (Leaflet over OSM tiles): pins by click or typed `lat, lon`, route-by select (OSRM profiles or off-road A*), FREE DRIVE. The only route picker; opened from the minimap. |
 | `retro.js` | Low-resolution render target with scanlines and dithering. |
 
 ## Data sources

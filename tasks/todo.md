@@ -87,6 +87,11 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
 - [x] Verified live: SR16 forests + NVDB signs on a streamed stage; OSM houses/water/roads via mocked Overpass and, later, live on the demo tile through the openstreetmap.fr mirror.
 
+## K. UI simplification 2026-11-14 (user request)
+- [x] One route picker: minimap click → 2D map; off-road A* and typed `lat, lon` folded in.
+- [x] Removed 3-D route builder, OSRM coordinate panel, minimap double-click, CLEAR, 2D MAP / ROUTE BUILDER buttons.
+- [x] Plan and review in `tasks/plan_20261114.md`.
+
 ## J. Session wrap-up 2026-11-13 (late)
 - [x] Gearbox auto/manual, 911 gear spans, 12 000 rpm, RPM HUD.
 - [x] Car-centred minimap with click-to-route; NVDB Vegdekke surfaces; surface-aware handling; bicycle steering.

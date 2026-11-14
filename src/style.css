@@ -233,6 +233,7 @@ html, body {
   gap: 6px;
   margin-top: 9px;
 }
+#stageInfo .panel-actions button { flex: 1; }
 button {
   appearance: none;
   border: 1px solid rgba(236,230,211,.28);
@@ -254,51 +255,15 @@ button.primary {
   color: #141912;
 }
 button.primary:hover { background: #f3db70; }
-button.wide { width: 100%; margin-top: 6px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.active { background: var(--orange); border-color: var(--orange); color: #fff; }
 
-#osrmDetails {
-  margin-top: 10px;
-  border-top: 1px solid var(--line);
-  padding-top: 7px;
-}
-#osrmDetails summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.14em;
-  list-style: none;
-}
-#osrmDetails summary::before { content: "▸ "; color: var(--acid); }
-#osrmDetails[open] summary::before { content: "▾ "; }
 .hint {
   color: #8f9b8e;
   font-size: 9px;
   line-height: 1.45;
   margin: 7px 0;
 }
-.coords {
-  display: grid;
-  grid-template-columns: 18px 1fr 1fr;
-  gap: 4px;
-  align-items: center;
-  font-size: 9px;
-  color: var(--acid);
-}
-.coords label { display: contents; }
-.coords input {
-  width: 100%;
-  min-width: 0;
-  background: #1a211d;
-  border: 1px solid #3a4740;
-  color: var(--paper);
-  font-family: inherit;
-  font-size: 9px;
-  padding: 4px 5px;
-}
-.coords input:focus { outline: 1px solid var(--acid); }
-.coords-row { display: flex; justify-content: space-between; margin-top: 7px; }
 .profile { color: var(--muted); font-size: 9px; }
 .profile select {
   background: #1a211d;
@@ -308,8 +273,6 @@ button.active { background: var(--orange); border-color: var(--orange); color: #
   font-size: 9px;
   padding: 3px;
 }
-#osrmStatus.err { color: #ff8c76; }
-#osrmStatus.ok { color: var(--green); }
 .panel-foot {
   margin-top: 9px;
   padding-top: 6px;
@@ -318,107 +281,6 @@ button.active { background: var(--orange); border-color: var(--orange); color: #
   font-size: 8px;
   line-height: 1.4;
 }
-
-/* --------------------------------------------------------------- route builder */
-#builderPanel {
-  position: absolute;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  width: min(470px, 94vw);
-  padding: 12px 14px 11px;
-  border-top: 4px solid var(--acid);
-  z-index: 8;
-  box-shadow: 8px 8px 0 rgba(0,0,0,.42);
-}
-#hud.building #helpLine { display: none; }
-#hud.building #speedBox,
-#hud.building #minimapWrap { opacity: .42; }
-#hud.building #stageInfo { pointer-events: none; opacity: .55; }
-.builder-title {
-  color: var(--acid);
-  font-size: 11px;
-  letter-spacing: .22em;
-  font-weight: bold;
-}
-.builder-steps {
-  display: flex;
-  gap: 6px;
-  margin: 9px 0 7px;
-}
-.builder-step {
-  flex: 1;
-  border: 1px solid var(--line);
-  padding: 5px 4px;
-  text-align: center;
-  font-size: 9px;
-  letter-spacing: .08em;
-  color: #8a9689;
-}
-.builder-step b {
-  display: block;
-  font-size: 15px;
-  line-height: 1.1;
-  color: #5e6b60;
-}
-.builder-step.active {
-  border-color: var(--acid);
-  color: var(--paper);
-}
-.builder-step.active b { color: var(--acid); }
-.builder-step.done { border-color: rgba(142,210,161,.55); color: var(--green); }
-.builder-step.done b { color: var(--green); }
-.builder-coords {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 8px;
-  margin-bottom: 6px;
-}
-.builder-coords span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.builder-coords b { color: var(--paper); font-weight: normal; }
-.builder-status {
-  min-height: 30px;
-  margin: 4px 0 8px;
-  padding: 6px 8px;
-  background: rgba(0,0,0,.30);
-  border-left: 2px solid var(--line);
-  color: #c9d0c5;
-  font-size: 9px;
-  line-height: 1.5;
-}
-.builder-status.err { border-left-color: var(--red); color: #ffb09f; }
-.builder-status.ok { border-left-color: var(--green); color: #b6e8c4; }
-.builder-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 9px;
-}
-.builder-check {
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: .06em;
-  cursor: pointer;
-  padding-bottom: 3px;
-}
-.builder-check input { accent-color: var(--acid); vertical-align: -1px; }
-.builder-hint {
-  margin-top: 7px;
-  padding-top: 6px;
-  border-top: 1px solid var(--line);
-  color: #7f8c81;
-  font-size: 8px;
-  letter-spacing: .03em;
-}
-#builderPanel .panel-actions { margin-top: 0; }
-#builderPanel button { flex: 1; }
 
 /* --------------------------------------------------------------- minimap */
 #minimapWrap {
@@ -450,6 +312,9 @@ button.active { background: var(--orange); border-color: var(--orange); color: #
   color: var(--muted);
 }
 #minimapLabel span { color: var(--acid); }
+#minimap { pointer-events: auto; cursor: pointer; }
+#minimapHint { position: absolute; left: 5px; right: 5px; top: 5px; padding: 2px 0; text-align: center; font-size: 7px; letter-spacing: 0.18em; color: var(--acid); background: rgba(10, 14, 11, 0.55); pointer-events: none; opacity: 0; transition: opacity .15s; }
+#minimapWrap:hover #minimapHint { opacity: 1; }
 
 /* --------------------------------------------------------------- touch + hints */
 #touchControls {
@@ -728,15 +593,12 @@ kbd {
   #touchControls { display: flex; }
   #stageInfo { max-height: calc(100vh - 180px); overflow: auto; }
   #helpLine { display: none; }
-  #builderPanel { bottom: 92px; width: calc(100vw - 20px); }
-  .builder-hint { display: none; }
 }
 
 @media (max-height: 620px) {
   #stageInfo { max-height: calc(100vh - 150px); overflow: auto; }
   #minimapWrap { display: none; }
   #brand { display: none; }
-  #builderPanel { bottom: 12px; }
 }
 
 /* --------------------------------------------------------------- rpm bar */
@@ -833,7 +695,8 @@ kbd {
   gap: 7px;
 }
 .map-controls button { padding: 7px 10px; }
-.map-controls .profile { margin-right: auto; }
+.map-coord { width: 150px; background: #1a211d; border: 1px solid #3a4740; color: var(--paper); font-family: inherit; font-size: 10px; padding: 6px 7px; margin-right: auto; }
+.map-coord:focus { outline: 1px solid var(--acid); }
 .map-status {
   font-size: 10px;
   letter-spacing: 0.04em;
@@ -942,6 +805,8 @@ kbd {
 
 /* RPM readout beside the speed, and the gearbox toggle on the start card. */
 .rpm-num { margin-left: 16px; font-weight: 700; letter-spacing: .04em; color: #f0ce58; font-size: .78em; }
+.start-options { display: flex; gap: 8px; }
+.start-options .start-toggle { flex: 1; padding-left: 6px; padding-right: 6px; }
 .start-toggle { margin-top: 10px; width: 100%; background: transparent; color: #f3ead8; border: 1px solid rgba(243, 234, 216, .35); padding: 9px 12px; font: inherit; font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
 .start-toggle:hover { border-color: #f0ce58; color: #f0ce58; }
 
@@ -980,7 +845,6 @@ kbd {
   #progressWrap { width: 160px; }
   #helpLine, #brand { display: none; }
   #stageInfo { top: 6px; right: 10px; }
-  #builderPanel { bottom: 106px; width: min(520px, calc(100vw - 24px)); }
 }
 
 /* --------------------------------------------------------------- friends */

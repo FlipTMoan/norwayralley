@@ -436,67 +436,6 @@ export async function loadBasemapTexture(url) {
   }
 }
 
-/**
- * A second skin for the same height field, with the topo map draped over it.
- * It is shown while the route builder is open so roads and trails are visible
- * under the two picked points. Kept separate from the low-poly terrain mesh so
- * switching it on and off costs nothing but a draw call.
- */
-export function buildBasemapMesh(terrain, texture) {
-  const N = terrain.grid;
-  const geometry = new THREE.BufferGeometry();
-  const pos = new Float32Array(N * N * 3);
-  const uv = new Float32Array(N * N * 2);
-  const halfX = terrain.sizeX / 2;
-  const halfZ = terrain.sizeZ / 2;
-
-  for (let j = 0; j < N; j++) {
-    const z = -halfZ + (j / (N - 1)) * terrain.sizeZ;
-    for (let i = 0; i < N; i++) {
-      const idx = j * N + i;
-      pos[idx * 3] = -halfX + (i / (N - 1)) * terrain.sizeX;
-      pos[idx * 3 + 1] = terrain.heights[idx];
-      pos[idx * 3 + 2] = z;
-      uv[idx * 2] = i / (N - 1);
-      uv[idx * 2 + 1] = 1 - j / (N - 1);
-    }
-  }
-
-  const indices = new Uint32Array((N - 1) * (N - 1) * 6);
-  let p = 0;
-  for (let j = 0; j < N - 1; j++) {
-    for (let i = 0; i < N - 1; i++) {
-      const a = j * N + i;
-      const b = a + 1;
-      const c = a + N;
-      const d = c + 1;
-      indices[p++] = a; indices[p++] = c; indices[p++] = b;
-      indices[p++] = b; indices[p++] = c; indices[p++] = d;
-    }
-  }
-
-  geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-  geometry.computeBoundingSphere();
-
-  const material = new THREE.MeshBasicMaterial({
-    map: texture,
-    toneMapped: false,
-    fog: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = 'basemap';
-  mesh.renderOrder = 1;
-  mesh.receiveShadow = false;
-  mesh.castShadow = false;
-  mesh.visible = false;
-  return mesh;
-}
-
 export function buildWater(terrain) {
   const geo = new THREE.PlaneGeometry(9000, 9000, 48, 48);
   geo.rotateX(-Math.PI / 2);

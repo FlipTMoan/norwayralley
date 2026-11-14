@@ -146,6 +146,16 @@ export const formatTime = (seconds) => {
 };
 export const formatCoord = ({ lat, lon }) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
+/** Parse "lat, lon" (comma, semicolon or space separated) → { lat, lon } or null. */
+export function parseLatLon(text) {
+  const parts = String(text).trim().split(/[\s,;]+/).filter(Boolean);
+  if (parts.length !== 2) return null;
+  const [lat, lon] = parts.map(Number);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+
 /** Deterministic 0..1 hash-noise, used for vegetation and texture variation. */
 export function hash2(x, y, seed = 0) {
   let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 1442695041);

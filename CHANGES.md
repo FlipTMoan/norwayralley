@@ -1,6 +1,21 @@
 # Changes
 
-_Updated 2026-11-13._
+_Updated 2026-11-14._
+
+## 2026-11-14
+
+### Changed — one route picker
+- **Click the minimap to open the route map.** It is now the only way to pick
+  a start and finish: the ROUTE BUILDER / 2D MAP buttons, the 3-D topo picker,
+  the OSRM coordinate panel and the minimap double-click are gone.
+- The route map gained what those offered: an **off-road (A\*)** entry in the
+  ROUTE BY select (both points inside the loaded world) and a `lat, lon` field
+  that places the next pin on Enter. CLEAR was dropped (a third click starts a
+  new pair).
+- STAGE panel is down to NEW STAGE and RESTART; the start screen's car /
+  gearbox / sliding toggles sit on one row.
+- Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
+  feeds the minimap.
 
 ## 2026-11-13
 
