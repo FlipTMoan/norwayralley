@@ -17,6 +17,13 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Changed — one build runs on GitHub Pages and on a PC
+- `vite.config.js` uses a relative `base` (`./`), so `dist/` works from any
+  static file server at any path (and `npm run preview` at `/`), not only
+  under `/norwayralley/`. Runtime fetches already go through
+  `import.meta.env.BASE_URL`. README: how to serve it locally, and why a
+  `file://` page cannot work.
+
 ### Changed — HUD layout
 - The speedometer sits top centre (where the stage timer was); the stage
   timer and progress bar sit under the STAGE panel in a right-hand column.

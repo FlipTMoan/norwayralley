@@ -16,11 +16,19 @@ npm run dev
 Open the address Vite prints (usually <http://localhost:5173>). Click
 **START ENGINE** (or press Enter) after the mountain has loaded.
 
-Production build:
+Production build, served locally:
 
 ```bash
 npm run build
-npm run preview
+npm run preview        # http://localhost:4173/
+```
+
+The build is relocatable: `dist/` works from any static file server at any
+path (`npx serve dist`, `python3 -m http.server -d dist`, an nginx folder,
+GitHub Pages under `/norwayralley/`). It does not work opened as a
+`file://` page, because browsers block module scripts and fetches there, so
+always serve it over http. Everything the game needs at runtime is either in
+`dist/` or fetched from the public geodata services.
 ```
 
 ## Controls
@@ -337,9 +345,10 @@ SR16 (a sparse default forest is used), no houses, or no signs.
 
 The site is published at <https://fliptmoan.github.io/norwayralley/> by
 `.github/workflows/pages.yml`: every push to `main` runs `npm ci && npm run build`
-and deploys `dist/`. The repo-name prefix comes from `base` in `vite.config.js`;
-code that fetches runtime files (terrain scenes) must build URLs from
-`import.meta.env.BASE_URL` rather than a leading `/`.
+and deploys `dist/`. `base` in `vite.config.js` is relative (`./`), so the
+same build also runs from a PC at any path; code that fetches runtime files
+(terrain scenes) must build URLs from `import.meta.env.BASE_URL` rather than
+a leading `/`.
 
 The Pages source in the repository settings must be **GitHub Actions**, not
 "Deploy from a branch" — the latter serves the unbuilt source `index.html`,
