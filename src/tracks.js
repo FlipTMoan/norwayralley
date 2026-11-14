@@ -5,7 +5,8 @@ import * as THREE from 'three';
  * car moves: dark ruts on gravel and open ground, black rubber on asphalt
  * only while the tyre is sliding (drift or handbrake). Quads live in a ring
  * buffer per wheel, so the oldest marks fade out of existence as new ones
- * are laid; no allocation per frame.
+ * are laid; no allocation per frame. In water the same strips become a
+ * pale foam wake drawn on the surface instead of the bed.
  */
 
 const QUADS_PER_WHEEL = 700;      // ~350 m of track per wheel at 0.5 m steps
@@ -13,6 +14,7 @@ const STEP = 0.5;                 // metres between marks
 const LIFT = 0.035;               // above the ground, under the car
 const EARTH = new THREE.Color(0x3a3127);
 const RUBBER = new THREE.Color(0x15161a);
+const FOAM = new THREE.Color(0xdff2f6);
 
 export class TrackMarks {
   constructor(scene, car) {
@@ -55,6 +57,7 @@ export class TrackMarks {
   /** Should this wheel mark the ground right now, and in what colour? */
   markFor(car) {
     if (!car.grounded) return null;
+    if (car.waterDepth > 0.03) return car.speed > 1.5 ? FOAM : null;
     const sliding = car.drifting || car.handbrakeOn;
     if (car.surfaceKind === 'asphalt') return sliding ? RUBBER : null;
     if (car.speed < 0.8) return null;
@@ -64,7 +67,8 @@ export class TrackMarks {
   update(car = this.car) {
     const color = this.markFor(car);
     car.group.updateMatrixWorld(true);
-    const width = car.spec.wheelRadius > 0.5 ? 0.5 : 0.3;
+    const wet = car.waterDepth > 0.03;
+    const width = wet ? 0.9 : car.spec.wheelRadius > 0.5 ? 0.5 : 0.3;
     for (let w = 0; w < this.wheelCount; w++) {
       const st = this.state[w];
       if (!color) { st.open = false; continue; }
@@ -73,7 +77,7 @@ export class TrackMarks {
       car.group.localToWorld(this.tmp);
       const x = this.tmp.x;
       const z = this.tmp.z;
-      const y = car.groundAt(x, z) + LIFT;
+      const y = wet ? car.waterSurface + LIFT : car.groundAt(x, z) + LIFT;
       if (!st.open || !st.last) {
         st.last = { x, y, z };
         st.open = true;

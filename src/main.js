@@ -15,7 +15,7 @@ import {
 } from './stage.js';
 import { Car, CARS, GRIP_MODES } from './car.js';
 import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
-import { buildChunkWater } from './water.js';
+import { buildChunkWater, SEA_LEVEL } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { buildCorridorGeometry, corridorMesh } from './corridor.js';
 import { Session, encodeState, makeCallsign, spawnOffset, paintForSlot } from './multiplayer.js';
@@ -682,7 +682,10 @@ async function addBakedFeatures() {
     const houses = buildChunkHouses(osm.buildings, t, route ? buildRouteIndex(route) : null, 11);
     if (houses) group.add(houses);
     const water = buildChunkWater(osm, t, { x0: -t.sizeX / 2, z0: -t.sizeZ / 2, size: Math.max(t.sizeX, t.sizeZ) });
-    if (water) group.add(water);
+    if (water) {
+      group.add(water);
+      t.waterBodies = water.userData.bodies; // so the car can splash into the tile's lakes and rivers
+    }
     log.info(`demo tile: ${houses?.userData.count || 0} buildings, ${water?.userData.rivers || 0} waterways, ${water?.userData.lakes || 0} lakes`);
   } catch (error) {
     log.warn(`demo map features skipped: ${error.message}`);
@@ -1529,6 +1532,9 @@ function updateHud() {
   if (!car.grounded) {
     surface.textContent = 'AIRBORNE';
     surface.className = 'air';
+  } else if (car.waterDepth > 0.05) {
+    surface.textContent = car.waterDepth > 0.8 ? 'DEEP WATER' : 'WATER';
+    surface.className = 'off';
   } else if (car.onRoad) {
     surface.textContent = car.drifting ? 'DRIFT' : car.surfaceKind === 'asphalt' ? 'ASPHALT' : 'GRAVEL';
     surface.className = car.drifting ? 'off' : 'road';
@@ -1588,7 +1594,7 @@ function updateWorld(dt) {
   if (terrain?.streaming && water && car) {
     // The ocean plane follows the car in a streamed world (there is no fixed
     // world edge). Snapping keeps the wave field from swimming.
-    water.position.set(Math.round(car.pos.x / 64) * 64, 0.45, Math.round(car.pos.z / 64) * 64);
+    water.position.set(Math.round(car.pos.x / 64) * 64, SEA_LEVEL, Math.round(car.pos.z / 64) * 64);
   }
   if (!car) return;
   sun.position.set(car.pos.x - 650, car.pos.y + 900, car.pos.z + 470);
@@ -1938,6 +1944,8 @@ function frame(now) {
       ? { throttle: 0, brake: 0, steer: 0, handbrake: false, jump: false, frozen: true }
       : input;
     carState = car.update(dt, effective);
+    if (carState.splash) audio.splash(carState.splash);
+    if (carState.recovered) toast('Fished out of the water and put back on dry land.');
     if (!tracks || tracks.car !== car) {
       tracks?.dispose();
       tracks = new TrackMarks(scene, car);
@@ -1961,6 +1969,7 @@ function frame(now) {
       onRoad: car.onRoad,
       drifting: car.drifting,
       running: phase === 'racing' || phase === 'countdown',
+      waterDepth: car.waterDepth,
     });
   }
 

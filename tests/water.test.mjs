@@ -1,7 +1,9 @@
 import './browser-stubs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clipPolyline, resamplePolyline, buildChunkWater } from '../src/water.js';
+import { clipPolyline, resamplePolyline, buildChunkWater, waterAt, SEA_LEVEL } from '../src/water.js';
+
+const waterDepthAt = (...args) => waterAt(...args).depth;
 
 const box = { minX: 0, maxX: 100, minZ: 0, maxZ: 100 };
 
@@ -40,7 +42,8 @@ test('buildChunkWater drapes a stream in the valley floor', () => {
   const stream = { kind: 'stream', name: null, width: null, points: [ll(100, -50), ll(100, 1000), ll(100, 2100)] };
   const group = buildChunkWater({ waterways: [stream], areas: [] }, terrain, chunk);
   assert.ok(group && group.name === 'water');
-  assert.deepEqual(group.userData, { rivers: 1, lakes: 0 });
+  assert.equal(group.userData.rivers, 1);
+  assert.equal(group.userData.lakes, 0);
   const pos = group.children[0].geometry.attributes.position;
   let maxY = -Infinity; let minY = Infinity;
   for (let i = 0; i < pos.count; i++) {
@@ -61,7 +64,8 @@ test('buildChunkWater lays a lake flat at one level', () => {
     { kind: 'forest', water: null, rings: [ring] },
   ];
   const group = buildChunkWater({ waterways: [], areas }, terrain, chunk);
-  assert.deepEqual(group.userData, { rivers: 0, lakes: 1 });
+  assert.equal(group.userData.rivers, 0);
+  assert.equal(group.userData.lakes, 1);
   const mesh = group.children[0];
   const pos = mesh.geometry.attributes.position;
   assert.ok(pos.count >= 4 && mesh.geometry.index.count >= 6);
@@ -70,4 +74,24 @@ test('buildChunkWater lays a lake flat at one level', () => {
   const n = mesh.geometry.attributes.normal;
   assert.ok(n.getY(0) > 0.99, 'top face points up');
   assert.equal(buildChunkWater({ waterways: [], areas: [] }, terrain, chunk), null);
+});
+
+test('waterDepthAt knows the sea, the shore, lakes and rivers', () => {
+  const stream = { kind: 'stream', name: null, width: null, points: [ll(100, -50), ll(100, 1000), ll(100, 2100)] };
+  const lake = { kind: 'water', rings: [[ll(500, 500), ll(700, 500), ll(700, 700), ll(500, 700), ll(500, 500)]] };
+  const group = buildChunkWater({ waterways: [stream], areas: [lake] }, terrain, chunk);
+  const bodies = group.userData.bodies;
+  assert.equal(bodies.lakes.length, 1);
+  assert.equal(bodies.rivers.length, 1);
+  assert.equal(waterDepthAt(bodies, terrain, 300, 300), 0, 'dry hillside');
+  assert.ok(waterDepthAt(bodies, terrain, 600, 600) > 0.2, 'inside the lake');
+  assert.equal(waterDepthAt(bodies, terrain, 800, 600), 0, 'just outside the lake');
+  assert.ok(waterDepthAt(bodies, terrain, 100, 800) >= 0.2, 'in the stream');
+  assert.equal(waterDepthAt(bodies, terrain, 110, 800), 0, 'beside the stream');
+  const sea = { sample: () => 0 };
+  assert.ok(waterDepthAt(null, sea, 0, 0) > 1, 'the fjord counts as deep');
+  const shore = { sample: () => SEA_LEVEL - 0.2 };
+  assert.ok(Math.abs(waterDepthAt(null, shore, 0, 0) - 0.2) < 1e-6, 'wading at the shore');
+  assert.equal(waterAt(null, shore, 0, 0).surface, SEA_LEVEL, 'the shore water surface is the sea plane');
+  assert.ok(Math.abs(waterAt(bodies, terrain, 600, 600).surface - (40 + waterDepthAt(bodies, terrain, 600, 600))) < 1e-6, 'lake surface = ground + depth');
 });

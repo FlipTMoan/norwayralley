@@ -74,6 +74,7 @@ export class RallyAudio {
     this.wind = makeNoise('bandpass', 900, 0.6, 0);
     this.gravel = makeNoise('lowpass', 340, 1.2, 0);
     this.skid = makeNoise('bandpass', 1500, 3.5, 0);
+    this.wade = makeNoise('lowpass', 420, 0.9, 0);
 
     this.ready = true;
   }
@@ -116,5 +117,31 @@ export class RallyAudio {
     this.wind.filter.frequency.setTargetAtTime(700 + speed * 22, t, 0.15);
     this.gravel.gain.gain.setTargetAtTime(running && !onRoad ? Math.min(0.11, speed * 0.0032) : 0, t, 0.09);
     this.skid.gain.gain.setTargetAtTime(running && drifting ? Math.min(0.10, speed * 0.0025) : 0, t, 0.05);
+    const depth = state.waterDepth || 0;
+    this.wade.gain.gain.setTargetAtTime(depth > 0 ? Math.min(0.16, speed * 0.006 * Math.min(1, depth / 0.4)) : 0, t, 0.08);
+  }
+
+  /** One splash: a bright slap, then a low whoomph that darkens as it decays. */
+  splash(strength = 1) {
+    if (!this.ready || !this.started) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const burst = (type, from, to, peak, length) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = type;
+      filter.frequency.setValueAtTime(from, t);
+      filter.frequency.exponentialRampToValueAtTime(to, t + length);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+      src.connect(filter).connect(gain).connect(this.master);
+      src.start(t);
+      src.stop(t + length + 0.05);
+    };
+    burst('bandpass', 2600, 1200, 0.18 + 0.25 * strength, 0.18);
+    burst('lowpass', 3200, 240, 0.22 + 0.45 * strength, 0.55 + 0.5 * strength);
   }
 }

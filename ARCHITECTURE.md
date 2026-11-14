@@ -42,12 +42,12 @@ flowchart LR
 | Module | Responsibility |
 |---|---|
 | `main.js` | Renderer, lights, game phases (`loading → intro → countdown → racing → finished`), input, three cameras (`1` overhead, `2` chase, `3` driver's seat), HUD, minimap (click → route map), off-road A* from map picks, debug handle `window.__rally`. |
-| `car.js` | Raycast-style arcade car: drivetrain, slip tyres, single-DOF suspension with bounded travel, per-wheel ground following, anti-tunnelling; the lofted Porsche 911 body. |
+| `car.js` | Raycast-style arcade car: drivetrain, slip tyres, single-DOF suspension with bounded travel, per-wheel ground following, anti-tunnelling; water (splash, spray, drag, recovery); the lofted Porsche 911 body. |
 | `stage.js` | `StageRoute` (4–5 m samples with `nearest()` to the closest segment), A* rally router, OSRM fetch and segmentation, the gravel ribbon, posts and gates. Exports the ribbon lift constants the car rides on. |
 | `terrain.js` | The baked demo world (GeoTIFF → height field), `carveRoad` / `flattenPad`, terrain colouring, sea, vegetation, minimap. |
 | `stream.js` | Infinite world: 2048 m chunks of 192² samples fetched from Kartverket's WCS, per-chunk carve, LOD meshes with skirts, forest scatter, map features, disposal. |
 | `landcover.js` | Per-chunk 16 m grid of cover / species / density from OSM polygons and NIBIO SR16 tiles; ground tint. |
-| `water.js` | River and stream ribbons draped in the valley floor; flat lake polygons. |
+| `water.js` | River and stream ribbons draped in the valley floor; flat lake polygons; remembers the bodies and answers `waterAt(x, z)` (depth + surface) for the sea, shore, lakes and rivers, which the car uses for splash, spray, drag and the foam wake. |
 | `buildings.js` | One Overpass request per chunk (`out geom`); footprint → oriented rectangle → typed house instances. |
 | `signs.js` | NVDB (Statens vegvesen) sign plates and speed limits → textured plates on posts along the route. |
 | `roads.js` | OSM `highway=*` per chunk: carve into the heights, tarmac/gravel ribbons, `RoadNetwork` (48 m buckets) answering `nearest(x, z)` for the car, trees, houses and signs. In free drive the network is the car's route. |

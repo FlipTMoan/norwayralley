@@ -25,6 +25,10 @@ const SLOPE_G = 13.5;              // effective gravity along slopes (≈1.4 g):
 const SUSPENSION_K = 190;          // spring back to the ground (per second²)
 const SUSPENSION_D = 14;           // damping of the body bounce
 const MAX_SUBSTEPS = 8;            // physics substeps per rendered frame
+const WATER_DRAG = 0.22;           // v² drag per metre of wetted depth (m⁻¹)
+const WATER_DRAG_MAX = 16;         // m/s²: a car hitting deep water stops hard, not instantly
+const SINK_DEPTH = 1.3;            // roof under: the engine is dead
+const SINK_TIME = 2.5;             // seconds under before the car is fished out
 // Five-speed 911-style box on a 12 000 rpm engine. At the redline the gears
 // run out at 60 / 100 / 140 / 180 / 220 km/h, so 2nd covers ~30–100 km/h,
 // 3rd ~45–140 and so on (wheel radius 0.35 m, final drive 3.9).
@@ -286,6 +290,23 @@ function stations(from, to, count, bias = 1) {
   return out;
 }
 
+/** A soft round sprite for water droplets (shared by every car). */
+let dropletMap = null;
+function dropletTexture() {
+  if (dropletMap) return dropletMap;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  const g = ctx.createRadialGradient(16, 16, 2, 16, 16, 16);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.55, 'rgba(255,255,255,0.55)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 32, 32);
+  dropletMap = new THREE.CanvasTexture(canvas);
+  return dropletMap;
+}
+
 export class Car {
   constructor(scene, terrain, kind = 'porsche') {
     this.spec = CARS[kind] || CARS.porsche;
@@ -315,6 +336,13 @@ export class Car {
     this.landingImpact = 0;
     this.distance = 0;
     this.wrongWay = false;
+    this.waterDepth = 0;      // water over the ground under the car, once the body is in it (m)
+    this.waterSurface = 0;    // height of that water's surface
+    this.splash = 0;          // entry splash strength this frame (0 = none)
+    this.recovered = false;   // fished out of deep water this frame
+    this.sunkTime = 0;
+    this.sprayClock = 0;
+    this.lastDry = null;      // last pose on dry ground, for the recovery
 
     this.pitch = 0;
     this.roll = 0;
@@ -344,6 +372,11 @@ export class Car {
 
     this.dust = this.createDust();
     scene.add(this.dust.points);
+    this.spray = this.createParticles(320, 0xe6f3f7, 0.34, 0.5);
+    this.spray.points.material.map = dropletTexture();
+    this.spray.points.material.alphaTest = 0.04;
+    this.spray.points.renderOrder = 3; // after the (transparent) water plane, or the sea would wash it out
+    scene.add(this.spray.points);
   }
 
   buildModel() {
@@ -643,17 +676,21 @@ export class Car {
   }
 
   createDust() {
-    const count = 90;
+    return this.createParticles(90, 0xcfc3a1, 0.42, 0.32);
+  }
+
+  /** A pool of `count` point sprites with a ring allocator (dust, water spray). */
+  createParticles(count, color, size, opacity) {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(count * 3);
     positions.fill(-9999);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const material = new THREE.PointsMaterial({
-      color: 0xcfc3a1,
-      size: 0.42,
+      color,
+      size,
       sizeAttenuation: true,
       transparent: true,
-      opacity: 0.32,
+      opacity,
       depthWrite: false,
     });
     const points = new THREE.Points(geometry, material);
@@ -663,7 +700,7 @@ export class Car {
       count,
       positions,
       particles: Array.from({ length: count }, () => ({
-        life: 0, maxLife: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+        life: 0, maxLife: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, floor: -Infinity,
       })),
       next: 0,
       clock: 0,
@@ -712,9 +749,13 @@ export class Car {
     this.group.position.copy(this.pos);
     this.group.quaternion.identity();
     this.group.rotateY(this.yaw);
-    for (const p of this.dust.particles) p.life = 0;
-    this.dust.positions.fill(-9999);
-    this.dust.points.geometry.attributes.position.needsUpdate = true;
+    for (const sys of [this.dust, this.spray]) {
+      for (const p of sys.particles) p.life = 0;
+      sys.positions.fill(-9999);
+      sys.points.geometry.attributes.position.needsUpdate = true;
+    }
+    this.waterDepth = 0;
+    this.sunkTime = 0;
   }
 
   forward() {
@@ -855,6 +896,7 @@ export class Car {
       this.pos.y = this.groundAt(this.pos.x, this.pos.z);
       this.updateVisual(dt, 0);
       this.updateDust(dt, 0, 0);
+      this.integrateParticles(this.spray, dt, 9.5);
       return {
         speed: 0, vF: 0, vR: 0, rpm: this.spec.idle, gear: 1,
         onRoad: this.onRoad, drifting: false, grounded: true,
@@ -894,6 +936,7 @@ export class Car {
 
     this.updateVisual(dt, speed);
     this.updateDust(dt, speed, drivetrain.throttle);
+    this.updateWater(dt, speed);
     return {
       speed,
       vF: this.vF,
@@ -906,6 +949,9 @@ export class Car {
       progress: this.progress || 0,
       wrongWay: this.wrongWay,
       landingImpact: this.landingImpact,
+      waterDepth: this.waterDepth,
+      splash: this.splash,
+      recovered: this.recovered,
     };
   }
 
@@ -918,8 +964,11 @@ export class Car {
     if (this.grounded) {
       // Engine, brakes and the ground. Whatever the gearing multiplies the
       // torque to, the driven tyres can only push as hard as they grip.
-      const bonus = this.spec.gripBonus[this.surfaceKind] ?? 1;
-      const maxDrive = surface.mu * bonus * this.spec.driveLoad * 9.81 * (input.handbrake ? 0.3 : 1);
+      // Wet tyres grip less, and an engine under water hardly pushes at all.
+      const wet = 1 - 0.5 * clamp(this.waterDepth / 0.5, 0, 1);
+      const bonus = (this.spec.gripBonus[this.surfaceKind] ?? 1) * wet;
+      const drowned = this.waterDepth > 0.8 ? 0.15 : 1;
+      const maxDrive = surface.mu * bonus * this.spec.driveLoad * 9.81 * (input.handbrake ? 0.3 : 1) * drowned;
       vF += clamp(drivetrain.driveForce / this.spec.mass, -maxDrive, maxDrive) * h;
       if (drivetrain.brake > 0) {
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 21 * drivetrain.brake) * h;
@@ -934,6 +983,12 @@ export class Car {
       vF -= Math.sign(vF) * surface.rolling * h;
       vF -= vF * Math.abs(vF) * surface.drag * h;
       vF -= vF * (this.onRoad ? 0.02 : 0.12) * h;
+      if (this.waterDepth > 0) {
+        // Water drag: grows with the square of speed and the wetted depth.
+        const k = WATER_DRAG * Math.min(this.waterDepth, 1.2);
+        vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, Math.min(WATER_DRAG_MAX, k * vF * vF)) * h;
+        vR -= Math.sign(vR) * Math.min(Math.abs(vR) / h, Math.min(WATER_DRAG_MAX, k * vR * vR)) * h;
+      }
       if (drivetrain.throttle === 0 && drivetrain.brake === 0 && Math.abs(vF) < 3.5) {
         vF *= Math.exp(-4.5 * h);
       }
@@ -1199,6 +1254,118 @@ export class Car {
     }
 
     this.blobShadow.material.opacity = clamp(1 - this.airTime * 1.4, 0, 1);
+  }
+
+  /* ---------------------------------------------------------------- *
+   *  Water: splash on entry, bow spray while wading, drag, recovery    *
+   * ---------------------------------------------------------------- */
+  updateWater(dt, speed) {
+    const w = this.terrain.waterAt ? this.terrain.waterAt(this.pos.x, this.pos.z) : null;
+    // Only water the body has actually reached counts: a car flying over the
+    // fjord is dry until it comes down to the surface.
+    const depth = w && w.depth > 0 && this.pos.y <= w.surface + 0.15 ? w.depth : 0;
+    this.splash = 0;
+    this.recovered = false;
+    // Two splashes: the wheels breaking the surface at the shore, and the
+    // bonnet going under when the bed drops away into deep water.
+    const shoreline = depth > 0.08 && this.waterDepth <= 0.08;
+    const plunge = depth > 0.6 && this.waterDepth <= 0.6 && this.waterDepth > 0;
+    if (shoreline || plunge) {
+      const impact = speed + 12 * this.landingImpact;
+      if (impact > 2) {
+        this.splash = clamp(impact / 25, 0.15, 1) * (plunge ? 1 : clamp(depth / 0.6, 0.4, 1));
+        this.waterSurface = w.surface;
+        this.emitSplash(this.splash);
+      }
+    }
+    this.waterDepth = depth;
+    this.waterSurface = w ? w.surface : this.pos.y;
+    if (depth <= 0) {
+      if (this.grounded && speed > 1) this.lastDry = { x: this.pos.x, z: this.pos.z, yaw: this.yaw };
+      this.sunkTime = 0;
+    } else {
+      if (this.grounded && speed > 2.5) this.emitSpray(speed, depth, dt);
+      if (depth >= SINK_DEPTH) {
+        this.sunkTime += dt;
+        if (this.sunkTime > SINK_TIME) {
+          // Roof under for a while: fish the car out onto the last dry ground.
+          this.reset(this.lastDry || undefined);
+          this.recovered = true;
+        }
+      }
+    }
+    this.integrateParticles(this.spray, dt, 9.5);
+  }
+
+  spawnParticle(sys, x, y, z, vx, vy, vz, life, floor) {
+    const p = sys.particles[sys.next];
+    sys.next = (sys.next + 1) % sys.count;
+    p.life = p.maxLife = life;
+    p.x = x; p.y = y; p.z = z;
+    p.vx = vx; p.vy = vy; p.vz = vz;
+    p.floor = floor;
+  }
+
+  /** A crown of water thrown up all round the car as it hits the surface. */
+  emitSplash(strength) {
+    const y0 = this.waterSurface;
+    const n = Math.round(40 + 120 * strength);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const radius = 0.8 + Math.random() * 1.8;
+      const out = 1 + Math.random() * 6 * strength;
+      this.spawnParticle(
+        this.spray,
+        this.pos.x + Math.cos(a) * radius, y0 + 0.05, this.pos.z + Math.sin(a) * radius,
+        Math.cos(a) * out + this.vel.x * 0.25, (3.5 + 10 * strength) * (0.4 + Math.random() * 0.8), Math.sin(a) * out + this.vel.y * 0.25,
+        0.6 + Math.random() * 0.9, y0 - 0.1,
+      );
+    }
+  }
+
+  /** Bow wave off the front wheels while driving through water. */
+  emitSpray(speed, depth, dt) {
+    this.sprayClock += dt;
+    if (this.sprayClock < 0.025) return;
+    this.sprayClock = 0;
+    const f = this.forward();
+    const r = this.right();
+    const y0 = this.waterSurface;
+    const wet = Math.min(1, depth / 0.4);
+    const per = 1 + Math.floor(speed / 12);
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < per; i++) {
+        const out = (0.8 + speed * 0.08) * side * (0.6 + Math.random() * 0.6);
+        this.spawnParticle(
+          this.spray,
+          this.pos.x + f.x * 1.3 + r.x * side * 0.9, y0, this.pos.z + f.z * 1.3 + r.z * side * 0.9,
+          this.vel.x * 0.35 + r.x * out, (1.2 + speed * 0.1 + depth) * wet * (0.5 + Math.random()), this.vel.y * 0.35 + r.z * out,
+          0.35 + Math.random() * 0.35, y0 - 0.1,
+        );
+      }
+    }
+  }
+
+  /** Advance a particle pool under gravity; drops die at their floor (the water surface). */
+  integrateParticles(sys, dt, gravity) {
+    for (let i = 0; i < sys.count; i++) {
+      const p = sys.particles[i];
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.vy -= gravity * dt;
+      if (p.life <= 0 || p.y < p.floor) {
+        p.life = 0;
+        sys.positions[i * 3 + 1] = -9999;
+        continue;
+      }
+      sys.positions[i * 3] = p.x;
+      sys.positions[i * 3 + 1] = p.y;
+      sys.positions[i * 3 + 2] = p.z;
+    }
+    sys.points.geometry.attributes.position.needsUpdate = true;
   }
 
   updateDust(dt, speed, throttle) {

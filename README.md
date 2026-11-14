@@ -138,6 +138,12 @@ builder still works only inside the loaded world.
   another scene with `?scene=<name>`.
 - **Route map**: click the minimap, pick two points anywhere in Norway (or
   type them), and let OSRM or the off-road A* router build the stage.
+- **Water**: the car knows the sea, the fjord shore, OSM lakes and rivers.
+  Hitting water throws a splash (and a second, bigger one when the bed drops
+  away), the front wheels throw spray while wading, tyre tracks turn into a
+  foam wake on the surface, and water drag plus wet tyres slow the car. With
+  the roof under for a few seconds the car is fished out onto the last dry
+  ground it crossed. The HUD surface label reads WATER / DEEP WATER.
 - **Flat start pad**: the start of every stage is levelled and blended into the
   mountain, so the car never spawns on a sideways slope or rolls away during
   the countdown.

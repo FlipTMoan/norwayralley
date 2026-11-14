@@ -23,6 +23,8 @@ import { logger } from './log.js';
 
 const log = logger('water');
 
+export const SEA_LEVEL = 0.45;   // the sea plane; DTM sea/nodata cells are height 0
+const SEA_DEPTH = 2.5;           // how deep the fjord counts once the ground is at 0
 const RIVER_STEP = 6;
 const CHUNK_MARGIN = 2;
 const SURFACE_LIFT = 0.12;
@@ -226,6 +228,55 @@ function pointInRing(x, z, ring) {
 }
 
 /** 20th percentile of the terrain under the ring vertices and an interior grid. */
+function ringBounds(ring) {
+  let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
+  for (const p of ring) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+/** Squared distance from (x, z) to the polyline. */
+function polylineDist2(x, z, points) {
+  let best = Infinity;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i]; const b = points[i + 1];
+    const dx = b.x - a.x; const dz = b.z - a.z;
+    const len2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / len2));
+    const ex = a.x + dx * t - x; const ez = a.z + dz * t - z;
+    best = Math.min(best, ex * ex + ez * ez);
+  }
+  return best;
+}
+
+/**
+ * Water at (x, z) as `{ depth, surface }`: the depth over the ground and the
+ * height of the surface. The sea where the DTM is at height 0 (counted
+ * deep), the fjord shore between 0 and the sea plane, a lake's level inside
+ * its outline, or a river's nominal depth within its ribbon. Dry land has
+ * depth 0 and the ground as its surface.
+ *
+ * @param bodies `userData.bodies` of a chunk's water group (may be null)
+ */
+export function waterAt(bodies, terrain, x, z) {
+  const ground = terrain.sample(x, z);
+  let depth = ground < 0.1 ? SEA_DEPTH : Math.max(0, SEA_LEVEL - ground);
+  let surface = depth > 0 ? SEA_LEVEL : ground;
+  const deeper = (d, s) => { if (d > depth) { depth = d; surface = s; } };
+  if (bodies) {
+    for (const lake of bodies.lakes) {
+      if (x < lake.minX || x > lake.maxX || z < lake.minZ || z > lake.maxZ) continue;
+      if (pointInRing(x, z, lake.ring)) deeper(lake.level - ground, lake.level);
+    }
+    for (const river of bodies.rivers) {
+      if (polylineDist2(x, z, river.points) <= river.half * river.half) deeper(river.depth, ground + river.depth);
+    }
+  }
+  return { depth, surface };
+}
+
 function lakeLevel(ring, terrain) {
   const hs = ring.map((p) => terrain.sample(p.x, p.z));
   let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
@@ -302,6 +353,7 @@ export function buildChunkWater({ waterways = [], areas = [] }, terrain, { x0, z
   };
   const rivers = { positions: [], colors: [], indices: [] };
   const lakes = { positions: [], colors: [], indices: [] };
+  const bodies = { lakes: [], rivers: [] };
   let riverCount = 0;
   let lakeCount = 0;
 
@@ -310,6 +362,7 @@ export function buildChunkWater({ waterways = [], areas = [] }, terrain, { x0, z
     const half = riverWidth(way) / 2;
     for (const piece of clipPolyline(projectPoints(way.points, terrain), bounds)) {
       appendRibbon(resamplePolyline(piece, RIVER_STEP), half, terrain, rivers);
+      bodies.rivers.push({ points: piece, half, depth: Math.min(0.7, Math.max(0.2, half * 0.12)) });
       riverCount++;
     }
   }
@@ -323,7 +376,9 @@ export function buildChunkWater({ waterways = [], areas = [] }, terrain, { x0, z
     if (Math.abs(area2) < MIN_LAKE_AREA) continue;
     const c = polygonCentroid(ring, area2);
     if (c.x < x0 || c.x >= x0 + size || c.z < z0 || c.z >= z0 + size) continue;
-    appendLake(ring, lakeLevel(ring, terrain), lakes);
+    const level = lakeLevel(ring, terrain);
+    appendLake(ring, level, lakes);
+    bodies.lakes.push({ ring, level, ...ringBounds(ring) });
     lakeCount++;
   }
 
@@ -332,7 +387,7 @@ export function buildChunkWater({ waterways = [], areas = [] }, terrain, { x0, z
   group.name = 'water';
   if (riverCount) group.add(meshFrom(rivers, 'rivers', true));
   if (lakeCount) group.add(meshFrom(lakes, 'lakes', false));
-  group.userData = { rivers: riverCount, lakes: lakeCount };
+  group.userData = { rivers: riverCount, lakes: lakeCount, bodies };
   log.debug(`chunk ${x0},${z0}: ${riverCount} river pieces, ${lakeCount} lakes`);
   return group;
 }

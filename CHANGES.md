@@ -17,6 +17,23 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Added — a real splash
+- `water.js` keeps the lakes and rivers it builds and answers
+  `waterAt(x, z) → { depth, surface }` for the sea (DTM height 0 counts as
+  deep), the fjord shore, lake outlines and river ribbons; both terrains and
+  the car use it.
+- Hitting water: a crown of droplets round the car (soft round sprites),
+  scaled by speed and landing impact; a second splash when the bed drops
+  into deep water; bow spray off the front wheels while wading. A flying car
+  stays dry until it comes down to the surface.
+- Tyre tracks continue on the water as a pale foam wake drawn on the
+  surface.
+- Physics: v²·depth water drag (capped), wet tyres grip less, an engine under
+  0.8 m hardly pushes; roof under for 2.5 s puts the car back on the last dry
+  ground with a toast. HUD shows WATER / DEEP WATER.
+- Sound: splash slap + whoomph bursts, a wading noise scaled by speed and
+  depth.
+
 ## 2026-11-13
 
 ### Fixed

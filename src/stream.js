@@ -5,7 +5,7 @@ import { fetchDem } from './worldgen.js';
 import { makeRoute, buildRoadVisuals, buildRouteIndex } from './stage.js';
 import { fetchOsmChunk, overpassBlocked, buildChunkHouses } from './buildings.js';
 import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './landcover.js';
-import { buildChunkWater } from './water.js';
+import { buildChunkWater, waterAt } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
 import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach } from './corridor.js';
@@ -639,6 +639,12 @@ export async function createStreamingWorld({
       const fz = clamp(v - j, 0, 1);
       const h = chunk.baseHeights;
       return triSample(h[j * GSIZE + i], h[j * GSIZE + i + 1], h[(j + 1) * GSIZE + i], h[(j + 1) * GSIZE + i + 1], fx, fz);
+    },
+
+    /** `{ depth, surface }` of the water at (x, z): sea, fjord shore, lakes, rivers. */
+    waterAt(x, z) {
+      const chunk = chunks.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
+      return waterAt(chunk?.waterGroup?.userData.bodies || null, this, x, z);
     },
 
     /** Land-cover tint of the chunk under (x, z), if it has arrived (minimap). */

@@ -87,6 +87,11 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
 - [x] Verified live: SR16 forests + NVDB signs on a streamed stage; OSM houses/water/roads via mocked Overpass and, later, live on the demo tile through the openstreetmap.fr mirror.
 
+## L. Splash 2026-11-14 (user request)
+- [x] `waterAt` lookup (sea / shore / lakes / rivers) on both terrains.
+- [x] Car: entry + plunge splash, bow spray, drag, wet grip, drowned engine, recovery to last dry ground.
+- [x] Foam wake in tracks.js, splash + wading audio, HUD WATER label; tests in `tests/splash.test.mjs`.
+
 ## K. UI simplification 2026-11-14 (user request)
 - [x] One route picker: minimap click → 2D map; off-road A* and typed `lat, lon` folded in.
 - [x] Removed 3-D route builder, OSRM coordinate panel, minimap double-click, CLEAR, 2D MAP / ROUTE BUILDER buttons.

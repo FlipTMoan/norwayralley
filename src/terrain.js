@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SEA_LEVEL, waterAt } from './water.js';
 import { clamp, hash2, lerp, smoothstep, triSample, utmForward, utmInverse } from './geo.js';
 import { carveProfile } from './corridor.js';
 
@@ -141,6 +142,12 @@ export function createTerrainModel({
     utmFromWorld: projection.utmFromWorld ? (x, z) => projection.utmFromWorld(x, z) : null,
     inside(x, z, margin = 0) {
       return Math.abs(x) <= sizeX / 2 - margin && Math.abs(z) <= sizeZ / 2 - margin;
+    },
+    /** OSM lakes/rivers of the tile (set once they have been fetched). */
+    waterBodies: null,
+    /** `{ depth, surface }` of the water at (x, z): sea, fjord shore, lakes, rivers. */
+    waterAt(x, z) {
+      return waterAt(this.waterBodies, this, x, z);
     },
     sample(x, z) {
       const u = ((x + sizeX / 2) / sizeX) * (grid - 1);
@@ -492,7 +499,7 @@ export function buildWater(terrain) {
     `,
   });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.y = 0.45;
+  mesh.position.y = SEA_LEVEL;
   mesh.renderOrder = 2;
   mesh.frustumCulled = false;
   mesh.userData.basePositions = base;
