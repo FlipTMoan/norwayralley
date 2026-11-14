@@ -787,7 +787,7 @@ export function buildRouteIndex(route, cell = 48) {
           }
         }
       }
-      return bi < 0 ? { distance: limit + cell, tangent: null } : { distance: best, tangent: tangentAt(bi) };
+      return bi < 0 ? { distance: limit + cell, tangent: null, roadY: null } : { distance: best, tangent: tangentAt(bi), roadY: route.samples[bi].roadY ?? route.samples[bi].y ?? null };
     },
     /** Distance to the nearest sample, capped at `limit` (returns > limit when farther). */
     distanceTo(x, z, limit = 40) {

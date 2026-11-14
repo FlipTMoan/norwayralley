@@ -9,7 +9,7 @@ import { slopedTerrain } from './road-physics.test.mjs';
 test('profile: flat shoulder to shoulder, a smooth blend to the cut-through edge, untouched beyond', () => {
   const { half, cut } = LANES.two; // 6.5 m road, 1 m shoulders, 16 m cut-through
   const flat = half + SHOULDER;
-  assert.equal(flat, 4.5);
+  assert.equal(flat, 5);
   assert.equal(profileHeight(100, 90, 0, half, cut), 100);
   assert.equal(profileHeight(100, 90, flat, half, cut), 100, 'flat out to the shoulder');
   const mid = profileHeight(100, 90, (flat + cut) / 2, half, cut);
@@ -20,7 +20,7 @@ test('profile: flat shoulder to shoulder, a smooth blend to the cut-through edge
   assert.equal(profileHeight(100, 90, cut, half, cut, 92), 92, 'rim at the smoothed edge height');
   assert.ok(Math.abs(profileHeight(100, 90, cut + 0.75, half, cut, 92) - 91) < 1e-9, 'feather halfway');
   const one = LANES.one;
-  assert.equal(one.half + SHOULDER, 2.5, 'single lane: 3 m + 1 m shoulders');
+  assert.equal(one.half + SHOULDER, 3, 'single lane: 3 m + 1.5 m shoulders');
   assert.equal(corridorReach(one.half, one.cut), 3 + 1.5, '6 m cut-through plus the feather');
 });
 
@@ -31,13 +31,14 @@ test('carveProfile keeps the carriageway exact and tucks the slopes under the ma
   const heights = base.slice();
   const samples = [];
   for (let z = -10; z <= 170; z += 5) samples.push({ x: 80, z, roadY: 114 }); // ground height at the centre line
-  carveProfile({ heights, base, x0: 0, z0: 0, cell, n }, [{ half: 3.25, cut: 8, samples }], { lift: 0 }); // two-lane: flat to 4.25 m, cut-through 8 m
+  carveProfile({ heights, base, x0: 0, z0: 0, cell, n }, [{ half: 3.25, cut: 8, samples }], { lift: 0 }); // flat to 3.25 + SHOULDER, cut-through 8 m
   const at = (x, z) => heights[(z / cell) * n + x / cell];
   const ground = (x) => 50 + 0.8 * x;
   assert.ok(Math.abs(at(80, 80) - 114) < 1e-6, 'centre line at road height');
-  assert.ok(Math.abs(at(84, 80) - 114) < 1e-6, 'shoulder flat (4 m < 4.25 m)');
+  assert.ok(Math.abs(at(84, 80) - 114) < 1e-6, 'shoulder flat (4 m inside the flat band)');
   // Low side, 6 m out: in the blend, halfway-ish between road and ground, minus the margin.
-  const s6 = (6 - 4.25) / 3.75;
+  const flatW = 3.25 + SHOULDER;
+  const s6 = (6 - flatW) / (8 - flatW);
   const blend6 = 114 + (ground(74) - 114) * (s6 * s6 * (3 - 2 * s6)) - CARVE_MARGIN;
   assert.ok(Math.abs(at(74, 80) - blend6) < 1e-3, `terrace blend ${at(74, 80)} vs ${blend6.toFixed(3)}`);
   // At the cut-through edge (8 m) the terrace meets the natural ground: no margin, no step.
@@ -111,8 +112,21 @@ test('carveProfile marks the road band and the slopes so meshes can colour them'
   carveProfile({ heights, base, x0: 0, z0: 0, cell, n, roadMask }, [line]);
   const at = (x, z) => roadMask[z * n + x];
   assert.equal(at(40, 40), 3, 'asphalt on the centre line');
-  assert.equal(at(40, 40 + 3 + Math.floor(SHOULDER)), 3, 'asphalt out to the shoulder');
+  assert.equal(at(40, 40 + 4), 3, 'asphalt out to the shoulder');
   assert.equal(at(40, 40 + 6), 4, 'terrace beside it');
   assert.equal(at(40, 40 + 8), 1, 'feather at the cut-through edge');
   assert.equal(at(40, 5), 0, 'untouched ground far away');
+});
+
+test('a terrace meets a crossing road at that road\'s surface instead of cutting across it', async () => {
+  const { buildCorridorGeometry, LANES } = await import('../src/corridor.js');
+  // Road B (along z) ends on road A (along x at z = 100). A sits in a 3 m cutting: ground 103, road 100.
+  const { half, cut } = LANES.one;
+  const samples = Array.from({ length: 21 }, (_, i) => ({ x: 0, z: i * 5, roadY: 100, edgeL: 103, edgeR: 103 }));
+  const roadAt = (x, z) => (Math.abs(z - 100) <= LANES.two.half + 1 ? 100 : null); // A's flat band
+  const withA = buildCorridorGeometry([{ half, cut, samples }], { sampleBase: () => 103, roadAt });
+  const without = buildCorridorGeometry([{ half, cut, samples }], { sampleBase: () => 103 });
+  const maxYNear = (geo) => { const p = geo.attributes.position; let m = -Infinity; for (let i = 0; i < p.count; i++) if (Math.abs(p.getZ(i) - 100) < 2) m = Math.max(m, p.getY(i)); return m; };
+  assert.ok(maxYNear(without) > 101.5, `without the rule B's terrace rises over A (${maxYNear(without).toFixed(2)})`);
+  assert.ok(maxYNear(withA) < 100.2, `with it B lies flush with A's surface (${maxYNear(withA).toFixed(2)})`);
 });

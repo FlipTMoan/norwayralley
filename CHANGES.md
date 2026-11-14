@@ -23,6 +23,17 @@ _Updated 2026-11-14._
   demo tile). The footprints stay in the collision index, so a hidden house
   cannot be driven through either once you reach it (it appears first).
 
+### Fixed — junctions smooth in every direction
+- A road's terrace sides used to run on over a crossing or joining road and
+  blend to the natural ground under it, which showed as wedges and cut lines
+  across the junction (worst where the other road sits in a cutting). Rim
+  heights now take the other road's surface where one lies at the
+  cut-through edge, and the terrace mesh lies flush under any other road's
+  flat band (`roadAt`, OSM roads and the stage route alike), so terraces
+  meet crossing roads at their surface. Test in `tests/corridor.test.mjs`.
+- Shoulders widened to 1.5 m (two-lane: 7 m + 1.5 m shoulders; single-lane:
+  3 m + 1.5 m shoulders, filling its 6 m cut-through).
+
 ### Changed — minimap holds still, re-centres at the halfway mark
 - The minimap window no longer follows the car every frame: it stays put
   while the car moves inside its inner half and jumps to re-centre once the

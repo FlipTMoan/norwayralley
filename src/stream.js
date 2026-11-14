@@ -8,7 +8,7 @@ import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './land
 import { buildChunkWater, waterAt } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
-import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights, assignEdgeHeights, ASPHALT_HEX, GRAVEL_HEX, LANES } from './corridor.js';
+import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights, assignEdgeHeights, ASPHALT_HEX, GRAVEL_HEX, LANES, SHOULDER } from './corridor.js';
 import { createFineTiles } from './fine.js';
 import { logger } from './log.js';
 
@@ -922,6 +922,17 @@ export async function createStreamingWorld({
     maxH = Math.max(maxH, hi);
   }
 
+  /** Carriageway height of whichever road's flat band covers (x, z): OSM roads or the stage route; null off-road. */
+  function roadSurfaceAt(x, z) {
+    const q = world.roads.nearest(x, z, 10);
+    if (q.roadY != null && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
+    if (world.route && world.routeIndex?.nearest) {
+      const r = world.routeIndex.nearest(x, z, 10);
+      if (r.roadY != null && r.distance <= world.route.roadWidth + SHOULDER) return r.roadY;
+    }
+    return null;
+  }
+
   /** The 1 m corridor mesh (embankments / cuttings) for near chunks. */
   function refreshChunkCorridor(chunk) {
     if (chunk.corridorMesh) {
@@ -940,6 +951,7 @@ export async function createStreamingWorld({
       tint: chunk.cover ? (x, z, c) => tintByCover(chunk.cover, x, z, c) : null,
       lift: ROAD_LIFT,
       maxVertices: 140000,
+      roadAt: (x, z) => roadSurfaceAt(x, z),
     });
     const mesh = corridorMesh(geometry);
     if (mesh) {

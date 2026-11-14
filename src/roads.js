@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
-import { carveProfile, smoothRoadHeights, assignEdgeHeights, LANES } from './corridor.js';
+import { carveProfile, smoothRoadHeights, assignEdgeHeights, LANES, SHOULDER } from './corridor.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cachedJson } from './cache.js';
 
@@ -134,7 +134,17 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
     // in every copy: the way is resampled from its first node every time).
     // New stretches are eased onto the known ones instead of stepping.
     samples.forEach((p, i) => { p.roadY = smooth[i]; });
-    assignEdgeHeights(samples, cut, (x, z) => ground.call(terrain, x, z));
+    // Rim heights: another road's surface where one lies at the cut-through
+    // edge (a junction or a parallel road), the natural ground otherwise.
+    const net = terrain.roads;
+    const rimGround = (x, z) => {
+      if (net?.nearest) {
+        const q = net.nearest(x, z, 10);
+        if (q.roadY != null && q.id !== road.id && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
+      }
+      return ground.call(terrain, x, z);
+    };
+    assignEdgeHeights(samples, cut, rimGround);
     // Junctions and crossings: wherever this way meets a road that is already
     // in the network (its own ends, T-junctions, crossings), ease its height
     // onto that road over 60 m either side, so roads meet without a step and

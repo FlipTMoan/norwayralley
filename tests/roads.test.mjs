@@ -44,7 +44,7 @@ test('carvePolylines carves the engineered profile into a grid', () => {
   assert.ok(touched > 0);
   const at = (x, z) => heights[(z / cell) * n + x / cell];
   assert.ok(Math.abs(at(128, 100) - 70.12) < 1e-4, 'centre at road height');
-  assert.ok(Math.abs(at(124, 100) - 70.12) < 1e-4 && Math.abs(at(132, 100) - 70.12) < 1e-4, 'flat shoulder to shoulder (4 m < 4.25 m)');
+  assert.ok(Math.abs(at(124, 100) - 70.12) < 1e-4 && Math.abs(at(132, 100) - 70.12) < 1e-4, 'flat shoulder to shoulder (4 m inside the flat band)');
   assert.ok(Math.abs(at(120, 100) - (50 + 120 / 8)) < 1e-3, `terrace meets the ground at the cut-through edge ${at(120, 100)}`);
   assert.ok(Math.abs(at(136, 100) - (50 + 136 / 8)) < 1e-3, `… on the high side too ${at(136, 100)}`);
   assert.equal(at(200, 100), 50 + 50 * 0.5, 'untouched beyond the reach');

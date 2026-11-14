@@ -21,7 +21,7 @@ import { terrainColor } from './terrain.js';
  *   - the car's `groundAt()` evaluates it for its wheels.
  */
 
-export const SHOULDER = 1.0;          // flat shoulder beyond the carriageway's half width
+export const SHOULDER = 1.5;          // flat shoulder beyond the carriageway's half width
 export const RIBBON_SHOULDER = SHOULDER; // the road ribbon (stage.js) covers the shoulder too
 export const FEATHER = 1.5;           // metres beyond the cut-through edge to meet the untouched ground
 export const CARVE_MARGIN = 0.3;      // coarse heights sit this far under the fine terrace
@@ -30,8 +30,8 @@ export const ASPHALT_HEX = 0x4b4d4f;  // colour of the carved road band in the g
 export const GRAVEL_HEX = 0x7d7769;
 /** Road classes: carriageway half width and cut-through half width (metres). */
 export const LANES = {
-  two: { half: 3.5, cut: 8 },    // normal two-lane road: 7 m + 1 m shoulders, 16 m cut-through
-  one: { half: 1.5, cut: 3 },    // single lane: 3 m + 1 m shoulders, 6 m cut-through
+  two: { half: 3.5, cut: 8 },    // normal two-lane road: 7 m + 1.5 m shoulders, 16 m cut-through
+  one: { half: 1.5, cut: 3 },    // single lane: 3 m + 1.5 m shoulders = the whole 6 m cut-through
 };
 
 /** Half width of the flat part: carriageway plus shoulder. */
@@ -227,11 +227,15 @@ const ROCK = new THREE.Color(0x6b6a66);
 const ROCK_DARK = new THREE.Color(0x56554f);
 
 /**
- * Build the 1 m corridor mesh for one or more road lines.
+ * Build the terrace mesh for one or more road lines.
  * `sampleBase(x, z)` is the natural ground, `tint(x, z, color)` an optional
- * land-cover tint. A vertex budget widens the station step on long roads.
+ * land-cover tint, and `roadAt(x, z)` (optional) returns the carriageway
+ * height of any road whose flat band covers (x, z), or null: a terrace then
+ * meets a crossing or joining road at that road's surface instead of
+ * running on over it and blending to the ground underneath. A vertex budget
+ * widens the station step on long roads.
  */
-export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = ROAD_LIFT, maxVertices = 160000 } = {}) {
+export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = ROAD_LIFT, maxVertices = 160000, roadAt = null } = {}) {
   const usable = lines.filter((l) => l && l.samples && l.samples.length >= 2);
   if (!usable.length) return null;
   // One surface per place: the ribbon draws the carriageway and the shoulder,
@@ -276,13 +280,20 @@ export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = R
       const nx = -tz;
       const nz = tx;
       const roadY = p.roadY + lift;
+      // Rims: where another road's flat band lies at the cut-through edge,
+      // the terrace blends to that road's surface instead of the ground.
+      const rimRoadL = roadAt ? roadAt(p.x + nx * cutHalf, p.z + nz * cutHalf) : null;
+      const rimRoadR = roadAt ? roadAt(p.x - nx * cutHalf, p.z - nz * cutHalf) : null;
       for (const off of offsets) {
         const d = Math.abs(off);
         const x = p.x + nx * off;
         const z = p.z + nz * off;
         const ground = sampleBase(x, z);
-        const edge = off >= 0 ? p.edgeL : p.edgeR;
-        const y = profileHeight(roadY, ground, d, half, cut, edge);
+        const onRoad = roadAt ? roadAt(x, z) : null;
+        const rimRoad = off >= 0 ? rimRoadL : rimRoadR;
+        const edge = rimRoad != null ? rimRoad + lift : (off >= 0 ? p.edgeL : p.edgeR);
+        // On another road's flat band the terrace lies flush under its ribbon.
+        const y = onRoad != null ? onRoad + lift : profileHeight(roadY, ground, d, half, cut, edge);
         positions.push(x, y + (d <= shoulder ? 0.02 : 0.04), z);
         const diff = y - ground;
         if (d <= shoulder) color.copy(EARTH);
