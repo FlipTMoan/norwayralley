@@ -184,6 +184,11 @@ builder still works only inside the loaded world.
   decimated) chosen by distance to the car, with vertical skirts hiding LOD
   seams. The car still drives on the full-resolution height field, and all LOD
   geometry is built up front so switching detail never causes a hitch.
+- **Local cache**: every elevation tile, Overpass answer, NVDB sign and
+  surface record, SR16 forest image, OSRM route and map tile is kept in the
+  browser's IndexedDB, up to 10 GB with least-recently-used eviction, so a
+  place you have driven loads from disk and still works when a service is
+  down. The start screen shows the size and has a CLEAR button.
 - **Carved roads**: the route is stamped into the shared height field before
   the terrain mesh is rebuilt, so the visible surface, the gravel ribbon and
   the physics agree on where the road is. Road heights are graded (three

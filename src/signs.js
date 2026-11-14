@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { logger } from './log.js';
+import { cachedJson } from './cache.js';
 import { utmForward, utmInverse } from './geo.js';
 
 /**
@@ -74,9 +75,7 @@ async function fetchObjects(typeId, kartutsnitt, signal) {
   let url = `${NVDB_BASE}/${typeId}?kartutsnitt=${kartutsnitt}&srid=5973&inkluder=geometri,egenskaper,lokasjon&antall=1000`;
   const objects = [];
   for (let page = 0; page < MAX_PAGES && url; page++) {
-    const response = await fetch(url, { headers: NVDB_HEADERS, signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status} (type ${typeId})`);
-    const data = await response.json();
+    const data = await cachedJson(url, { headers: NVDB_HEADERS }, { kind: 'nvdb', signal });
     const batch = data.objekter || [];
     if (!batch.length) break;
     objects.push(...batch);

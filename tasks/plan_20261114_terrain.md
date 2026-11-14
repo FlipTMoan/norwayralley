@@ -25,14 +25,14 @@ User requests (in order received):
 - [x] `smoothRoadHeights` in corridor.js, used by stage/stream/roads.
 
 ### Commit 2 — local cache (`src/cache.js`)
-- [ ] IndexedDB store keyed by URL/kind, values ArrayBuffer/JSON/Blob, with
+- [x] IndexedDB store keyed by URL/kind, values ArrayBuffer/JSON/Blob, with
       size accounting and LRU eviction at a 10 GB budget; `navigator.storage.persist()`.
-- [ ] Wrap: Kartverket DEM GeoTIFFs (worldgen.fetchDem), Overpass chunk
+- [x] Wrap: Kartverket DEM GeoTIFFs (worldgen.fetchDem), Overpass chunk
       JSON (buildings.js), NVDB signs + surfaces (signs.js, roads.js), SR16
       WMS images (landcover.js), OSRM answers (stage.js), Leaflet OSM tiles
       (custom tile layer in map.js).
-- [ ] Stale-while-offline: a cached answer is used when the network fails.
-- [ ] Settings line on the start screen: cache size + CLEAR.
+- [x] Stale-while-offline: a cached answer is used when the network fails.
+- [x] Settings line on the start screen: cache size + CLEAR.
 
 ### Commit 3 — fine tiles (`src/fine.js`)
 - [ ] 170.67 m tiles (16 coarse cells) at 1 m from the same WCS, chosen along

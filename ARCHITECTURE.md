@@ -52,6 +52,7 @@ flowchart LR
 | `signs.js` | NVDB (Statens vegvesen) sign plates and speed limits → textured plates on posts along the route. |
 | `roads.js` | OSM `highway=*` per chunk: carve into the heights, tarmac/gravel ribbons, `RoadNetwork` (48 m buckets) answering `nearest(x, z)` for the car, trees, houses and signs. In free drive the network is the car's route. |
 | `map.js` | The route map (Leaflet over OSM tiles): pins by click or typed `lat, lon`, route-by select (OSRM profiles or off-road A*), FREE DRIVE. The only route picker; opened from the minimap. |
+| `cache.js` | IndexedDB cache (10 GB budget, LRU) in front of every geodata fetch: DEM, Overpass, NVDB, SR16, OSRM, map tiles. |
 | `retro.js` | Low-resolution render target with scanlines and dithering. |
 
 ## Data sources

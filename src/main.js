@@ -23,6 +23,7 @@ import { TrackMarks } from './tracks.js';
 import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
+import { cache, requestPersistence } from './cache.js';
 import { createStreamingWorld } from './stream.js';
 import { generateTerrain, isInNorway } from './worldgen.js';
 import { logger, initErrorLogging, dumpLog, PerfMonitor } from './log.js';
@@ -1847,6 +1848,27 @@ const mapPicker = createMapPicker({
   },
 });
 
+/** "Local cache: 1.2 GB of 10 GB · 843 entries" on the start screen. */
+async function refreshCacheInfo() {
+  const el = $('cacheInfo');
+  if (!el) return;
+  try {
+    const s = await cache.stats();
+    const gb = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)} GB` : `${(b / 1048576).toFixed(0)} MB`);
+    el.textContent = `Local cache: ${gb(s.bytes)} of ${gb(s.budget)} · ${s.entries} entries`;
+  } catch {
+    el.textContent = 'Local cache: unavailable';
+  }
+}
+requestPersistence();
+refreshCacheInfo();
+window.addEventListener('focus', refreshCacheInfo);
+$('cacheClear').addEventListener('click', async () => {
+  await cache.clear();
+  refreshCacheInfo();
+  toast('Local cache cleared.');
+});
+
 $('gearboxBtn').addEventListener('click', () => setGearbox(!gearboxAuto));
 $('carBtn').addEventListener('click', () => setCarKind(carKind === 'porsche' ? 'buggy' : 'porsche'));
 $('friendsBtn').addEventListener('click', () => {
@@ -2047,6 +2069,7 @@ window.__rally = {
   get session() { return session; },
   setSlide: (mode) => setSlideMode(mode),
   mapPicker,
+  cache,
   toggleDebug,
   dumpLog,
   perf,

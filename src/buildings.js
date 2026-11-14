@@ -17,6 +17,8 @@ import { logger } from './log.js';
  * with a few InstancedMeshes (walls + gabled roofs), so a village is cheap.
  */
 
+import { cache } from './cache.js';
+
 const log = logger('buildings');
 
 const OVERPASS_ENDPOINTS = [
@@ -84,8 +86,12 @@ export const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary', 'terti
  * when the service is unreachable).
  */
 export function fetchOsmChunk(bbox) {
-  if (overpassBlocked()) return Promise.resolve(null);
-  return withSlot(() => fetchOsmChunkNow(bbox));
+  const key = `overpass:${[bbox.minLat, bbox.minLon, bbox.maxLat, bbox.maxLon].map((v) => v.toFixed(5)).join(',')}`;
+  return cache.fetch(key, async () => {
+    if (overpassBlocked()) return null;
+    const elements = await withSlot(() => fetchOsmChunkNow(bbox));
+    return elements; // null (nothing answered) is not cached
+  }, { kind: 'osm' }).then((elements) => (elements ? parseElements(elements) : null));
 }
 
 /** One POST to one mirror; resolves to the parsed features or throws. */
@@ -100,7 +106,7 @@ async function askMirror(endpoint, query, timeoutMs, controller = new AbortContr
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    return parseElements(data.elements || []);
+    return data.elements || [];
   } finally {
     clearTimeout(timer);
   }

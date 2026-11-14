@@ -1,5 +1,6 @@
 import { clamp, hash2, utmForward } from './geo.js';
 import { logger } from './log.js';
+import { cache } from './cache.js';
 
 /**
  * Land cover for one square of the world, on a coarse cell grid (16 m):
@@ -224,9 +225,11 @@ export function sr16Url(layer, { minE, maxE, minN, maxN }, width, height) {
 
 /** Fetch one WMS tile and return its RGBA pixels (browser only). */
 async function fetchPixels(url, width, height, signal) {
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const blob = await response.blob();
+  const blob = await cache.fetch(url, async () => {
+    const response = await fetch(url, { signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.blob();
+  }, { kind: 'sr16' });
   const bitmap = await createImageBitmap(blob);
   const canvas = typeof OffscreenCanvas !== 'undefined'
     ? new OffscreenCanvas(width, height)

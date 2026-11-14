@@ -8,6 +8,7 @@ import { listRoutes, saveRoute, deleteRoute, describeSaved } from './saved.js';
 // gbOpen ADM0, CC BY 4.0; simplified to ~1 km). Svalbard and Jan Mayen are
 // outside the game's box and left out.
 import NORWAY_RINGS from './norway-outline.json';
+import { cache } from './cache.js';
 
 /**
  * 2D route picker (Phase 2 of the V3 plan).
@@ -23,6 +24,27 @@ const log = logger('map');
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+/** OSM tiles served through the local cache (a blob URL per tile). */
+const CachedTileLayer = L.TileLayer.extend({
+  createTile(coords, done) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.setAttribute('role', 'presentation');
+    const url = this.getTileUrl(coords);
+    cache.fetch(url, async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.blob();
+    }, { kind: 'tile' }).then((blob) => {
+      const objectUrl = URL.createObjectURL(blob);
+      img.onload = () => { URL.revokeObjectURL(objectUrl); done(null, img); };
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); done(new Error('tile decode failed'), img); };
+      img.src = objectUrl;
+    }).catch((error) => done(error, img));
+    return img;
+  },
+});
 
 function markerIcon(label, color) {
   return L.divIcon({
@@ -140,7 +162,7 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
       maxBounds: norway.pad(0.02),
       maxBoundsViscosity: 1.0,
     }).setView([64.5, 12], 4);
-    L.tileLayer(TILE_URL, { attribution: ATTRIBUTION, maxZoom: 19, bounds: norway }).addTo(map);
+    new CachedTileLayer(TILE_URL, { attribution: ATTRIBUTION, maxZoom: 19, bounds: norway }).addTo(map);
     const mask = L.polygon(
       [[[-89, -180], [89, -180], [89, 180], [-89, 180]], ...NORWAY_RINGS],
       { stroke: false, fillColor: '#0b100d', fillOpacity: 0.78, interactive: false, fillRule: 'evenodd' },

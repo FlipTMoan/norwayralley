@@ -17,6 +17,18 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Added — a 10 GB local cache for everything fetched
+- `cache.js`: an IndexedDB store (ArrayBuffer / Blob / JSON) with a byte
+  budget (10 GB) and least-recently-used eviction; parallel asks for one key
+  share a single load; failures are never cached; the browser is asked for
+  persistent storage. Wrapped: Kartverket DEM GeoTIFFs, Overpass chunk
+  answers (keyed by bbox, whichever mirror answered), NVDB signs and road
+  surfaces, SR16 forest images, OSRM routes and nearest-road answers, and
+  the 2D map's OSM tiles (a cached tile layer). A place visited once loads
+  from disk afterwards and keeps working while a service is down.
+- Start screen shows "Local cache: … of 10 GB · n entries" with CLEAR.
+  `tests/cache.test.mjs`.
+
 ### Changed — graded roads, stage on the map, longer streaming reach
 - **Smoother roads.** Road heights (stage routes, streamed routes and OSM
   roads alike) are now graded with `smoothRoadHeights`: three passes of a

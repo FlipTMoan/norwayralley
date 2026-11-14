@@ -1,6 +1,7 @@
 import { clamp, haversine, localProjection } from './geo.js';
 import { createTerrainModel } from './terrain.js';
 import { logger } from './log.js';
+import { cache } from './cache.js';
 
 /**
  * On-demand world generation for the whole of Norway.
@@ -128,7 +129,12 @@ function demCoverageUrl(bbox, grid) {
   return `${WCS_URL}?${params.toString()}`;
 }
 
-async function download(url, onProgress) {
+/** Download a DEM once; afterwards it comes from the local cache. */
+function download(url, onProgress) {
+  return cache.fetch(url, () => downloadNow(url, onProgress), { kind: 'dem' });
+}
+
+async function downloadNow(url, onProgress) {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Kartverket elevation service answered HTTP ${response.status}.`);

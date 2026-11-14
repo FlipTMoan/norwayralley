@@ -31,9 +31,13 @@ test('a hanging first mirror does not delay houses: the mirrors race and the win
   assert.equal(overpassState().preferred, fast);
   assert.equal(calls.length, 4, 'all four mirrors were raced the first time');
 
-  const second = await fetchOsmChunk(bbox);
+  const again = await fetchOsmChunk(bbox);
+  assert.equal(again.buildings.length, 1);
+  assert.equal(calls.length, 4, 'the same chunk again comes from the local cache, no request at all');
+
+  const second = await fetchOsmChunk({ ...bbox, minLat: 59.02, maxLat: 59.04 });
   assert.equal(second.buildings.length, 1);
-  assert.equal(calls.length, 5, 'the second query went to the remembered mirror only');
+  assert.equal(calls.length, 5, 'a new chunk went to the remembered mirror only');
   assert.equal(calls[4], fast);
   assert.deepEqual(overpassState().down, [], 'losers cancelled by the winner are not marked down');
 });

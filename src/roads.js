@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
 import { carveProfile, smoothRoadHeights } from './corridor.js';
+import { cachedJson } from './cache.js';
 
 /**
  * Real roads from OpenStreetMap for the streamed world.
@@ -286,9 +287,12 @@ export async function fetchRoadSurfaces({ minLat, minLon, maxLat, maxLon }, { ti
   try {
     let url = `${NVDB_SURFACE_URL}?kartutsnitt=${minE.toFixed(0)},${minN.toFixed(0)},${maxE.toFixed(0)},${maxN.toFixed(0)}&srid=5973&inkluder=geometri,egenskaper&antall=1000`;
     for (let page = 0; url && page < 10; page++) {
-      const response = await fetch(url, { headers: { 'X-Client': 'norwayralley', Accept: 'application/json' }, signal: controller.signal });
-      if (!response.ok) break;
-      const data = await response.json();
+      let data;
+      try {
+        data = await cachedJson(url, { headers: { 'X-Client': 'norwayralley', Accept: 'application/json' } }, { kind: 'nvdb', signal: controller.signal });
+      } catch {
+        break;
+      }
       const objects = data.objekter || [];
       for (const o of objects) {
         const prop = (o.egenskaper || []).find((e) => e.id === MASSETYPE);

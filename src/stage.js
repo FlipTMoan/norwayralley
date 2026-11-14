@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
 import { smoothRoadHeights, meanSpacing } from './corridor.js';
+import { cache } from './cache.js';
 
 /** How far the gravel ribbon floats above the carved ground. The car rides on
  *  the ribbon, so car.js adds the same offsets when it is on the road. */
@@ -563,9 +564,13 @@ export async function fetchOsrmNearest({ lat, lon }, { profile = 'driving' } = {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(`${base}/${lon},${lat}?number=1`, { signal: controller.signal });
-    if (!response.ok) return null;
-    const data = await response.json();
+    const nearestUrl = `${base}/${lon},${lat}?number=1`;
+    const data = await cache.fetch(nearestUrl, async () => {
+      const response = await fetch(nearestUrl, { signal: controller.signal });
+      if (!response.ok) return null;
+      return response.json();
+    }, { kind: 'osrm' });
+    if (!data) return null;
     const wp = data.waypoints?.[0];
     if (data.code !== 'Ok' || !wp?.location) return null;
     const snapped = { lat: wp.location[1], lon: wp.location[0], name: wp.name || null, snapped: wp.distance ?? 0 };
@@ -595,21 +600,23 @@ export async function fetchOsrmNearest({ lat, lon }, { profile = 'driving' } = {
 export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
   const base = OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving;
   const url = `${base}/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=false`;
-  let response;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
-  try {
-    response = await fetch(url, { signal: controller.signal });
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw new Error('OSRM took too long to answer. Choose off-road routing, or try again.');
+  const data = await cache.fetch(url, async () => {
+    let response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      response = await fetch(url, { signal: controller.signal });
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('OSRM took too long to answer. Choose off-road routing, or try again.');
+      }
+      throw new Error('OSRM could not be reached. Check the connection, or choose off-road routing.');
+    } finally {
+      clearTimeout(timeout);
     }
-    throw new Error('OSRM could not be reached. Check the connection, or choose off-road routing.');
-  } finally {
-    clearTimeout(timeout);
-  }
-  if (!response.ok) throw new Error(`OSRM did not answer (HTTP ${response.status}).`);
-  const data = await response.json();
+    if (!response.ok) throw new Error(`OSRM did not answer (HTTP ${response.status}).`);
+    return response.json();
+  }, { kind: 'osrm' });
   if (data.code !== 'Ok' || !data.routes?.length) {
     throw new Error(data.message || 'OSRM found no route between those coordinates.');
   }
