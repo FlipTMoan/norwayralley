@@ -24,7 +24,7 @@ import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
 import { cache, requestPersistence } from './cache.js';
-import { shareUrl, parseShare } from './share.js';
+import { shareUrl, parseShare, copyText } from './share.js';
 import { createStreamingWorld } from './stream.js';
 import { generateTerrain, isInNorway } from './worldgen.js';
 import { logger, initErrorLogging, dumpLog, PerfMonitor } from './log.js';
@@ -1850,6 +1850,7 @@ const mapPicker = createMapPicker({
   onSave: () => describeRoute(),
   onLoad: (described) => applyDescribedRoute(described, { from: 'saved' }),
   onShare: () => currentShareUrl(),
+  onSharePosition: () => currentPositionUrl(),
   onFreeDrive: async ({ a }) => {
     try {
       await enterFreeDrive(a);
@@ -1951,6 +1952,26 @@ function currentShareUrl() {
   }
   return shareUrl(described, { profile: lastOsrmProfile });
 }
+
+/** A link that starts a free drive where the car stands now, or null before a drive. */
+function currentPositionUrl() {
+  if (!car || !terrain?.latLonFromWorld) return null;
+  return shareUrl({ kind: 'free', center: terrain.latLonFromWorld(car.pos.x, car.pos.z) });
+}
+
+/** HUD share buttons: copy the link and say so in a toast. */
+async function shareFromHud(getUrl, missing) {
+  const url = getUrl();
+  if (!url) {
+    toast(missing, 'error');
+    return;
+  }
+  const copied = await copyText(url);
+  toast(copied ? 'Link copied to the clipboard.' : `Share this link: ${url}`);
+  log.info(`share link ${url}`);
+}
+document.getElementById('shareRouteBtn')?.addEventListener('click', () => shareFromHud(currentShareUrl, 'Nothing to share yet: drive a stage or free drive first.'));
+document.getElementById('sharePositionBtn')?.addEventListener('click', () => shareFromHud(currentPositionUrl, 'No position yet: start a drive first.'));
 
 /** `?route=…` / `?drive=…` in the address: drive what the link describes once the world is up. */
 async function applySharedLink() {
@@ -2171,6 +2192,8 @@ window.__rally = {
   leaveRoom,
   get session() { return session; },
   setSlide: (mode) => setSlideMode(mode),
+  shareUrl: () => currentShareUrl(),
+  positionUrl: () => currentPositionUrl(),
   mapPicker,
   cache,
   toggleDebug,

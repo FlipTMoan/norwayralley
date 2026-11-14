@@ -98,11 +98,14 @@ country. It shows Norway only: it cannot be panned or zoomed out beyond the
 country, and every other country and the open sea are shaded (national
 outline from geoBoundaries, CC BY 4.0).
 
-**Share a drive.** **SHARE LINK** in the map footer copies a link that
-rebuilds the current drive for anyone who opens it: `?route=osrm:LAT,LON;LAT,LON;PROFILE`
-re-asks OSRM for the road between the two points, `?route=demo:LAT,LON;LAT,LON`
-routes the demo mountain's own A\* stage, and `?drive=LAT,LON` starts a free
-drive there. The link loads as soon as the game is up; press START ENGINE.
+**Share a drive or a spot.** **SHARE ROUTE** (map footer and STAGE panel)
+copies a link that rebuilds the current drive for anyone who opens it:
+`?route=osrm:LAT,LON;LAT,LON;PROFILE` re-asks OSRM for the road between the
+two points, `?route=demo:LAT,LON;LAT,LON` routes the demo mountain's own A\*
+stage, and `?drive=LAT,LON` starts a free drive there. **SHARE POSITION**
+copies a `?drive=` link to the exact spot your car stands on, so a friend can
+start a free drive right there. Links load as soon as the game is up; press
+START ENGINE. If the browser refuses the clipboard the link is shown instead.
 
 **Saved routes.** The second row of the map footer keeps a named list on
 this device: type a name and press **SAVE CURRENT** to store the stage or

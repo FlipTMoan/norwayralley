@@ -3,7 +3,8 @@
  * the other side: `?route=osrm:LAT,LON;LAT,LON;PROFILE` re-asks OSRM for the
  * road between the two points, `?route=demo:LAT,LON;LAT,LON` routes the
  * game's own A* on the demo mountain, and `?drive=LAT,LON` starts a free
- * drive there. Coordinates are rounded to 5 decimals (about a metre).
+ * drive there (also how a car position is shared). Coordinates are rounded
+ * to 5 decimals (about a metre).
  */
 
 const num = (v) => Number(v.toFixed(5));
@@ -60,4 +61,14 @@ export function parseShare(search) {
   }
   if (kind === 'demo') return { kind: 'demo', a, b };
   return null;
+}
+
+/** Copy text to the clipboard; false when the browser refuses (show the text instead). */
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }

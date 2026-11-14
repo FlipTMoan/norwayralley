@@ -9,6 +9,7 @@ import { listRoutes, saveRoute, deleteRoute, describeSaved } from './saved.js';
 // outside the game's box and left out.
 import NORWAY_RINGS from './norway-outline.json';
 import { cache } from './cache.js';
+import { copyText } from './share.js';
 
 /**
  * 2D route picker (Phase 2 of the V3 plan).
@@ -56,7 +57,7 @@ function markerIcon(label, color) {
   });
 }
 
-export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null, onShare = null }) {
+export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null, onShare = null, onSharePosition = null }) {
   const root = document.getElementById('mapPicker');
   const mapEl = document.getElementById('mapCanvas');
   const statusEl = document.getElementById('mapStatus');
@@ -71,7 +72,8 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
   const deleteBtn = document.getElementById('mapDelete');
   const saveNameEl = document.getElementById('mapSaveName');
   const saveBtn = document.getElementById('mapSave');
-  const shareBtn = document.getElementById('mapShare');
+  const shareBtn = document.getElementById('mapShareRoute');
+  const sharePosBtn = document.getElementById('mapSharePosition');
   if (!root || !mapEl) log.error('map picker DOM is missing');
   let map = null;
   let boundsRect = null;
@@ -417,17 +419,18 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
     setStatus(`Saved "${entry.name}". Pick it from SAVED ROUTES any time.`, 'ok');
     log.info(`saved route "${entry.name}" (${described.kind})`);
   });
-  shareBtn?.addEventListener('click', async () => {
-    const url = onShare?.();
+  const shareWith = async (getUrl, missing) => {
+    const url = getUrl?.();
     if (!url) {
-      setStatus('Nothing to share yet: drive a stage or free drive first.', 'err');
+      setStatus(missing, 'err');
       return;
     }
-    let copied = false;
-    try { await navigator.clipboard.writeText(url); copied = true; } catch { /* no clipboard permission: the link is shown below */ }
+    const copied = await copyText(url);
     setStatus(`${copied ? 'Link copied: ' : 'Share this link: '}${url}`, 'ok');
     log.info(`share link ${url}`);
-  });
+  };
+  shareBtn?.addEventListener('click', () => shareWith(onShare, 'Nothing to share yet: drive a stage or free drive first.'));
+  sharePosBtn?.addEventListener('click', () => shareWith(onSharePosition, 'No position yet: start a drive first.'));
   deleteBtn?.addEventListener('click', () => {
     const name = savedEl?.value;
     if (!name) return;

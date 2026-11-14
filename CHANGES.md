@@ -29,8 +29,16 @@ _Updated 2026-11-14._
   3 loose (arcade drift). The buggy's planted tuning applies at 0 and 1.
   `window.__rally.setSlide(0–3)`.
 
+### Added — share buttons for routes and positions
+- **SHARE ROUTE** and **SHARE POSITION** buttons in the map footer and in
+  the STAGE panel while driving. SHARE ROUTE copies the link for the
+  current stage or free drive; SHARE POSITION copies a `?drive=LAT,LON`
+  link to the car's current spot. The HUD buttons confirm with a toast
+  (showing the link when the clipboard is blocked).
+  `window.__rally.shareUrl()` / `positionUrl()`.
+
 ### Added — share a drive as a link
-- `share.js`: **SHARE LINK** in the map footer copies a link
+- `share.js`: **SHARE LINK** (now SHARE ROUTE) in the map footer copies a link
   (`?route=osrm:LAT,LON;LAT,LON;PROFILE`, `?route=demo:LAT,LON;LAT,LON` or
   `?drive=LAT,LON`) that rebuilds the stage or free drive on the other
   side once the game has loaded (OSRM re-routes between the endpoints, the
