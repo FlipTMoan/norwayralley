@@ -18,7 +18,7 @@ test('prepareChunkRoads clips, resamples and smooths a road', () => {
   assert.ok(s.length > 300, 'resampled at 5 m');
   const bumps = s.map((p) => Math.abs(p.roadY - (100 + 50))).reduce((a, b) => Math.max(a, b), 0);
   assert.ok(bumps < 0.2, `road height smoothed (max deviation ${bumps.toFixed(2)})`);
-  assert.equal(lines[0].half, 3.25, 'tertiary: two-lane carriageway');
+  assert.equal(lines[0].half, 3.5, 'tertiary: two-lane carriageway');
   assert.equal(lines[0].cut, 8, 'two-lane: 16 m cut-through');
   assert.ok(Number.isFinite(lines[0].samples[10].edgeL) && Number.isFinite(lines[0].samples[10].edgeR), 'rim heights assigned');
   assert.ok(lines[0].paved);
@@ -94,4 +94,67 @@ test('copies of one way prepared by two chunks share the same heights where they
   // Where chunk B extends beyond A's copy, the heights ease away without a step.
   const sb = b[0].samples;
   for (let i = 1; i < sb.length; i++) assert.ok(Math.abs(sb[i].roadY - sb[i - 1].roadY) < 0.6, `step of ${(sb[i].roadY - sb[i - 1].roadY).toFixed(2)} m at ${i}`);
+});
+
+test('a road crossing the stage keeps going, the stage road\'s OSM twin is cut, junctions meet without a step', async () => {
+  const { buildRouteIndex, makeRoute } = await import('../src/stage.js');
+  const { prepareChunkRoads: prep, RoadNetwork: Net } = await import('../src/roads.js');
+  const flat = { worldFromLatLon: (lat, lon) => ({ x: (lon - 6) * 100000, z: (59 - lat) * 100000 }), sample: () => 100, sampleBaseCoarse: () => 100 };
+  const toLL = (x, z) => ({ lat: 59 - z / 100000, lon: 6 + x / 100000 });
+  // Stage road along x at z = 500.
+  const stage = makeRoute([{ x: -200, z: 500 }, { x: 2300, z: 500 }], flat, { roadWidth: 3.5, cutHalf: 8 });
+  const index = buildRouteIndex(stage);
+  const twin = { id: 1, kind: 'tertiary', points: [toLL(0, 502), toLL(1000, 502), toLL(2000, 502)] };
+  const crossing = { id: 2, kind: 'residential', points: [toLL(1000, 100), toLL(1000, 500), toLL(1000, 900)] };
+  const lines = prep([twin, crossing], flat, { x0: 0, z0: 0, size: 2048 }, { avoid: { index, distance: 12 } });
+  const ids = lines.map((l) => l.id);
+  assert.ok(!ids.includes(1), 'the parallel twin inside the band is gone');
+  const cross = lines.filter((l) => l.id === 2);
+  assert.equal(cross.length, 1, 'the crossing road is one unbroken run');
+  assert.ok(cross[0].samples.some((p) => Math.abs(p.z - 500) < 3), 'it passes over the stage road');
+
+  // Junction: way B ends on way A (already in the network) 1.6 m higher on its own ground.
+  const bumpy = { worldFromLatLon: flat.worldFromLatLon, sample: (x) => (x > 1500 ? 101.6 : 100), sampleBaseCoarse: (x) => (x > 1500 ? 101.6 : 100), roads: new Net(), roadHeights: new Map() };
+  const a = { id: 10, kind: 'tertiary', points: [toLL(1000, 1000), toLL(1800, 1000)] };
+  const la = prep([a], bumpy, { x0: 0, z0: 0, size: 2048 });
+  bumpy.roads.setChunk('c', la);
+  const b = { id: 11, kind: 'service', points: [toLL(1600, 1600), toLL(1600, 1000)] }; // ends on A at (1600, 1000)
+  const lb = prep([b], bumpy, { x0: 0, z0: 0, size: 2048 });
+  const endB = lb[0].samples[lb[0].samples.length - 1];
+  const onA = bumpy.roads.nearest(1600, 1000, 4);
+  assert.ok(Math.abs(endB.roadY - onA.roadY) < 0.05, `B meets A: ${endB.roadY.toFixed(2)} vs ${onA.roadY.toFixed(2)}`);
+  // Crossing: way C crosses A in the middle; at the crossing it takes A's height.
+  bumpy.roads.setChunk('d', lb);
+  const c = { id: 12, kind: 'service', points: [toLL(1700, 1300), toLL(1700, 700)] };
+  const lc = prep([c], bumpy, { x0: 0, z0: 0, size: 2048 });
+  const atCross = lc[0].samples.reduce((best, p) => (Math.abs(p.z - 1000) < Math.abs(best.z - 1000) ? p : best));
+  const aHere = bumpy.roads.nearest(1700, 1000, 4);
+  assert.ok(Math.abs(atCross.roadY - aHere.roadY) < 0.05, `C crosses A at A's height: ${atCross.roadY.toFixed(2)} vs ${aHere.roadY.toFixed(2)}`);
+  let worst = 0;
+  for (let i = 1; i < lc[0].samples.length; i++) worst = Math.max(worst, Math.abs(lc[0].samples[i].roadY - lc[0].samples[i - 1].roadY));
+  assert.ok(worst < 0.3, `no step along C (worst ${worst.toFixed(2)} m per 5 m)`);
+});
+
+test('OSM centrelines are smoothed into curves at bends while junction nodes stay put', async () => {
+  const { smoothWay, prepareChunkRoads: prep } = await import('../src/roads.js');
+  // A right-angle bend: the corner is cut into a curve.
+  const bend = [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 100, z: 100 }];
+  const curved = smoothWay(bend);
+  assert.ok(curved.length > 3);
+  assert.deepEqual(curved[0], { x: 0, z: 0 });
+  assert.deepEqual(curved[curved.length - 1], { x: 100, z: 100 });
+  const closest = Math.min(...curved.map((p) => Math.hypot(p.x - 100, p.z - 0)));
+  assert.ok(closest > 10, `corner cut by ${closest.toFixed(1)} m`);
+  // Pin the corner: it is kept exactly.
+  const pinnedCurve = smoothWay(bend, new Set([1]));
+  assert.ok(pinnedCurve.some((p) => p.x === 100 && p.z === 0), 'pinned corner kept');
+  // In a chunk: way B joins way A at A's middle node; A's node stays, so the junction still meets.
+  const flat = { worldFromLatLon: (lat, lon) => ({ x: (lon - 6) * 100000, z: (59 - lat) * 100000 }), sample: () => 100, sampleBaseCoarse: () => 100 };
+  const toLL = (x, z) => ({ lat: 59 - z / 100000, lon: 6 + x / 100000 });
+  const a = { id: 1, kind: 'tertiary', points: [toLL(0, 500), toLL(400, 500), toLL(400, 900), toLL(800, 900)] };
+  const b = { id: 2, kind: 'service', points: [toLL(400, 500), toLL(400, 100)] };
+  const lines = prep([a, b], flat, { x0: 0, z0: 0, size: 2048 });
+  const la = lines.find((l) => l.id === 1);
+  assert.ok(la.samples.some((p) => Math.hypot(p.x - 400, p.z - 500) < 0.6), 'A still passes through the junction node');
+  assert.ok(!la.samples.some((p) => Math.hypot(p.x - 400, p.z - 900) < 8), 'A\'s free corner is rounded');
 });

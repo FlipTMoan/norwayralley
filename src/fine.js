@@ -23,10 +23,10 @@ const log = logger('fine');
 
 export const FINE_BAND = 100;        // metres each side of a road
 export const TILE_CELLS = 16;        // coarse cells per tile side (16 × 10.67 m ≈ 171 m)
-const NEAR_FULL = 150;               // 1 m mesh inside this distance
-const MID_FULL = 400;                // 2 m mesh inside this, 3 m beyond
+const NEAR_FULL = 110;               // 1 m mesh inside this distance
+const MID_FULL = 300;                // 2 m mesh inside this, 3 m beyond
 const KEEP = 900;                    // dispose tiles farther than this from the car
-const MAX_LIVE = 30;                 // tiles held at once
+const MAX_LIVE = 24;                 // tiles held at once
 const MAX_CONCURRENT = 2;            // DEM downloads in flight (chunks have their own slots)
 const MAX_RETRIES = 3;
 const PICK_EVERY = 400;              // ms between tile selections
@@ -50,7 +50,17 @@ export function createFineTiles({
   let disposed = false;
 
   const keyOf = (ti, tj) => `${ti},${tj}`;
-  const tileAt = (x, z) => tiles.get(keyOf(Math.floor(x / SIZE), Math.floor(z / SIZE)));
+  // The car samples the ground hundreds of times a frame, mostly in one tile:
+  // remember the last lookup instead of building a key string every time.
+  let lastTi = NaN; let lastTj = NaN; let lastTile = null;
+  const tileAt = (x, z) => {
+    const ti = Math.floor(x / SIZE);
+    const tj = Math.floor(z / SIZE);
+    if (ti === lastTi && tj === lastTj && lastTile && lastTile.state !== 'disposed' && tiles.get(lastTile.key) === lastTile) return lastTile;
+    lastTi = ti; lastTj = tj;
+    lastTile = tiles.get(keyOf(ti, tj)) || null;
+    return lastTile;
+  };
   const rectDistance = (t, x, z) => Math.hypot(
     Math.max(t.x0 - x, 0, x - (t.x0 + SIZE)),
     Math.max(t.z0 - z, 0, z - (t.z0 + SIZE)),
@@ -281,12 +291,15 @@ export function createFineTiles({
     SIZE,
     N,
     STEP,
-    /** Per frame: where the car is, where it is heading, and road points near it. */
+    /** Per frame: where the car is and the road points near it (an array, or a function called only when picking). */
     update(fx, fz, points) {
       if (disposed) return;
       focus = { x: fx, z: fz };
       const t = now();
-      if (points && t - lastPick > PICK_EVERY) { lastPick = t; pick(points); }
+      if (points && t - lastPick > PICK_EVERY) {
+        lastPick = t;
+        pick(typeof points === 'function' ? points() : points);
+      }
       buildOne();
     },
     forcePick(points) { lastPick = -Infinity; this.update(focus.x, focus.z, points); },

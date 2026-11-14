@@ -761,8 +761,34 @@ export function buildRouteIndex(route, cell = 48) {
     if (!list) buckets.set(k, (list = []));
     list.push(i);
   });
+  const tangentAt = (i) => {
+    const a = route.samples[Math.max(0, i - 1)];
+    const b = route.samples[Math.min(route.samples.length - 1, i + 1)];
+    const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    return { x: (b.x - a.x) / l, z: (b.z - a.z) / l };
+  };
   return {
     cell,
+    /** Nearest sample within `limit`: `{ distance, tangent }` (distance > limit when none). */
+    nearest(x, z, limit = 40) {
+      const bx = Math.floor(x / cell);
+      const bz = Math.floor(z / cell);
+      const r = Math.ceil(limit / cell);
+      let best = Infinity;
+      let bi = -1;
+      for (let dj = -r; dj <= r; dj++) {
+        for (let di = -r; di <= r; di++) {
+          const list = buckets.get(key(bx + di, bz + dj));
+          if (!list) continue;
+          for (const i of list) {
+            const p = route.samples[i];
+            const d = Math.hypot(p.x - x, p.z - z);
+            if (d < best) { best = d; bi = i; }
+          }
+        }
+      }
+      return bi < 0 ? { distance: limit + cell, tangent: null } : { distance: best, tangent: tangentAt(bi) };
+    },
     /** Distance to the nearest sample, capped at `limit` (returns > limit when farther). */
     distanceTo(x, z, limit = 40) {
       const bx = Math.floor(x / cell);

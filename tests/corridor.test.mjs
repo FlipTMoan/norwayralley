@@ -9,7 +9,7 @@ import { slopedTerrain } from './road-physics.test.mjs';
 test('profile: flat shoulder to shoulder, a smooth blend to the cut-through edge, untouched beyond', () => {
   const { half, cut } = LANES.two; // 6.5 m road, 1 m shoulders, 16 m cut-through
   const flat = half + SHOULDER;
-  assert.equal(flat, 4.25);
+  assert.equal(flat, 4.5);
   assert.equal(profileHeight(100, 90, 0, half, cut), 100);
   assert.equal(profileHeight(100, 90, flat, half, cut), 100, 'flat out to the shoulder');
   const mid = profileHeight(100, 90, (flat + cut) / 2, half, cut);
@@ -20,7 +20,7 @@ test('profile: flat shoulder to shoulder, a smooth blend to the cut-through edge
   assert.equal(profileHeight(100, 90, cut, half, cut, 92), 92, 'rim at the smoothed edge height');
   assert.ok(Math.abs(profileHeight(100, 90, cut + 0.75, half, cut, 92) - 91) < 1e-9, 'feather halfway');
   const one = LANES.one;
-  assert.equal(one.half + SHOULDER, 2.25, 'single lane: 2.5 m + 1 m shoulders');
+  assert.equal(one.half + SHOULDER, 2.5, 'single lane: 3 m + 1 m shoulders');
   assert.equal(corridorReach(one.half, one.cut), 3 + 1.5, '6 m cut-through plus the feather');
 });
 

@@ -97,6 +97,8 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] 1 m corridor tiles (`fine.js`): ±100 m of roads, holes in the chunk mesh, physics from tiles; tests.
 - [x] Solid houses (`BuildingIndex`, push-out in car.js, thud); road band coloured as road, no land-cover tint on it.
 - [x] Terrace profile: two-lane 6.5 m + 1 m shoulders in a 16 m cut-through, single-lane 2.5 m + 1 m in 6 m; rims smoothed along the road; flat only shoulder to shoulder.
+- [x] Perf: minimap terrain + road network cached (was redrawn every frame), ribbons merged per chunk, lazy tile picking, debounced hole rebuilds; 27–44 ms → 7 ms per frame at Venabygdsfjellet.
+- [x] Continuity: crossing roads keep going, junction/crossing heights eased, 2D Chaikin on OSM bends with pinned junction nodes; F10 debug window with coordinates.
 
 ## O. Houses + country mask 2026-11-14 (user requests)
 - [x] Overpass: remember the answering mirror, race when unknown, penalise failures (houses in 6 s, not 75 s+).

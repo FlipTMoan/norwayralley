@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
 import { carveProfile, smoothRoadHeights, assignEdgeHeights, LANES } from './corridor.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cachedJson } from './cache.js';
 
 /**
@@ -40,6 +41,41 @@ export function isPaved(road) {
   return road.kind !== 'track';
 }
 
+/**
+ * Corner cutting (Chaikin, two rounds) for a road centreline in 2D, so bends
+ * are curves instead of polyline corners. Vertices in `pinned` (junction
+ * nodes shared with other ways) and both ends stay exactly where they are,
+ * so roads still meet where OSM says they meet.
+ */
+export function smoothWay(points, pinned = new Set(), iterations = 2) {
+  if (points.length < 3) return points.map((p) => ({ x: p.x, z: p.z }));
+  const out = [];
+  let piece = [points[0]];
+  const flush = (last) => {
+    let p = piece.map((v) => ({ x: v.x, z: v.z }));
+    for (let k = 0; k < iterations && p.length >= 3; k++) {
+      const q = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i];
+        const b = p[i + 1];
+        q.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 });
+        q.push({ x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
+      }
+      q.push(p[p.length - 1]);
+      p = q;
+    }
+    if (out.length) p.shift(); // the joint is already there
+    out.push(...p);
+    piece = [last];
+  };
+  for (let i = 1; i < points.length; i++) {
+    piece.push(points[i]);
+    if (i < points.length - 1 && pinned.has(i)) flush(points[i]);
+  }
+  flush(points[points.length - 1]);
+  return out;
+}
+
 /** Resample a world polyline to `step` metres, keeping the original vertices. */
 function resample(points, step) {
   const out = [points[0]];
@@ -68,13 +104,24 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
   const minZ = z0 - pad;
   const maxZ = z0 + size + pad;
   const inside = (p) => p.x >= minX && p.x <= maxX && p.z >= minZ && p.z <= maxZ;
+  // Junction nodes: a coordinate that appears in more than one way (or more
+  // than once) stays put when the centrelines are smoothed.
+  const nodeCount = new Map();
+  const nodeKey = (p) => `${p.lat.toFixed(7)},${p.lon.toFixed(7)}`;
+  for (const road of roads || []) {
+    if (!laneSpec(road)) continue;
+    for (const p of road.points) nodeCount.set(nodeKey(p), (nodeCount.get(nodeKey(p)) || 0) + 1);
+  }
   const out = [];
   for (const road of roads || []) {
     const spec = laneSpec(road);
     if (!spec) continue;
     const { half, cut } = spec;
-    const world = road.points.map((p) => terrain.worldFromLatLon(p.lat, p.lon));
-    if (!world.some(inside)) continue;
+    const raw = road.points.map((p) => terrain.worldFromLatLon(p.lat, p.lon));
+    if (!raw.some(inside)) continue;
+    const pinned = new Set();
+    road.points.forEach((p, i) => { if ((nodeCount.get(nodeKey(p)) || 0) > 1) pinned.add(i); });
+    const world = smoothWay(raw, pinned);
     const samples = resample(world, 5);
     // Grade the whole way before clipping it to the chunk, on the coarse
     // ground only: every chunk that holds a piece of this road then computes
@@ -88,34 +135,65 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
     // New stretches are eased onto the known ones instead of stepping.
     samples.forEach((p, i) => { p.roadY = smooth[i]; });
     assignEdgeHeights(samples, cut, (x, z) => ground.call(terrain, x, z));
+    // Junctions and crossings: wherever this way meets a road that is already
+    // in the network (its own ends, T-junctions, crossings), ease its height
+    // onto that road over 60 m either side, so roads meet without a step and
+    // the carve does not have two heights for one spot.
+    const network = terrain.roads;
+    if (network?.nearest && road.id != null) {
+      const FADE_J = 12;
+      const meets = [];
+      let lastHit = -FADE_J;
+      for (let i = 0; i < samples.length; i++) {
+        if (i - lastHit < 4) continue; // one anchor per 20 m of shared road
+        const p = samples[i];
+        const q = network.nearest(p.x, p.z, 4);
+        if (!(q.distance <= 2.5) || q.roadY == null || q.id === road.id) continue;
+        meets.push({ i, y: q.roadY });
+        lastHit = i;
+      }
+      for (const m of meets) {
+        const delta = m.y - samples[m.i].roadY;
+        if (Math.abs(delta) < 0.02) continue;
+        for (let k = -FADE_J; k <= FADE_J; k++) {
+          const i = m.i + k;
+          if (i < 0 || i >= samples.length) continue;
+          samples[i].roadY += delta * (1 - Math.abs(k) / FADE_J);
+        }
+      }
+    }
+    // Heights this way was already given by another chunk win (keyed by the
+    // sample position to half a metre, so copies agree wherever they share
+    // ground); new stretches are eased onto the known ones.
     const registry = terrain.roadHeights;
     if (registry && road.id != null) {
+      const posKey = (p) => `${Math.round(p.x * 2)}:${Math.round(p.z * 2)}`;
       const known = registry.get(road.id);
       if (known) {
+        const kn = samples.map((p) => known.get(posKey(p)) || null);
         const FADE = 30;
         for (let i = 0; i < samples.length; i++) {
-          if (known.has(i)) continue;
+          if (kn[i]) continue;
           let k = -1;
           for (let d = 1; d <= FADE; d++) {
-            if (known.has(i - d)) { k = i - d; break; }
-            if (known.has(i + d)) { k = i + d; break; }
+            if (kn[i - d]) { k = i - d; break; }
+            if (kn[i + d]) { k = i + d; break; }
           }
           if (k >= 0) {
             const w = 1 - Math.abs(i - k) / FADE;
-            const kn = known.get(k);
-            samples[i].roadY += (kn.y - samples[k].roadY) * w;
-            samples[i].edgeL += (kn.l - samples[k].edgeL) * w;
-            samples[i].edgeR += (kn.r - samples[k].edgeR) * w;
+            samples[i].roadY += (kn[k].y - samples[k].roadY) * w;
+            samples[i].edgeL += (kn[k].l - samples[k].edgeL) * w;
+            samples[i].edgeR += (kn[k].r - samples[k].edgeR) * w;
           }
         }
         for (let i = 0; i < samples.length; i++) {
-          const kn = known.get(i);
-          if (kn) { samples[i].roadY = kn.y; samples[i].edgeL = kn.l; samples[i].edgeR = kn.r; }
+          if (kn[i]) { samples[i].roadY = kn[i].y; samples[i].edgeL = kn[i].l; samples[i].edgeR = kn[i].r; }
         }
       }
       const store = known || new Map();
-      for (let i = 0; i < samples.length; i++) {
-        if (!store.has(i)) store.set(i, { y: samples[i].roadY, l: samples[i].edgeL, r: samples[i].edgeR });
+      for (const p of samples) {
+        const key = posKey(p);
+        if (!store.has(key)) store.set(key, { y: p.roadY, l: p.edgeL, r: p.edgeR });
       }
       registry.set(road.id, store);
     }
@@ -125,8 +203,24 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
       if (run.length >= 3) out.push(finishRun(run, road, half, cut));
       run = [];
     };
-    for (const p of samples) {
-      const keep = inside(p) && !(avoid && avoid.index.distanceTo(p.x, p.z, avoid.distance + 1) < avoid.distance);
+    for (let i = 0; i < samples.length; i++) {
+      const p = samples[i];
+      let keep = inside(p);
+      if (keep && avoid) {
+        // Cut the OSM twin of the stage road (it runs along it); a road that
+        // crosses the stage keeps going.
+        const q = avoid.index.nearest ? avoid.index.nearest(p.x, p.z, avoid.distance + 1) : { distance: avoid.index.distanceTo(p.x, p.z, avoid.distance + 1), tangent: null };
+        if (q.distance < avoid.distance) {
+          if (!q.tangent) keep = false;
+          else {
+            const a = samples[Math.max(0, i - 1)];
+            const b = samples[Math.min(samples.length - 1, i + 1)];
+            const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+            const dot = Math.abs(((b.x - a.x) / l) * q.tangent.x + ((b.z - a.z) / l) * q.tangent.z);
+            keep = dot < 0.7; // crossing (≳45°) stays, parallel goes
+          }
+        }
+      }
       if (keep) run.push(p); else flush();
     }
     flush();
@@ -162,10 +256,17 @@ export function buildRoadMeshes(polylines, terrain) {
   if (!polylines.length) return null;
   const group = new THREE.Group();
   group.name = 'osmRoads';
-  for (const line of polylines) {
-    const route = { samples: line.samples, roadWidth: line.half };
-    group.add(buildRibbon(route, terrain, 0, line.samples.length - 1, { paved: line.paved }));
-  }
+  // One mesh for the whole chunk: hundreds of ribbons would be hundreds of
+  // draw calls, and they all share one material.
+  const ribbons = polylines.map((line) => buildRibbon({ samples: line.samples, roadWidth: line.half }, terrain, 0, line.samples.length - 1, { paved: line.paved }));
+  const material = ribbons[0].material;
+  const merged = ribbons.length === 1 ? ribbons[0].geometry : mergeGeometries(ribbons.map((m) => m.geometry), false);
+  if (ribbons.length > 1) for (const m of ribbons) { m.geometry.dispose(); if (m.material !== material) m.material.dispose(); }
+  const mesh = new THREE.Mesh(merged || ribbons[0].geometry, material);
+  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.name = 'roadRibbons';
+  group.add(mesh);
   return group;
 }
 
@@ -203,7 +304,7 @@ export class RoadNetwork {
     for (const line of polylines) {
       const s = line.samples;
       for (let k = 0; k + 1 < s.length; k++) {
-        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, al: s[k].edgeL ?? null, bl: s[k + 1].edgeL ?? null, ar: s[k].edgeR ?? null, br: s[k + 1].edgeR ?? null, half: line.half, cut: line.cut ?? null, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
+        const seg = { id: line.id ?? null, ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, al: s[k].edgeL ?? null, bl: s[k + 1].edgeL ?? null, ar: s[k].edgeR ?? null, br: s[k + 1].edgeR ?? null, half: line.half, cut: line.cut ?? null, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
         const bx = Math.floor(((seg.ax + seg.bx) / 2) / this.cell);
         const bz = Math.floor(((seg.az + seg.bz) / 2) / this.cell);
         const key = this.key(bx, bz);
@@ -267,6 +368,7 @@ export class RoadNetwork {
       tangent: { x: dx / l, z: dz / l },
       width: best.half,
       cut: best.cut,
+      id: best.id ?? null,
       paved: best.paved,
       surface: best.surface,
       roadY: best.ay + (best.by - best.ay) * bestT,

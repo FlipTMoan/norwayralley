@@ -46,7 +46,7 @@ always serve it over http. Everything the game needs at runtime is either in
 | `N` | Scout a new stage |
 | `1` / `2` / `3` | Camera: straight above / chase / driver's seat (`C` cycles) |
 | `M` | Mute sound |
-| `F3` | Toggle the debug/performance overlay |
+| `F10` (or `F3`) | Debug window: coordinates, altitude, heading, ground/road/water state, fps, draw calls, streaming and cache stats |
 | `Esc` | Close the route map, or back to the start screen (MENU) |
 
 Touch controls appear automatically on narrow screens.
@@ -212,6 +212,9 @@ builder still works only inside the loaded world.
   flat from shoulder to shoulder at the graded road height (three passes of
   a ±60 m running mean) and blends to the natural ground at the edge, whose
   height is smoothed along the road too; outside it the DTM is untouched.
+  Bends are rounded in 2D (Chaikin corner cutting with junction nodes
+  pinned), and wherever a road meets another its height is eased onto it, so
+  junctions and crossings are continuous.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.

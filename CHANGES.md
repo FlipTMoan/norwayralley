@@ -23,6 +23,43 @@ _Updated 2026-11-14._
   demo tile). The footprints stay in the collision index, so a hidden house
   cannot be driven through either once you reach it (it appears first).
 
+### Added — F10 debug window
+- `F10` (and still `F3`) opens the debug window; it now shows the car's
+  latitude/longitude, altitude, heading and world position, whether the
+  ground under the car comes from a 1 m tile or the chunk grid, the road
+  (offset, surface, cut-through width), water depth and slope, the room,
+  plus the fps/draw-call/streaming/memory lines it had.
+
+### Changed — wider roads, faster frames, continuous roads
+- Two-lane roads are 7 m wide (3.5 m half), single-lane 3 m (1.5 m half),
+  shoulders 1 m; cut-throughs unchanged (16 m / 6 m).
+- **Minimap no longer redraws its terrain every frame.** Its zoom window
+  glides with speed and was compared for exact equality, so while moving
+  the 95² height samples were recomputed each frame (6.8k samples, ~5 ms).
+  Compared with a tolerance now.
+- The minimap's road network (up to ten thousand segments) is drawn into
+  the cached terrain layer instead of stroked every frame.
+- All OSM road ribbons of a chunk are merged into one mesh (one draw call
+  per chunk instead of one per road).
+- The car's wheel ground queries search roads within 24 m instead of 120 m.
+- Per-frame work trimmed: road points for the 1 m tile picker are gathered
+  only when it picks (not every frame), chunk hole rebuilds are debounced
+  (250 ms after the last tile, at most 1.5 s), house walls are looked up
+  once per frame instead of per physics substep, the 1 m tile lookup caches
+  the last tile, and the fine meshes use 1 m only within 110 m, 2 m to
+  300 m, 3 m beyond, with 24 tiles held.
+- Roads no longer break: a road *crossing* the stage road keeps going (only
+  the stage's parallel OSM twin is cut, by comparing directions). Wherever a
+  way meets a road already in the network (its ends, T-junctions,
+  crossings) its height is eased onto that road over 60 m either side, so
+  junctions and crossings meet without a step and the carve has one height
+  per spot.
+- **Bends are curves.** OSM centrelines get two rounds of Chaikin corner
+  cutting in 2D before resampling (`smoothWay`); nodes shared with another
+  way (junctions) and the way's ends are pinned, so roads still meet exactly
+  where OSM says. The shared-height registry is keyed by sample position
+  (to 0.5 m) instead of sample index, so chunk copies still agree.
+
 ### Changed — the road is a terrace cut through the DTM
 - Two road classes (`LANES`): a normal **two-lane** road is 6.5 m wide with
   1 m shoulders inside a **16 m cut-through**; a **single-lane** road is 2.5 m

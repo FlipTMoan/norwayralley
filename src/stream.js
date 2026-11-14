@@ -1004,7 +1004,7 @@ export async function createStreamingWorld({
 
   // The 1 m ground along the roads (fine.js). Chunk meshes get holes under
   // its tiles; `dirtyChunks` rebuilds them one per frame.
-  const dirtyChunks = new Set();
+  const dirtyChunks = new Map(); // chunk → { first, last } dirty timestamps
   fine = createFineTiles({
     cell: CELL,
     fetchDem,
@@ -1022,7 +1022,10 @@ export async function createStreamingWorld({
     tint: (x, z, c) => world.tintAt(x, z, c),
     onTileChange: (t) => {
       const chunk = chunks.get(chunkKey(Math.floor((t.x0 + 1) / CHUNK), Math.floor((t.z0 + 1) / CHUNK)));
-      if (chunk && chunk.state === 'ready') dirtyChunks.add(chunk);
+      if (!chunk || chunk.state !== 'ready') return;
+      const nowT = performance.now();
+      const at = dirtyChunks.get(chunk);
+      if (at) at.last = nowT; else dirtyChunks.set(chunk, { first: nowT, last: nowT });
     },
   });
 
@@ -1543,23 +1546,34 @@ export async function createStreamingWorld({
     }
 
     // The 1 m ground along the roads near the car: the stage route and the
-    // road network around the led point feed the tile picker.
-    const roadPoints = [];
-    if (world.route) {
-      const s = world.route.samples;
-      for (let i = 0; i < s.length; i += 2) {
-        const p = s[i];
-        if (Math.abs(p.x - px) < 700 && Math.abs(p.z - pz) < 700) roadPoints.push(p);
+    // road network around the led point feed the tile picker (gathered only
+    // when it actually picks, a few times a second).
+    fine.update(fx, fz, () => {
+      const roadPoints = [];
+      if (world.route) {
+        const s = world.route.samples;
+        for (let i = 0; i < s.length; i += 2) {
+          const p = s[i];
+          if (Math.abs(p.x - px) < 700 && Math.abs(p.z - pz) < 700) roadPoints.push(p);
+        }
       }
-    }
-    for (const seg of world.roads.segmentsNear(px, pz, 550)) roadPoints.push({ x: seg.ax, z: seg.az });
-    fine.update(fx, fz, roadPoints.length ? roadPoints : [{ x: px, z: pz }]);
+      for (const seg of world.roads.segmentsNear(px, pz, 550)) roadPoints.push({ x: seg.ax, z: seg.az });
+      return roadPoints.length ? roadPoints : [{ x: px, z: pz }];
+    });
+    // Chunk meshes with new holes: rebuild one per frame, once the tiles
+    // around it have settled for a moment (or it has waited long enough).
     if (dirtyChunks.size) {
-      const chunk = dirtyChunks.values().next().value;
-      dirtyChunks.delete(chunk);
-      if (chunk.state === 'ready') {
-        rebuildChunkGeometries(chunk);
-        refreshChunkCorridor(chunk);
+      const nowT = performance.now();
+      let pickChunk = null;
+      for (const [chunk, at] of dirtyChunks) {
+        if (nowT - at.last > 250 || nowT - at.first > 1500) { pickChunk = chunk; break; }
+      }
+      if (pickChunk) {
+        dirtyChunks.delete(pickChunk);
+        if (pickChunk.state === 'ready') {
+          rebuildChunkGeometries(pickChunk);
+          refreshChunkCorridor(pickChunk);
+        }
       }
     }
 

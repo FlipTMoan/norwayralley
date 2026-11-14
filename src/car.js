@@ -793,7 +793,7 @@ export class Car {
    */
   groundAt(x, z) {
     if (this.route) {
-      const q = this.route.nearest(x, z);
+      const q = this.route.nearest(x, z, 24); // wheels only need the roads right under the car
       const half = q.width ?? this.route.roadWidth;
       const cut = q.cut ?? this.route.cutHalf ?? flatHalf(half);
       if (q.roadY != null && Number.isFinite(q.distance) && q.distance <= corridorReach(half, cut)) {
@@ -925,6 +925,8 @@ export class Car {
     // vehicle — smaller dt, stiffer suspension).
     this.handbrakeOn = Boolean(input.handbrake);
     this.crash = 0;
+    // House walls near the car, looked up once per frame (not per substep).
+    this.wallsNear = this.terrain.buildings?.near(this.pos.x, this.pos.z, 40) || null;
     const steps = clamp(Math.ceil(dt / (1 / 120)), 1, MAX_SUBSTEPS);
     const h = dt / steps;
     this.surfaceKind = this.onRoad ? (this.roadQuery?.surface || 'gravel') : 'offroad';
@@ -1142,7 +1144,7 @@ export class Car {
 
     // Houses are solid: push the car back out of any wall it ran into, kill
     // the speed into the wall (a little bounce), keep most of the rest.
-    const walls = this.terrain.buildings?.near(this.pos.x, this.pos.z, 40);
+    const walls = this.wallsNear;
     if (walls?.length) {
       for (const box of walls) {
         const hit = pushOutOfBox(box, this.pos.x, this.pos.z, CAR_RADIUS);

@@ -1168,7 +1168,9 @@ function mapToWorld(px, py) {
 function refreshMinimapTerrain(force = false) {
   if (!terrain || !car) return;
   const moved = Math.hypot(car.pos.x - mmLast.x, car.pos.z - mmLast.z);
-  if (!force && moved < mmWindow / MM_CELLS * 2 && mmLast.window === mmWindow && time - mmLast.t < 0.6) return;
+  // The window zooms with speed, so compare it with a tolerance: an exact
+  // match never happened while moving and the terrain was redrawn every frame.
+  if (!force && moved < mmWindow / MM_CELLS * 2 && Math.abs(mmLast.window - mmWindow) < mmWindow * 0.04 && time - mmLast.t < 0.6) return;
   mmLast = { x: car.pos.x, z: car.pos.z, window: mmWindow, t: time };
   const cell = mmWindow / MM_CELLS;
   const x0 = car.pos.x - mmWindow / 2;
@@ -1204,6 +1206,21 @@ function refreshMinimapTerrain(force = false) {
     }
   }
   mmTerrainCtx.putImageData(mmPixels, 0, 0);
+
+  // OpenStreetMap roads of the loaded chunks, drawn into the cached layer
+  // (thousands of segments: far too many to stroke every frame).
+  const network = terrain.roads;
+  if (network?.segmentCount) {
+    const scale = MM_CELLS / mmWindow;
+    mmTerrainCtx.strokeStyle = 'rgba(236,232,220,.6)';
+    mmTerrainCtx.lineWidth = 1;
+    mmTerrainCtx.beginPath();
+    for (const seg of network.segmentsNear(car.pos.x, car.pos.z, mmWindow * 0.75)) {
+      mmTerrainCtx.moveTo((seg.ax - x0) * scale, (seg.az - z0) * scale);
+      mmTerrainCtx.lineTo((seg.bx - x0) * scale, (seg.bz - z0) * scale);
+    }
+    mmTerrainCtx.stroke();
+  }
 }
 
 function updateMinimapRoute() {
@@ -1218,21 +1235,6 @@ function drawMinimap() {
   mmCtx.imageSmoothingEnabled = false;
   mmCtx.clearRect(0, 0, MM_SIZE, MM_SIZE);
   mmCtx.drawImage(mmTerrain, 0, 0, MM_SIZE, MM_SIZE);
-
-  // OpenStreetMap roads of the loaded chunks (streamed worlds).
-  const network = terrain.roads;
-  if (network?.segmentCount) {
-    mmCtx.strokeStyle = 'rgba(236,232,220,.55)';
-    mmCtx.lineWidth = 1.2;
-    mmCtx.beginPath();
-    for (const seg of network.segmentsNear(car.pos.x, car.pos.z, mmWindow * 0.75)) {
-      const a = worldToMap(seg.ax, seg.az);
-      const b = worldToMap(seg.bx, seg.bz);
-      mmCtx.moveTo(a.x, a.y);
-      mmCtx.lineTo(b.x, b.y);
-    }
-    mmCtx.stroke();
-  }
 
   if (route && route.samples.length) {
     const pts = route.samples;
@@ -1490,7 +1492,7 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyN' && loaded && hasStarted) scoutNewStage();
   if (event.code === 'Enter' && loaded && !hasStarted) beginCountdown();
   if (event.code === 'Escape' && hasStarted && !mapPicker.isOpen() && $('friendsPanel').classList.contains('hidden')) returnToMenu();
-  if (event.code === 'F3') {
+  if (event.code === 'F3' || event.code === 'F10') {
     event.preventDefault();
     toggleDebug();
   }
@@ -1993,15 +1995,28 @@ function updateDebug(now) {
   const worldLine = streamStats
     ? `stream     ${streamStats.ready} chunks ready · ${streamStats.loading} loading · ${streamStats.queued} queued · ${streamStats.triangles.toLocaleString()} tris · ${streamStats.trees} trees · ${streamStats.houses} houses · 1 m tiles ${streamStats.fine?.ready ?? 0} (${streamStats.fine?.loading ?? 0} loading, ${Math.round((streamStats.fine?.triangles || 0) / 1000)}k tris)`
     : `terrain    ${lodStats.chunks ?? 0} chunks  ${(lodStats.triangles ?? 0).toLocaleString()} tris  LOD ${JSON.stringify(lodStats.levels ?? {})}`;
+  // Where exactly: lat/lon, altitude, heading, and what the ground is doing.
+  let whereLine = 'where      —';
+  let groundLine = '';
+  if (car && terrain) {
+    const ll = terrain.latLonFromWorld(car.pos.x, car.pos.z);
+    const heading = ((Math.atan2(car.forward().x, car.forward().z) * 180) / Math.PI + 360) % 360;
+    whereLine = `where      ${ll.lat.toFixed(5)}°N ${ll.lon.toFixed(5)}°E   alt ${car.pos.y.toFixed(1)} m   heading ${heading.toFixed(0)}°   world ${pos}`;
+    const q = car.roadQuery;
+    const fineHere = terrain.fine ? terrain.fine.sample(car.pos.x, car.pos.z) : null;
+    groundLine = `ground     ${fineHere != null ? '1 m tile' : 'chunk grid'}   road ${q && Number.isFinite(q.distance) ? `${q.distance.toFixed(1)} m off centre, ${q.surface || '?'}, ${q.cut ? `${q.cut * 2} m cut-through` : ''}` : 'none'}   water ${car.waterDepth.toFixed(2)} m   slope ${(Math.atan(terrain.slope(car.pos.x, car.pos.z)) * 180 / Math.PI).toFixed(0)}°`;
+  }
   debugPanel.textContent = [
-    `RETRO NORWAY RALLY · debug (F3)`,
+    `RETRO NORWAY RALLY · debug (F10 / F3)`,
     `fps        ${perf.fps.toFixed(1)}   frame ${perf.frameMs.toFixed(1)} ms   worst ${perf.worstMs.toFixed(0)} ms   long ${perf.longFrames}`,
     `draw calls ${drawn.calls}   tris ${drawn.triangles.toLocaleString()}   points ${drawn.points}`,
     worldLine,
+    whereLine,
+    groundLine,
     `car        ${carLine}`,
-    `position   ${pos}   phase ${phase}`,
+    `phase      ${phase}   room ${session ? `${session.code} (${session.playerCount})` : 'none'}`,
     `memory     ${memory}   quality ${qualityReduced ? 'reduced' : 'full'}`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 /* ------------------------------------------------------------------ */
