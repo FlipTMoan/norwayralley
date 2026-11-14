@@ -87,6 +87,13 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
 - [x] Verified live: SR16 forests + NVDB signs on a streamed stage; OSM houses/water/roads via mocked Overpass and, later, live on the demo tile through the openstreetmap.fr mirror.
 
+## N. Menu, planted buggy, saved routes, Norway map, credit 2026-11-14 (user requests)
+- [x] MENU button (+Esc) back to the start screen, stage kept; R restarts.
+- [x] Buggy `planted` handling in normal mode (measured: 3° slip vs 911's 6°).
+- [x] `saved.js` named route list + map footer row (save / load / delete), tests.
+- [x] Map boxed to Norway (maxBounds, tile bounds, mask, min zoom).
+- [x] Start-screen credit line.
+
 ## M. Climb limits + track strength 2026-11-14 (user request)
 - [x] g·sin θ slope gravity; `maxClimb` 30° (911) / 80° (buggy) with grip floor below, cos θ load above; tests.
 - [x] Tracks: per-mark alpha by surface (off-road clear, gravel medium, asphalt faint, rubber/foam strong).

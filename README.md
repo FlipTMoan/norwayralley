@@ -39,7 +39,7 @@ npm run preview
 | `1` / `2` / `3` | Camera: straight above / chase / driver's seat (`C` cycles) |
 | `M` | Mute sound |
 | `F3` | Toggle the debug/performance overlay |
-| `Esc` | Close the route map |
+| `Esc` | Close the route map, or back to the start screen (MENU) |
 
 Touch controls appear automatically on narrow screens.
 
@@ -77,7 +77,18 @@ place the next pin. Choose how to route:
 Press **GENERATE ROUTE**. **USE CURRENT STAGE** puts the pins on the active
 stage's endpoints so it can be re-routed. A third click on the map starts a
 new pair. **NEW STAGE** (`N`) in the STAGE panel scouts a random stage from
-where you are, **RESTART** (`R`) reruns the current one.
+where you are; **MENU** (`Esc`) returns to the start screen to change car,
+gearbox or sliding without losing the stage, and `R` restarts it.
+
+The map shows Norway only: it cannot be panned or zoomed out beyond the
+country, and everything outside is shaded.
+
+**Saved routes.** The second row of the map footer keeps a named list on
+this device: type a name and press **SAVE CURRENT** to store the stage or
+free drive you are on (OSRM road, off-road A\* on the demo tile, or a free
+drive centre), then pick it from **SAVED ROUTES** and **LOAD** it any time.
+**DELETE** removes the selected one. The list lives in the browser's
+localStorage.
 
 ### Drive anywhere in Norway
 
@@ -138,6 +149,11 @@ builder still works only inside the loaded world.
   another scene with `?scene=<name>`.
 - **Route map**: click the minimap, pick two points anywhere in Norway (or
   type them), and let OSRM or the off-road A* router build the stage.
+- **Two cars**: the Porsche 911 (rear drive) and the Formula Offroad buggy
+  (1 200 hp, 4WD, paddle tyres). In the *normal* sliding mode the buggy is
+  deliberately planted: more lateral grip, less throttle kick and wander,
+  calmer yaw, so it digs in instead of stepping out; *lots* of sliding is the
+  same arcade drift feel for both.
 - **Climb limits**: slope gravity is g·sin θ along and across the car, and
   each car has a steepest climbable slope: the Porsche 911 drives up to 30°,
   the Formula Offroad buggy up to 80°. Below the limit the tyres always find

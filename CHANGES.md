@@ -17,6 +17,27 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Added — menu, saved routes, Norway-only map
+- STAGE panel: **MENU** replaces RESTART (R still restarts, Esc opens the
+  menu). It returns to the start screen with the stage kept, so the car,
+  gearbox and sliding can be changed; START ENGINE / Enter resumes.
+- **Saved routes**: `saved.js` keeps a named list in localStorage (the same
+  descriptor the room shares); the map footer has SAVED ROUTES / LOAD /
+  DELETE and a name field with SAVE CURRENT. `tests/saved.test.mjs`.
+- The route map is boxed to Norway: `maxBounds` with full viscosity, tiles
+  only requested inside the country, a shaded mask outside, and the minimum
+  zoom is the whole country.
+- Start screen credit: "Made by Filip Tobias Moan © 2026".
+
+### Changed — the buggy is planted in normal mode
+- Measured in the cornering tests the buggy slid no more than the 911 (5°
+  slip against 5–7°), but it should feel calmer: a per-car `planted` block
+  (buggy only, normal mode only) adds 30 % lateral grip, cuts the throttle
+  kick to 0.3×, looseness to 0.45×, wander to 0.35×, yaw authority to 0.85×
+  and makes yaw follow the steering 1.4× faster. Now ~3° slip and no drift
+  episodes in the same corners; *lots* mode is unchanged.
+- `swapCar` disposes the spray pool too.
+
 ### Changed — climb limits and track strength
 - Slope gravity is now g·sin θ along and across the car (it used to fade on
   steep ground). Each car has `maxClimb`: Porsche 30°, Formula Offroad 80°.

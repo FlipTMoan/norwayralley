@@ -193,6 +193,7 @@ function swapCar() {
   const pose = route ? spawnPose() : { x: car.pos.x, z: car.pos.z, yaw: car.yaw };
   disposeGroup(car.group);
   disposeGroup(car.dust.points);
+  disposeGroup(car.spray.points);
   car = new Car(scene, terrain, carKind);
   car.autoShift = gearboxAuto;
   car.slideMode = slideMode;
@@ -414,8 +415,12 @@ function shareRoute() {
 }
 
 let applyingSharedRoute = false;
-async function applySharedRoute(shared) {
-  if (!shared || applyingSharedRoute || !loaded) return;
+/**
+ * Drive a route descriptor (see describeRoute): from the room's host or from
+ * the saved-routes list. Resolves to `{ ok, message }`.
+ */
+async function applyDescribedRoute(shared, { from = 'room' } = {}) {
+  if (!shared || applyingSharedRoute || !loaded) return { ok: false, message: 'Busy.' };
   applyingSharedRoute = true;
   try {
     if (shared.kind === 'osrm' && shared.geometry) {
@@ -424,8 +429,11 @@ async function applySharedRoute(shared) {
       await enterFreeDrive(shared.center);
     } else if (shared.kind === 'baked' && shared.points?.length > 2) {
       if (terrain?.streaming) {
-        toast('The host is on the demo mountain. Reload the page to join that stage.', 'error');
-        return;
+        const message = from === 'room'
+          ? 'The host is on the demo mountain. Reload the page to join that stage.'
+          : 'That route is on the demo mountain. Reload the page, then load it.';
+        toast(message, 'error');
+        return { ok: false, message };
       }
       const points = shared.points.map(([x, z]) => ({ x, z }));
       const sharedRoute = makeRoute(points, terrain, {
@@ -434,9 +442,15 @@ async function applySharedRoute(shared) {
       });
       setRoute(sharedRoute, { announce: false });
     }
-    toast(`Stage synced with the room: ${route?.name || ''}`.trim());
+    const message = from === 'room'
+      ? `Stage synced with the room: ${route?.name || ''}`.trim()
+      : `Loaded: ${route?.name || 'free drive'}. Click START ENGINE or press Enter.`;
+    toast(message);
+    return { ok: true, message };
   } catch (error) {
-    toast(`Could not load the host's stage: ${error.message}`, 'error');
+    const message = from === 'room' ? `Could not load the host's stage: ${error.message}` : error.message;
+    toast(message, 'error');
+    return { ok: false, message };
   } finally {
     applyingSharedRoute = false;
   }
@@ -478,7 +492,7 @@ function bindSession(s) {
   s.addEventListener('error', (e) => { friendsStatus(e.detail.message, 'err'); toast(e.detail.message, 'error'); });
   s.addEventListener('peer-join', () => { updatePlayersBadge(); shareRoute(); });
   s.addEventListener('peer-leave', (e) => { disposeGhost(e.detail.id); updatePlayersBadge(); });
-  s.addEventListener('route', (e) => applySharedRoute(e.detail.route));
+  s.addEventListener('route', (e) => applyDescribedRoute(e.detail.route));
   s.addEventListener('slot', () => {
     applyPaint();
     // Move to my grid slot unless I am already driving.
@@ -1000,6 +1014,17 @@ function beginCountdown() {
   audio.start();
 }
 
+/** Back to the start screen (car, gearbox, sliding, friends); the stage and route stay. */
+function returnToMenu() {
+  if (!hasStarted) return;
+  hasStarted = false;
+  keys.clear();
+  $('resultScreen').classList.add('hidden');
+  $('hud').classList.add('hidden');
+  $('startScreen').classList.remove('hidden');
+  resetStage({ countdownNow: false });
+}
+
 function finishStage() {
   if (phase !== 'racing') return;
   phase = 'finished';
@@ -1445,6 +1470,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (event.code === 'KeyN' && loaded && hasStarted) scoutNewStage();
   if (event.code === 'Enter' && loaded && !hasStarted) beginCountdown();
+  if (event.code === 'Escape' && hasStarted && !mapPicker.isOpen() && $('friendsPanel').classList.contains('hidden')) returnToMenu();
   if (event.code === 'F3') {
     event.preventDefault();
     toggleDebug();
@@ -1768,10 +1794,7 @@ function addDistantPeaks() {
 /* ------------------------------------------------------------------ */
 $('startBtn').addEventListener('click', beginCountdown);
 $('newStage').addEventListener('click', scoutNewStage);
-$('restart').addEventListener('click', () => {
-  resetStage({ countdownNow: true });
-  toast('Stage restarted.');
-});
+$('menuBtn').addEventListener('click', returnToMenu);
 $('resultRestart').addEventListener('click', () => {
   resetStage({ countdownNow: true });
 });
@@ -1779,6 +1802,8 @@ $('resultNew').addEventListener('click', scoutNewStage);
 
 const mapPicker = createMapPicker({
   getTerrain: () => terrain,
+  onSave: () => describeRoute(),
+  onLoad: (described) => applyDescribedRoute(described, { from: 'saved' }),
   onFreeDrive: async ({ a }) => {
     try {
       await enterFreeDrive(a);

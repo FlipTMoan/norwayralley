@@ -52,7 +52,9 @@ export const ENGINE = { idle: IDLE_RPM, redline: REDLINE_RPM, gears: GEAR_RATIOS
  *  - driveLoad is the share of weight on the driven wheels (traction cap);
  *  - gripBonus scales tyre grip per surface (paddle tyres love loose ground);
  *  - maxClimb is the steepest slope (degrees) the car can drive straight up:
- *    below it the tyres always find enough bite, above it gravity wins.
+ *    below it the tyres always find enough bite, above it gravity wins;
+ *  - planted (optional) tames the `normal` sliding mode for that car: extra
+ *    lateral grip, less throttle kick / looseness / wander, calmer yaw.
  */
 export const CARS = {
   porsche: {
@@ -70,6 +72,8 @@ export const CARS = {
     gears: [-6.0, 9.0, 5.4, 3.6, 2.6], finalDrive: 3.4, idle: 1000, redline: 8000,
     torque: 1500, power: 895000, upshift: 7600, downshift: 3200, driveLoad: 1.0,
     gripBonus: { asphalt: 0.85, gravel: 1.25, offroad: 1.4 }, maxClimb: 80,
+    // 4WD on paddle tyres: in normal mode it digs in instead of stepping out.
+    planted: { lateral: 1.3, kick: 0.3, loose: 0.45, wander: 0.35, yaw: 0.85, response: 1.4 },
     eye: { x: 0, y: 1.6, z: -0.1 }, shadow: [3.6, 4.8], paint: 0xf0c020,
   },
 };
@@ -1032,7 +1036,8 @@ export class Car {
       // tail steps out like a drift car; after release the grip comes back
       // over a short moment instead of snapping the car straight.
       const gm = GRIP_MODES[this.slideMode] || GRIP_MODES.normal;
-      const loose = surface.loose * gm.loose;
+      const pl = (this.slideMode === 'loose' ? null : this.spec.planted) || {};
+      const loose = surface.loose * gm.loose * (pl.loose ?? 1);
       this.slideGrip = input.handbrake ? 0 : Math.min(1, this.slideGrip + h / gm.recover);
       const sliding = input.handbrake || this.slideGrip < 1;
       const slip = Math.atan2(Math.abs(vR), Math.max(1.2, Math.abs(vF)));
@@ -1040,13 +1045,13 @@ export class Car {
       const shape = Math.sin(curveC * Math.atan(surface.slipK * gm.slipK * slip));
       const handbrake = input.handbrake ? 0.2 - loose * 0.06 : lerp(0.35, 1, this.slideGrip);
       const mu = surface.mu * bonus * handbrake;
-      const maxLat = Math.max(mu * 9.81 * surface.peak * gm.lateral * cosR, holdR);
+      const maxLat = Math.max(mu * 9.81 * surface.peak * gm.lateral * (pl.lateral ?? 1) * cosR, holdR);
       const latForce = -Math.sign(vR) * maxLat * clamp(shape, 0, 1) * clamp(Math.abs(vR) / 0.35, 0, 1);
       vR += latForce * h;
 
       // Ruts and loose stones make the tail wander a little.
       if (loose > 0 && Math.abs(vF) > 4) {
-        vR += (Math.random() - 0.5) * (1.2 + loose * 3) * h;
+        vR += (Math.random() - 0.5) * (1.2 + loose * 3) * (pl.wander ?? 1) * h;
       }
 
       // Steering: a bicycle model (yaw rate = v·tan δ / wheelbase) whose
@@ -1059,11 +1064,11 @@ export class Car {
       // Normal grip: the car may only ask for the yaw rate its tyres can
       // deliver (lateral grip / speed), so it tracks the steering instead of
       // sliding wide; loose mode allows 1.1 g plus a bonus on loose ground.
-      const yawFromGrip = (maxLat / Math.max(absV, 4)) * gm.yawByGrip;
+      const yawFromGrip = (maxLat / Math.max(absV, 4)) * gm.yawByGrip * (pl.yaw ?? 1);
       const yawArcade = ((surface.mu * 9.81 * 1.1) / Math.max(absV, 4)) * (1 + loose * 0.6);
       const yawCap = (gm.yawByGrip ? Math.min(yawFromGrip, yawArcade) : yawArcade) * (sliding ? 2.4 : 1);
       const targetYawVel = clamp(kinematic, -yawCap, yawCap) * clamp(absV / 1.5, 0, 1);
-      const gripResponse = input.handbrake ? 2.6 : sliding ? 4.5 : 8.0 - loose * 3;
+      const gripResponse = (input.handbrake ? 2.6 : sliding ? 4.5 : 8.0 - loose * 3) * (pl.response ?? 1);
       this.yawVel = damp(this.yawVel, targetYawVel, gripResponse, h);
       if (input.handbrake && absV > 5) {
         // Initiation: yank the tail round in the steered direction.
@@ -1072,8 +1077,9 @@ export class Car {
       }
       // Power oversteer on loose ground: a rear-engined car swings its tail.
       if (loose > 0 && drivetrain.throttle > 0.6 && absV > 6) {
-        this.yawVel += this.steer * drivetrain.throttle * loose * 1.6 * gm.kick * clamp(absV / 15, 0, 1) * h;
-        vR -= this.steer * drivetrain.throttle * loose * 2.2 * gm.kick * h;
+        const kick = gm.kick * (pl.kick ?? 1);
+        this.yawVel += this.steer * drivetrain.throttle * loose * 1.6 * kick * clamp(absV / 15, 0, 1) * h;
+        vR -= this.steer * drivetrain.throttle * loose * 2.2 * kick * h;
       }
       this.drifting = Math.abs(vR) > (2.6 - loose * 1.0) && Math.hypot(vF, vR) > 6;
 

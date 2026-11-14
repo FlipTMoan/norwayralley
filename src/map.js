@@ -3,6 +3,7 @@ import 'leaflet/dist/leaflet.css';
 import { logger } from './log.js';
 import { NORWAY_BOUNDS, isInNorway } from './worldgen.js';
 import { parseLatLon } from './geo.js';
+import { listRoutes, saveRoute, deleteRoute, describeSaved } from './saved.js';
 
 /**
  * 2D route picker (Phase 2 of the V3 plan).
@@ -29,7 +30,7 @@ function markerIcon(label, color) {
   });
 }
 
-export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
+export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null }) {
   const root = document.getElementById('mapPicker');
   const mapEl = document.getElementById('mapCanvas');
   const statusEl = document.getElementById('mapStatus');
@@ -39,6 +40,11 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
   const stageBtn = document.getElementById('mapUseStage');
   const freeBtn = document.getElementById('mapFreeDrive');
   const profileEl = document.getElementById('mapProfile');
+  const savedEl = document.getElementById('mapSaved');
+  const loadBtn = document.getElementById('mapLoad');
+  const deleteBtn = document.getElementById('mapDelete');
+  const saveNameEl = document.getElementById('mapSaveName');
+  const saveBtn = document.getElementById('mapSave');
   if (!root || !mapEl) log.error('map picker DOM is missing');
   let map = null;
   let boundsRect = null;
@@ -58,6 +64,30 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
     if (generateBtn) generateBtn.disabled = busy || !points.a || !points.b;
     if (generateBtn) generateBtn.textContent = busy ? 'ROUTING…' : 'GENERATE ROUTE';
     if (freeBtn) freeBtn.disabled = busy || !points.a || !onFreeDrive;
+    const picked = Boolean(savedEl?.value);
+    if (loadBtn) loadBtn.disabled = busy || !picked || !onLoad;
+    if (deleteBtn) deleteBtn.disabled = busy || !picked;
+    if (saveBtn) saveBtn.disabled = busy || !onSave;
+  }
+
+  /** Fill the saved-routes select, keeping the current choice if it still exists. */
+  function refreshSaved() {
+    if (!savedEl) return;
+    const current = savedEl.value;
+    const routes = listRoutes();
+    savedEl.innerHTML = '';
+    const head = document.createElement('option');
+    head.value = '';
+    head.textContent = routes.length ? `SAVED ROUTES (${routes.length})…` : 'NO SAVED ROUTES YET';
+    savedEl.appendChild(head);
+    for (const r of routes) {
+      const opt = document.createElement('option');
+      opt.value = r.name;
+      opt.textContent = `${r.name} — ${describeSaved(r)}`;
+      savedEl.appendChild(opt);
+    }
+    savedEl.value = routes.some((r) => r.name === current) ? current : '';
+    updateButtons();
   }
 
   function clearMarkers() {
@@ -85,14 +115,25 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
   function ensureMap() {
     if (map) return map;
     log.info('creating Leaflet map');
+    // Norway only: the map cannot be panned or zoomed out beyond the
+    // country's box, tiles are only requested inside it, and everything
+    // outside is shaded.
+    const norway = norwayBounds();
     map = L.map(mapEl, {
       zoomControl: true,
       attributionControl: true,
-      minZoom: 3,
+      minZoom: 4,
       maxZoom: 18,
-      worldCopyJump: true,
+      worldCopyJump: false,
+      maxBounds: norway.pad(0.02),
+      maxBoundsViscosity: 1.0,
     }).setView([64.5, 12], 4);
-    L.tileLayer(TILE_URL, { attribution: ATTRIBUTION, maxZoom: 19 }).addTo(map);
+    L.tileLayer(TILE_URL, { attribution: ATTRIBUTION, maxZoom: 19, bounds: norway }).addTo(map);
+    L.polygon([
+      [[-89, -180], [89, -180], [89, 180], [-89, 180]],
+      [[NORWAY_BOUNDS.minLat, NORWAY_BOUNDS.minLon], [NORWAY_BOUNDS.maxLat, NORWAY_BOUNDS.minLon],
+        [NORWAY_BOUNDS.maxLat, NORWAY_BOUNDS.maxLon], [NORWAY_BOUNDS.minLat, NORWAY_BOUNDS.maxLon]],
+    ], { stroke: false, fillColor: '#0b100d', fillOpacity: 0.82, interactive: false }).addTo(map);
     boundsRect = L.rectangle([[-1, -1], [1, 1]], {
       color: '#f0ce58',
       weight: 2,
@@ -135,6 +176,8 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
     const bounds = norwayBounds();
     if (boundsRect) boundsRect.setBounds(bounds);
     map.fitBounds(bounds, { padding: [12, 12] });
+    // Never zoom out past the whole country.
+    map.setMinZoom(Math.max(3, map.getBoundsZoom(bounds, false, L.point(12, 12))));
   }
 
   function terrainCorners(terrain) {
@@ -177,6 +220,7 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
     ensureMap();
     lastRoute = route;
     clearMarkers();
+    refreshSaved();
     setStatus('Click anywhere in Norway to set the START point, then the FINISH — or FREE DRIVE from the start.');
     root.classList.remove('hidden');
     visible = true;
@@ -274,6 +318,61 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null }) {
     coordEl.value = '';
     pick(ll.lat, ll.lon);
     map?.setView([ll.lat, ll.lon], Math.max(map.getZoom(), 12));
+  });
+  savedEl?.addEventListener('change', updateButtons);
+  saveBtn?.addEventListener('click', () => {
+    const described = onSave?.();
+    if (!described) {
+      setStatus('Nothing to save yet: drive a stage or free drive first, then save it here.', 'err');
+      return;
+    }
+    const name = saveNameEl?.value || '';
+    if (!name.trim()) {
+      setStatus('Give the route a name first.', 'err');
+      saveNameEl?.focus();
+      return;
+    }
+    const entry = saveRoute(name, described);
+    if (!entry) {
+      setStatus('Could not save (storage blocked?).', 'err');
+      return;
+    }
+    if (saveNameEl) saveNameEl.value = '';
+    refreshSaved();
+    savedEl.value = entry.name;
+    updateButtons();
+    setStatus(`Saved "${entry.name}". Pick it from SAVED ROUTES any time.`, 'ok');
+    log.info(`saved route "${entry.name}" (${described.kind})`);
+  });
+  deleteBtn?.addEventListener('click', () => {
+    const name = savedEl?.value;
+    if (!name) return;
+    deleteRoute(name);
+    refreshSaved();
+    setStatus(`Deleted "${name}".`);
+  });
+  loadBtn?.addEventListener('click', async () => {
+    const name = savedEl?.value;
+    const entry = listRoutes().find((r) => r.name === name);
+    if (!entry || !onLoad || busy) return;
+    busy = true;
+    updateButtons();
+    setStatus(`Loading "${entry.name}"…`);
+    try {
+      const answer = await onLoad(entry.route);
+      setStatus(answer.message, answer.ok ? 'ok' : 'err');
+      if (answer.ok) {
+        busy = false;
+        close();
+        return;
+      }
+    } catch (error) {
+      log.error('saved route failed', error);
+      setStatus(error.message || 'Could not load that route.', 'err');
+    } finally {
+      busy = false;
+      updateButtons();
+    }
   });
   closeBtn?.addEventListener('click', close);
   stageBtn?.addEventListener('click', useStage);
