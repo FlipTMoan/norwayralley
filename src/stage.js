@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
-import { smoothRoadHeights, meanSpacing, RIBBON_SHOULDER, ROAD_HALF_STANDARD } from './corridor.js';
+import { smoothRoadHeights, meanSpacing, assignEdgeHeights, RIBBON_SHOULDER, LANES, flatHalf } from './corridor.js';
 import { cache } from './cache.js';
 
 /** How far the gravel ribbon floats above the carved ground. The car rides on
@@ -60,11 +60,12 @@ class MinHeap {
  *  query used for road grip, progress and the HUD.                     *
  * ------------------------------------------------------------------ */
 export class StageRoute {
-  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = ROAD_HALF_STANDARD, surface = 'gravel' } = {}) {
+  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = LANES.one.half, cutHalf = null, surface = 'gravel' } = {}) {
     this.terrain = terrain;
     this.name = name;
     this.source = source;
     this.roadWidth = roadWidth;
+    this.cutHalf = cutHalf ?? Math.max(LANES.one.cut, flatHalf(roadWidth)); // half width of the cut-through
     this.surface = surface; // default surface kind until NVDB / OSM say otherwise
     this.points = points;
     this.samples = this.prepareSamples(points);
@@ -102,6 +103,8 @@ export class StageRoute {
     const raw = s.map((p) => terrain.sampleBase ? terrain.sampleBase(p.x, p.z) : terrain.sample(p.x, p.z));
     const smooth = smoothRoadHeights(raw, meanSpacing(s), { window });
     for (let i = 0; i < s.length; i++) s[i].roadY = smooth[i];
+    const ground = terrain.sampleBaseCoarse || terrain.sampleBase || terrain.sample;
+    assignEdgeHeights(s, this.cutHalf, (x, z) => ground.call(terrain, x, z));
     return this;
   }
 
@@ -149,6 +152,8 @@ export class StageRoute {
     // The road height is interpolated along the same segment.
     let distance = Math.sqrt(best);
     let roadY = p.roadY ?? p.y;
+    let edgeL = p.edgeL ?? null;
+    let edgeR = p.edgeR ?? null;
     for (const [p0, p1] of [[prev, p], [p, next]]) {
       const dx = p1.x - p0.x;
       const dz = p1.z - p0.z;
@@ -159,11 +164,16 @@ export class StageRoute {
       if (d <= distance) {
         distance = d;
         roadY = (p0.roadY ?? p0.y) + ((p1.roadY ?? p1.y) - (p0.roadY ?? p0.y)) * t;
+        edgeL = p0.edgeL != null && p1.edgeL != null ? p0.edgeL + (p1.edgeL - p0.edgeL) * t : edgeL;
+        edgeR = p0.edgeR != null && p1.edgeR != null ? p0.edgeR + (p1.edgeR - p0.edgeR) * t : edgeR;
       }
     }
     return {
       distance,
       roadY,
+      edgeL,
+      edgeR,
+      cut: this.cutHalf,
       index: bi,
       progress: this.length > 0 ? p.s / this.length : 0,
       point: p,
@@ -476,7 +486,8 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
     smooth: 3,
     spacing: 4,
     simplifyEpsilon: 2.2,
-    roadWidth: ROAD_HALF_STANDARD,
+    roadWidth: LANES.one.half,
+    cutHalf: LANES.one.cut,
   });
 }
 
@@ -795,7 +806,8 @@ export function buildOsrmRoute(terrain, geometry, { requireInside = true } = {})
     smooth: 1,
     spacing: 5,
     simplifyEpsilon: 2,
-    roadWidth: profile === 'driving' ? ROAD_HALF_STANDARD : 1.6,
+    roadWidth: profile === 'driving' ? LANES.two.half : LANES.one.half,
+    cutHalf: profile === 'driving' ? LANES.two.cut : LANES.one.cut,
     surface: profile === 'driving' ? 'asphalt' : 'gravel',
   });
   if (route.length < 20) {

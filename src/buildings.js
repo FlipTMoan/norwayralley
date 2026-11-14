@@ -217,6 +217,7 @@ function parseElements(elements) {
         surface: tags.surface || null,
         maxspeed: Number(tags.maxspeed) || null,
         oneway: tags.oneway === 'yes',
+        lanes: tags.lanes || null,
         points: el.geometry,
       });
       continue;

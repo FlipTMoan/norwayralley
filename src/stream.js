@@ -8,7 +8,7 @@ import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './land
 import { buildChunkWater, waterAt } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
-import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights, ASPHALT_HEX, GRAVEL_HEX, ROAD_HALF_STANDARD } from './corridor.js';
+import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights, assignEdgeHeights, ASPHALT_HEX, GRAVEL_HEX, LANES } from './corridor.js';
 import { createFineTiles } from './fine.js';
 import { logger } from './log.js';
 
@@ -842,6 +842,7 @@ export async function createStreamingWorld({
       samples[i].roadY = smooth[i];
       samples[i].y = samples[i].roadY + ROAD_LIFT;
     }
+    assignEdgeHeights(samples, route.cutHalf, (x, z) => corridorSample(x, z) ?? fallbackSample(x, z));
     route.start = samples[0];
     route.finish = samples[samples.length - 1];
   }
@@ -867,9 +868,9 @@ export async function createStreamingWorld({
     let run = [];
     for (const p of route.samples) {
       if (inside(p)) run.push(p);
-      else if (run.length) { if (run.length >= 2) lines.push({ half: route.roadWidth, surface: route.surface, samples: run }); run = []; }
+      else if (run.length) { if (run.length >= 2) lines.push({ half: route.roadWidth, cut: route.cutHalf, surface: route.surface, samples: run }); run = []; }
     }
-    if (run.length >= 2) lines.push({ half: route.roadWidth, surface: route.surface, samples: run });
+    if (run.length >= 2) lines.push({ half: route.roadWidth, cut: route.cutHalf, surface: route.surface, samples: run });
     return lines;
   }
 
@@ -1263,7 +1264,7 @@ export async function createStreamingWorld({
     if (!chunk.osm) return;
     const route = world.route;
     const roads = prepareChunkRoads(chunk.osm.roads, world, { x0: chunk.x0, z0: chunk.z0, size: CHUNK }, {
-      avoid: route ? { index: world.routeIndex, distance: route.roadWidth + 7 } : null,
+      avoid: route ? { index: world.routeIndex, distance: route.cutHalf + 4 } : null,
     });
     chunk.osmRoads = roads;
     if (chunk.surfaces?.length) surfaceOsmLines(roads, chunk.surfaces);
@@ -1311,6 +1312,7 @@ export async function createStreamingWorld({
     const local = {
       samples,
       roadWidth: roadRef.roadWidth,
+      cutHalf: roadRef.cutHalf,
       length: roadRef.length,
       nearest: (x, z) => roadRef.nearest(x, z),
     };
@@ -1708,7 +1710,8 @@ export async function createStreamingWorld({
     smooth: 1,
     spacing: 5,
     simplifyEpsilon: 2,
-    roadWidth: profile === 'driving' ? ROAD_HALF_STANDARD : 1.6,
+    roadWidth: profile === 'driving' ? LANES.two.half : LANES.one.half,
+    cutHalf: profile === 'driving' ? LANES.two.cut : LANES.one.cut,
     surface: profile === 'driving' ? 'asphalt' : 'gravel',
   });
   if (route.length < 20) {

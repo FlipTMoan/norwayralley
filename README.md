@@ -205,11 +205,13 @@ builder still works only inside the loaded world.
   down. The start screen shows the size and has a CLEAR button.
 - **Carved roads**: the route is stamped into the shared height field before
   the terrain mesh is rebuilt, so the visible surface, the gravel ribbon and
-  the physics agree on where the road is. The flat cut-out is 6 m wide
-  (2.1 m half width plus 0.9 m shoulders; only trunk roads and motorways are
-  wider), and road heights are graded (three passes of a ±60 m running
-  mean), so the carriageway is smooth while the embankments and cuttings of
-  the corridor follow the ground.
+  the physics agree on where the road is. Roads are terraces cut through the
+  DTM: a two-lane road is 6.5 m wide with 1 m shoulders inside a 16 m
+  cut-through, a single-lane road 2.5 m wide with 1 m shoulders inside a 6 m
+  one (OSM `lanes` or class decides). Inside the cut-through the ground is
+  flat from shoulder to shoulder at the graded road height (three passes of
+  a ±60 m running mean) and blends to the natural ground at the edge, whose
+  height is smoothed along the road too; outside it the DTM is untouched.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.

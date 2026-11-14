@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, damp, lerp, wrapAngle } from './geo.js';
 import { ROAD_RIBBON_LIFT, ROAD_CROWN, ROAD_SHOULDER } from './stage.js';
-import { profileHeight, corridorReach, ROAD_LIFT } from './corridor.js';
+import { profileHeight, corridorReach, flatHalf, ROAD_LIFT } from './corridor.js';
 import { pushOutOfBox } from './buildings.js';
 
 // Porsche 911 (classic rally spec) proportions, metres.
@@ -795,9 +795,13 @@ export class Car {
     if (this.route) {
       const q = this.route.nearest(x, z);
       const half = q.width ?? this.route.roadWidth;
-      if (q.roadY != null && Number.isFinite(q.distance) && q.distance <= corridorReach(half)) {
+      const cut = q.cut ?? this.route.cutHalf ?? flatHalf(half);
+      if (q.roadY != null && Number.isFinite(q.distance) && q.distance <= corridorReach(half, cut)) {
         const ground = this.terrain.sampleBase ? this.terrain.sampleBase(x, z) : this.terrain.sample(x, z);
-        return profileHeight(q.roadY + ROAD_LIFT, ground, q.distance, half) + this.surfaceLift(q.distance, half);
+        // Which side of the road: the left normal is (-tz, tx), like the carve.
+        const leftSide = (x - q.point.x) * -q.tangent.z + (z - q.point.z) * q.tangent.x >= 0;
+        const edge = leftSide ? q.edgeL : q.edgeR;
+        return profileHeight(q.roadY + ROAD_LIFT, ground, q.distance, half, cut, edge ?? null) + this.surfaceLift(q.distance, half);
       }
     }
     return this.terrain.sample(x, z) + this.roadLift;

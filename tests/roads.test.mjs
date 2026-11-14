@@ -18,7 +18,9 @@ test('prepareChunkRoads clips, resamples and smooths a road', () => {
   assert.ok(s.length > 300, 'resampled at 5 m');
   const bumps = s.map((p) => Math.abs(p.roadY - (100 + 50))).reduce((a, b) => Math.max(a, b), 0);
   assert.ok(bumps < 0.2, `road height smoothed (max deviation ${bumps.toFixed(2)})`);
-  assert.equal(lines[0].half, 2.1, 'ordinary roads: 2.1 m half → 6 m cut-out');
+  assert.equal(lines[0].half, 3.25, 'tertiary: two-lane carriageway');
+  assert.equal(lines[0].cut, 8, 'two-lane: 16 m cut-through');
+  assert.ok(Number.isFinite(lines[0].samples[10].edgeL) && Number.isFinite(lines[0].samples[10].edgeR), 'rim heights assigned');
   assert.ok(lines[0].paved);
   assert.ok(!isPaved({ kind: 'track' }) && isPaved({ kind: 'track', surface: 'asphalt' }));
 });
@@ -38,13 +40,13 @@ test('carvePolylines carves the engineered profile into a grid', () => {
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) heights[j * n + i] = 50 + i * 0.5; // ground 66 under the road
   const samples = [];
   for (let z = -10; z <= 270; z += 5) samples.push({ x: 128, z, roadY: 70 }); // road 4 m above the ground: on fill
-  const touched = carvePolylines({ heights, x0: 0, z0: 0, cell, n }, [{ half: 3.1, samples }], { lift: 0.12 }); // 4 m flat band
+  const touched = carvePolylines({ heights, x0: 0, z0: 0, cell, n }, [{ half: 3.25, cut: 8, samples }], { lift: 0.12 }); // two-lane terrace
   assert.ok(touched > 0);
   const at = (x, z) => heights[(z / cell) * n + x / cell];
   assert.ok(Math.abs(at(128, 100) - 70.12) < 1e-4, 'centre at road height');
-  const fill = 70.12 - 4 / 1.5 - 0.3; // 4 m beyond the shoulder, minus the carve margin
-  assert.ok(Math.abs(at(120, 100) - fill) < 1e-3, `embankment low side ${at(120, 100)}`);
-  assert.ok(Math.abs(at(136, 100) - fill) < 1e-3, `embankment high side ${at(136, 100)}`);
+  assert.ok(Math.abs(at(124, 100) - 70.12) < 1e-4 && Math.abs(at(132, 100) - 70.12) < 1e-4, 'flat shoulder to shoulder (4 m < 4.25 m)');
+  assert.ok(Math.abs(at(120, 100) - (50 + 120 / 8)) < 1e-3, `terrace meets the ground at the cut-through edge ${at(120, 100)}`);
+  assert.ok(Math.abs(at(136, 100) - (50 + 136 / 8)) < 1e-3, `… on the high side too ${at(136, 100)}`);
   assert.equal(at(200, 100), 50 + 50 * 0.5, 'untouched beyond the reach');
 });
 

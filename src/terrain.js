@@ -204,9 +204,9 @@ export function createTerrainModel({
      * cuttings — see corridor.js) into the height field from the untouched
      * survey heights, so the visible ground, the ribbon and the car agree.
      */
-    carveRoad(samples, { halfWidth = 5.4, lift = 0.12 } = {}) {
+    carveRoad(samples, { halfWidth = 5.4, cut = null, surface = 'gravel', lift = 0.12 } = {}) {
       if (!samples || samples.length < 2) return 0;
-      const half = Math.max(1.5, halfWidth - 1.2);
+      const half = Math.max(1.0, halfWidth - 1.2);
       return carveProfile({
         heights,
         base: baseHeights,
@@ -214,7 +214,7 @@ export function createTerrainModel({
         z0: -sizeZ / 2,
         cell: sizeX / (grid - 1),
         n: grid,
-      }, [{ half, samples }], { lift });
+      }, [{ half, cut, surface, samples }], { lift });
     },
 
     /**

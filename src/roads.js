@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
-import { carveProfile, smoothRoadHeights, ROAD_HALF_STANDARD } from './corridor.js';
+import { carveProfile, smoothRoadHeights, assignEdgeHeights, LANES } from './corridor.js';
 import { cachedJson } from './cache.js';
 
 /**
@@ -17,14 +17,22 @@ import { cachedJson } from './cache.js';
  */
 
 /** Half width in metres per OSM highway class. */
-// Half widths of the ribbon. With the 0.9 m shoulders the flat cut-out is
-// 6 m wide for every ordinary road (ROAD_HALF_STANDARD); only the biggest
-// roads are wider.
-export const ROAD_HALF = {
-  motorway: 4.1, trunk: 3.1, primary: 3.1, secondary: ROAD_HALF_STANDARD, tertiary: ROAD_HALF_STANDARD,
-  unclassified: ROAD_HALF_STANDARD, residential: ROAD_HALF_STANDARD, living_street: ROAD_HALF_STANDARD,
-  service: ROAD_HALF_STANDARD, track: ROAD_HALF_STANDARD,
-};
+const ROAD_KINDS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service', 'track']);
+const TWO_LANE_KINDS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
+
+/**
+ * Two-lane or single-lane: OSM `lanes` when tagged, else by class (the
+ * numbered road network is two-lane, everything smaller single-lane).
+ * Returns `{ half, cut }` from `LANES`, or null for a kind the game ignores.
+ */
+export function laneSpec(road) {
+  if (!ROAD_KINDS.has(road.kind)) return null;
+  const lanes = Number(road.lanes);
+  const two = lanes >= 2 || (!(lanes >= 1) && TWO_LANE_KINDS.has(road.kind));
+  return two ? LANES.two : LANES.one;
+}
+/** Carriageway half width by class, for callers that only have the kind. */
+export const ROAD_HALF = new Proxy({}, { get: (_, kind) => laneSpec({ kind })?.half });
 const UNPAVED = /^(gravel|unpaved|dirt|ground|compacted|fine_gravel|earth|grass|sand|mud|pebblestone)$/;
 
 export function isPaved(road) {
@@ -62,8 +70,9 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
   const inside = (p) => p.x >= minX && p.x <= maxX && p.z >= minZ && p.z <= maxZ;
   const out = [];
   for (const road of roads || []) {
-    const half = ROAD_HALF[road.kind];
-    if (!half) continue;
+    const spec = laneSpec(road);
+    if (!spec) continue;
+    const { half, cut } = spec;
     const world = road.points.map((p) => terrain.worldFromLatLon(p.lat, p.lon));
     if (!world.some(inside)) continue;
     const samples = resample(world, 5);
@@ -77,6 +86,8 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
     // of a road agrees exactly where they overlap (sample i is the same point
     // in every copy: the way is resampled from its first node every time).
     // New stretches are eased onto the known ones instead of stepping.
+    samples.forEach((p, i) => { p.roadY = smooth[i]; });
+    assignEdgeHeights(samples, cut, (x, z) => ground.call(terrain, x, z));
     const registry = terrain.roadHeights;
     if (registry && road.id != null) {
       const known = registry.get(road.id);
@@ -89,19 +100,29 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
             if (known.has(i - d)) { k = i - d; break; }
             if (known.has(i + d)) { k = i + d; break; }
           }
-          if (k >= 0) smooth[i] += (known.get(k) - smooth[k]) * (1 - Math.abs(i - k) / FADE);
+          if (k >= 0) {
+            const w = 1 - Math.abs(i - k) / FADE;
+            const kn = known.get(k);
+            samples[i].roadY += (kn.y - samples[k].roadY) * w;
+            samples[i].edgeL += (kn.l - samples[k].edgeL) * w;
+            samples[i].edgeR += (kn.r - samples[k].edgeR) * w;
+          }
         }
-        for (let i = 0; i < samples.length; i++) if (known.has(i)) smooth[i] = known.get(i);
+        for (let i = 0; i < samples.length; i++) {
+          const kn = known.get(i);
+          if (kn) { samples[i].roadY = kn.y; samples[i].edgeL = kn.l; samples[i].edgeR = kn.r; }
+        }
       }
       const store = known || new Map();
-      for (let i = 0; i < samples.length; i++) if (!store.has(i)) store.set(i, smooth[i]);
+      for (let i = 0; i < samples.length; i++) {
+        if (!store.has(i)) store.set(i, { y: samples[i].roadY, l: samples[i].edgeL, r: samples[i].edgeR });
+      }
       registry.set(road.id, store);
     }
-    samples.forEach((p, i) => { p.roadY = smooth[i]; });
     // Split into runs that are inside the padded chunk and away from the route.
     let run = [];
     const flush = () => {
-      if (run.length >= 3) out.push(finishRun(run, road, half));
+      if (run.length >= 3) out.push(finishRun(run, road, half, cut));
       run = [];
     };
     for (const p of samples) {
@@ -113,15 +134,15 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
   return out;
 }
 
-function finishRun(points, road, half) {
+function finishRun(points, road, half, cut) {
   const samples = [];
   let s = 0;
   for (let i = 0; i < points.length; i++) {
     if (i > 0) s += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-    samples.push({ x: points[i].x, z: points[i].z, roadY: points[i].roadY, y: points[i].roadY, s });
+    samples.push({ x: points[i].x, z: points[i].z, roadY: points[i].roadY, y: points[i].roadY, edgeL: points[i].edgeL, edgeR: points[i].edgeR, s });
   }
   const paved = isPaved(road);
-  return { id: road.id ?? null, kind: road.kind, name: road.name, half, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };
+  return { id: road.id ?? null, kind: road.kind, name: road.name, half, cut, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };
 }
 
 /**
@@ -182,7 +203,7 @@ export class RoadNetwork {
     for (const line of polylines) {
       const s = line.samples;
       for (let k = 0; k + 1 < s.length; k++) {
-        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, half: line.half, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
+        const seg = { ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, al: s[k].edgeL ?? null, bl: s[k + 1].edgeL ?? null, ar: s[k].edgeR ?? null, br: s[k + 1].edgeR ?? null, half: line.half, cut: line.cut ?? null, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
         const bx = Math.floor(((seg.ax + seg.bx) / 2) / this.cell);
         const bz = Math.floor(((seg.az + seg.bz) / 2) / this.cell);
         const key = this.key(bx, bz);
@@ -233,7 +254,7 @@ export class RoadNetwork {
       }
     }
     if (!best) {
-      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, paved: false, surface: 'gravel', roadY: null };
+      return { distance: Infinity, index: 0, progress: 0, point: { x, z }, tangent: { x: 0, z: 1 }, width: this.roadWidth, cut: null, paved: false, surface: 'gravel', roadY: null, edgeL: null, edgeR: null };
     }
     const dx = best.bx - best.ax;
     const dz = best.bz - best.az;
@@ -245,9 +266,12 @@ export class RoadNetwork {
       point: { x: best.ax + dx * bestT, z: best.az + dz * bestT },
       tangent: { x: dx / l, z: dz / l },
       width: best.half,
+      cut: best.cut,
       paved: best.paved,
       surface: best.surface,
       roadY: best.ay + (best.by - best.ay) * bestT,
+      edgeL: best.al != null && best.bl != null ? best.al + (best.bl - best.al) * bestT : null,
+      edgeR: best.ar != null && best.br != null ? best.ar + (best.br - best.ar) * bestT : null,
     };
   }
 

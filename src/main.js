@@ -402,6 +402,7 @@ function describeRoute() {
       kind: 'baked',
       name: route.name,
       roadWidth: route.roadWidth,
+      cutHalf: route.cutHalf,
       surface: route.surface,
       points: route.samples.filter((_, i) => i % 2 === 0).map((p) => [+p.x.toFixed(1), +p.z.toFixed(1)]),
     };
@@ -445,7 +446,7 @@ async function applyDescribedRoute(shared, { from = 'room' } = {}) {
       const points = shared.points.map(([x, z]) => ({ x, z }));
       const sharedRoute = makeRoute(points, terrain, {
         simplify: false, smooth: 0, spacing: 4, name: shared.name || 'Shared stage', source: 'shared',
-        roadWidth: shared.roadWidth || 2.1, surface: shared.surface || 'gravel',
+        roadWidth: shared.roadWidth || 1.25, cutHalf: shared.cutHalf || null, surface: shared.surface || 'gravel',
       });
       setRoute(sharedRoute, { announce: false });
     }
@@ -950,6 +951,8 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
   nextRoute.assignRoadY(terrain);
   const carved = log.time('carve road', () => terrain.carveRoad(nextRoute.samples, {
     halfWidth: nextRoute.roadWidth + 1.2,
+    cut: nextRoute.cutHalf,
+    surface: nextRoute.surface,
   }));
   nextRoute.snapToTerrain();
   log.debug(`carved ${carved} height samples for ${nextRoute.name}`);

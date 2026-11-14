@@ -23,14 +23,25 @@ _Updated 2026-11-14._
   demo tile). The footprints stay in the collision index, so a hidden house
   cannot be driven through either once you reach it (it appears first).
 
-### Changed — a 6 m cut-out and smoother grading
-- Every ordinary road is now 2.1 m half width + 0.9 m shoulders: the flat
-  cut-out carved into the ground is exactly 6 m wide (`CUTOUT_WIDTH`), and
-  the flat shoulder of the profile ends where the ribbon ends (no lip). Only
-  motorways (10 m), trunk and primary roads (8 m) are wider. Stage routes,
-  OSM roads and the demo stage all use it; foot/bike trails are 1.6 m half.
-- Road grading window ±60 m × 3 passes (was 45 m): the carriageway is
-  smoother still, the embankments and cuttings take up the rest.
+### Changed — the road is a terrace cut through the DTM
+- Two road classes (`LANES`): a normal **two-lane** road is 6.5 m wide with
+  1 m shoulders inside a **16 m cut-through**; a **single-lane** road is 2.5 m
+  wide with 1 m shoulders inside a **6 m cut-through**. OSM roads use the
+  `lanes` tag when present, else the class (numbered roads two-lane, the
+  rest single-lane); driving stages are two-lane, generated and trail
+  stages single-lane.
+- The profile is now a terrace: flat from shoulder to shoulder at the graded
+  road height, blending (smoothstep) to the natural ground at the
+  cut-through edge, with a 1.5 m feather outside; the DTM beyond is
+  untouched. The rim heights are the ground at the cut-through edges,
+  smoothed along the road (`assignEdgeHeights`), so the terrace runs smooth
+  in the road direction and is only reshaped across it from shoulder to
+  shoulder. Replaces the 1:1.5 fill / 1:1 cut slopes with a 24 m reach.
+- Road grading window ±60 m × 3 passes (was 45 m). Chunk copies of a road
+  share rim heights through the same registry as the road heights.
+- Car, ribbon, corridor mesh, coarse chunks and 1 m tiles all evaluate the
+  same profile (edge heights travel with the route and road-network
+  queries).
 
 ### Added — solid houses
 - Every placed house keeps its oriented footprint; `BuildingIndex` (64 m
