@@ -44,9 +44,33 @@ test('session relays guest state and routes without a network (fake connections)
   assert.equal(states.length, 1);
   assert.ok(sent.b.some((m) => m.t === 's' && m.from === 'a'), 'state is fanned out to the other guest');
   assert.ok(!sent.a.some((m) => m.t === 's'), 'not echoed back to its sender');
+  // A guest picks a new stage: the host learns it (with who sent it) and
+  // relays it to the others, not back to the sender; late joiners get it.
+  const routes = [];
+  host.addEventListener('route', (e) => routes.push(e.detail));
+  const pick = { kind: 'free', center: { lat: 60, lon: 7 } };
+  a.handlers.data({ t: 'route', route: pick });
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].from, 'a');
+  assert.deepEqual(routes[0].route, pick);
+  const before = { a: sent.a.length, b: sent.b.length };
+  host.sendRoute(pick, 'a');
+  assert.equal(sent.a.length, before.a, 'not echoed to the guest who picked it');
+  assert.ok(sent.b.slice(before.b).some((m) => m.t === 'route' && m.route.kind === 'free'), 'relayed to the other guest');
+  assert.deepEqual(host.routeMessage.route, pick, 'kept for late joiners');
   b.handlers.close();
   assert.equal(host.playerCount, 2);
   assert.ok(sent.a.some((m) => m.t === 'leave' && m.id === 'b'));
+});
+
+test('a guest session sends its stage pick to the host', () => {
+  const guest = new Session({ name: 'G' });
+  guest.isHost = false;
+  const sent = [];
+  guest.conns.set('host', { open: true, send: (m) => sent.push(m) });
+  guest.sendRoute({ kind: 'baked', points: [[0, 0], [1, 1], [2, 2]] });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].t, 'route');
 });
 
 test('starting grid keeps every player apart and on the road', () => {

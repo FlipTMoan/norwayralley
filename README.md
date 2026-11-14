@@ -184,6 +184,10 @@ builder still works only inside the loaded world.
   decimated) chosen by distance to the car, with vertical skirts hiding LOD
   seams. The car still drives on the full-resolution height field, and all LOD
   geometry is built up front so switching detail never causes a hitch.
+- **Rooms**: host or join with a 4-letter code; everyone drives the same
+  stage. Whoever picks a new stage, loads a saved route, scouts with N or
+  starts a free drive, the whole room follows (guests hand their pick to the
+  host, who relays it), and late joiners get the current stage on arrival.
 - **Local cache**: every elevation tile, Overpass answer, NVDB sign and
   surface record, SR16 forest image, OSRM route and map tile is kept in the
   browser's IndexedDB, up to 10 GB with least-recently-used eviction, so a

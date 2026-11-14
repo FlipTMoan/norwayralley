@@ -408,9 +408,14 @@ function describeRoute() {
   return null;
 }
 
-/** Host: tell the room which stage we are on (also kept for late joiners). */
+/**
+ * Tell the room which stage we are on, whoever we are: the host broadcasts
+ * (and keeps it for late joiners), a guest hands it to the host who drives
+ * it too and relays it. Nothing is sent while we are applying a stage that
+ * came from the room, so a shared stage never bounces back and forth.
+ */
 function shareRoute() {
-  if (!session?.isHost) return;
+  if (!session || applyingSharedRoute) return;
   const described = describeRoute();
   if (described) session.sendRoute(described);
 }
@@ -493,7 +498,12 @@ function bindSession(s) {
   s.addEventListener('error', (e) => { friendsStatus(e.detail.message, 'err'); toast(e.detail.message, 'error'); });
   s.addEventListener('peer-join', () => { updatePlayersBadge(); shareRoute(); });
   s.addEventListener('peer-leave', (e) => { disposeGhost(e.detail.id); updatePlayersBadge(); });
-  s.addEventListener('route', (e) => applyDescribedRoute(e.detail.route));
+  s.addEventListener('route', async (e) => {
+    const { route: shared, from } = e.detail;
+    const result = await applyDescribedRoute(shared);
+    // Host: a guest's pick becomes the room's stage for everyone else too.
+    if (s.isHost && from && result.ok) s.sendRoute(shared, from);
+  });
   s.addEventListener('slot', () => {
     applyPaint();
     // Move to my grid slot unless I am already driving.

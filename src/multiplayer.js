@@ -201,6 +201,10 @@ export class Session extends EventTarget {
       if (peer) { peer.track.push(msg, performance.now()); if (msg.k) peer.kind = msg.k; }
       this.emit('state', { id, state: msg });
       this.broadcast({ ...msg, from: id }, id);
+    } else if (msg.t === 'route' && msg.route) {
+      // A guest picked a new stage: the host drives it too and passes it on
+      // (main.js calls sendRoute(route, id) after applying it).
+      this.emit('route', { route: msg.route, from: id });
     }
   }
 
@@ -297,11 +301,19 @@ export class Session extends EventTarget {
     return true;
   }
 
-  /** Host only: tell everyone which stage to load (and remember it for joiners). */
-  sendRoute(route) {
-    if (!this.isHost) return;
-    this.routeMessage = { t: 'route', route };
-    this.broadcast(this.routeMessage);
+  /**
+   * Tell the room which stage to load. The host broadcasts (and remembers
+   * it for late joiners), skipping `exceptId` when relaying a guest's pick;
+   * a guest sends it to the host, who applies it and relays it.
+   */
+  sendRoute(route, exceptId = null) {
+    const message = { t: 'route', route };
+    if (this.isHost) {
+      this.routeMessage = message;
+      this.broadcast(message, exceptId);
+    } else {
+      try { this.conns.get('host')?.send(message); } catch (error) { log.debug(`route to host failed: ${error.message}`); }
+    }
   }
 
   get playerCount() { return this.peers.size + 1; }

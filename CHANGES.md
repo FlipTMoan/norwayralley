@@ -17,6 +17,14 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Fixed — everyone in a room drives the same stage
+- Only the host used to share its stage; a guest who picked a new stage,
+  loaded a saved route or scouted with N silently drove something else.
+  Now any player's stage change goes to the room: a guest sends it to the
+  host, the host drives it and relays it to the others (not back to the
+  sender) and keeps it for late joiners. Applying a stage that came from the
+  room never re-shares it, so nothing bounces.
+
 ### Added — a 10 GB local cache for everything fetched
 - `cache.js`: an IndexedDB store (ArrayBuffer / Blob / JSON) with a byte
   budget (10 GB) and least-recently-used eviction; parallel asks for one key
