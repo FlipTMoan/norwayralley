@@ -56,7 +56,7 @@ function markerIcon(label, color) {
   });
 }
 
-export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null }) {
+export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null, onShare = null }) {
   const root = document.getElementById('mapPicker');
   const mapEl = document.getElementById('mapCanvas');
   const statusEl = document.getElementById('mapStatus');
@@ -71,6 +71,7 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
   const deleteBtn = document.getElementById('mapDelete');
   const saveNameEl = document.getElementById('mapSaveName');
   const saveBtn = document.getElementById('mapSave');
+  const shareBtn = document.getElementById('mapShare');
   if (!root || !mapEl) log.error('map picker DOM is missing');
   let map = null;
   let boundsRect = null;
@@ -415,6 +416,17 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
     updateButtons();
     setStatus(`Saved "${entry.name}". Pick it from SAVED ROUTES any time.`, 'ok');
     log.info(`saved route "${entry.name}" (${described.kind})`);
+  });
+  shareBtn?.addEventListener('click', async () => {
+    const url = onShare?.();
+    if (!url) {
+      setStatus('Nothing to share yet: drive a stage or free drive first.', 'err');
+      return;
+    }
+    let copied = false;
+    try { await navigator.clipboard.writeText(url); copied = true; } catch { /* no clipboard permission: the link is shown below */ }
+    setStatus(`${copied ? 'Link copied: ' : 'Share this link: '}${url}`, 'ok');
+    log.info(`share link ${url}`);
   });
   deleteBtn?.addEventListener('click', () => {
     const name = savedEl?.value;

@@ -76,3 +76,11 @@ test('NVDB Massetype maps to surface kinds and assigns to samples', () => {
   assert.equal(samples[30].surface, 'gravel');
   assert.equal(samples[0].surface, 'asphalt');
 });
+
+test('sliding levels 0–3 slide progressively more in the same corner', async () => {
+  const { SLIDE_LEVELS } = await import('../src/car.js');
+  assert.deepEqual(SLIDE_LEVELS, ['minimal', 'normal', 'medium', 'loose']);
+  const slides = SLIDE_LEVELS.map((mode) => corner('gravel', 80, 1.2, mode).slidePeak);
+  for (let i = 1; i < slides.length; i++) assert.ok(slides[i] >= slides[i - 1] * 0.98, `level ${i} (${slides[i].toFixed(2)}) slides at least as much as level ${i - 1} (${slides[i - 1].toFixed(2)})`);
+  assert.ok(slides[3] > slides[0] * 1.5, `loose (${slides[3].toFixed(2)}) well beyond minimal (${slides[0].toFixed(2)})`);
+});

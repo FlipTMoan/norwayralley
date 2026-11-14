@@ -96,9 +96,13 @@ const SURFACES = {
  * drift feel where the tail comes round on every corner.
  */
 export const GRIP_MODES = {
-  normal: { lateral: 1.3, slipK: 1.6, loose: 0.4, yawByGrip: 0.95, recover: 0.45, kick: 0.6 },
-  loose: { lateral: 1.0, slipK: 1.0, loose: 1.0, yawByGrip: 0, recover: 0.7, kick: 1.0 },
+  minimal: { lateral: 1.5, slipK: 2.2, loose: 0.2, yawByGrip: 0.9, recover: 0.35, kick: 0.3 },   // 0: planted, slides only when thrown
+  normal: { lateral: 1.3, slipK: 1.6, loose: 0.4, yawByGrip: 0.95, recover: 0.45, kick: 0.6 },   // 1: natural grip
+  medium: { lateral: 1.15, slipK: 1.3, loose: 0.7, yawByGrip: 1.15, recover: 0.55, kick: 0.8 },  // 2: lively tail
+  loose: { lateral: 1.0, slipK: 1.0, loose: 1.0, yawByGrip: 0, recover: 0.7, kick: 1.0 },        // 3: arcade drift
 };
+/** Sliding levels 0–3, in order; `slideMode` holds the name. */
+export const SLIDE_LEVELS = ['minimal', 'normal', 'medium', 'loose'];
 const MAX_STEER_LOW = 0.6;         // rad of front-wheel angle at walking pace
 const MAX_STEER_HIGH = 0.08;       // rad at 50 m/s
 
@@ -362,7 +366,7 @@ export class Car {
     this.wheelSpin = 0;
     this.rearSpin = 0;        // rear wheels stop turning on the handbrake
     this.slideGrip = 1;       // 0 right after a handbrake slide, recovers to 1
-    this.slideMode = 'normal'; // 'normal' | 'loose' (see GRIP_MODES)
+    this.slideMode = 'minimal'; // one of SLIDE_LEVELS (see GRIP_MODES); 0 = minimal is the default
     this.wheelCompression = [0, 0, 0, 0];
 
     // Drivetrain state.
@@ -1048,8 +1052,8 @@ export class Car {
       // Handbrake: the locked rear axle has almost no sideways grip, so the
       // tail steps out like a drift car; after release the grip comes back
       // over a short moment instead of snapping the car straight.
-      const gm = GRIP_MODES[this.slideMode] || GRIP_MODES.normal;
-      const pl = (this.slideMode === 'loose' ? null : this.spec.planted) || {};
+      const gm = GRIP_MODES[this.slideMode] || GRIP_MODES.minimal;
+      const pl = (SLIDE_LEVELS.indexOf(this.slideMode) <= 1 ? this.spec.planted : null) || {};
       const loose = surface.loose * gm.loose * (pl.loose ?? 1);
       this.slideGrip = input.handbrake ? 0 : Math.min(1, this.slideGrip + h / gm.recover);
       const sliding = input.handbrake || this.slideGrip < 1;

@@ -13,7 +13,7 @@ import {
   buildOsrmRoute,
   buildRoadVisuals,
 } from './stage.js';
-import { Car, CARS, GRIP_MODES } from './car.js';
+import { Car, CARS, GRIP_MODES, SLIDE_LEVELS } from './car.js';
 import { fetchOsmChunk, buildChunkHouses, BuildingIndex, cullHouses } from './buildings.js';
 import { buildChunkWater, SEA_LEVEL } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
@@ -24,6 +24,7 @@ import { RetroPresenter } from './retro.js';
 import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
 import { cache, requestPersistence } from './cache.js';
+import { shareUrl, parseShare } from './share.js';
 import { createStreamingWorld } from './stream.js';
 import { generateTerrain, isInNorway } from './worldgen.js';
 import { logger, initErrorLogging, dumpLog, PerfMonitor } from './log.js';
@@ -168,15 +169,25 @@ let bakedSignData = null;
 // Gearbox preference (start-card toggle or G); remembered between visits.
 let gearboxAuto = (() => { try { return localStorage.getItem('rally.gearbox') !== 'manual'; } catch { return true; } })();
 // Sliding: natural grip by default, or the arcade drift feel (start-card toggle).
-let slideMode = (() => { try { return GRIP_MODES[localStorage.getItem('rally.slide')] ? localStorage.getItem('rally.slide') : 'normal'; } catch { return 'normal'; } })();
+let slideMode = (() => { try { return GRIP_MODES[localStorage.getItem('rally.slide')] ? localStorage.getItem('rally.slide') : 'minimal'; } catch { return 'minimal'; } })();
+const SLIDE_LABELS = ['0 MINIMAL', '1 NORMAL', '2 MEDIUM', '3 LOOSE'];
+const SLIDE_TOASTS = [
+  'Sliding 0, minimal: planted, the tail only goes when you throw it.',
+  'Sliding 1, normal: natural grip, slides when you provoke them.',
+  'Sliding 2, medium: a lively tail on every corner.',
+  'Sliding 3, loose: arcade drift, the tail comes round everywhere.',
+];
+/** Sliding level: a name from SLIDE_LEVELS or its number 0–3. */
 function setSlideMode(mode, { announce = true } = {}) {
-  if (!GRIP_MODES[mode]) return;
-  slideMode = mode;
-  if (car) car.slideMode = mode;
-  try { localStorage.setItem('rally.slide', mode); } catch { /* private mode */ }
+  const name = typeof mode === 'number' ? SLIDE_LEVELS[mode] : mode;
+  if (!GRIP_MODES[name]) return;
+  slideMode = name;
+  if (car) car.slideMode = name;
+  try { localStorage.setItem('rally.slide', name); } catch { /* private mode */ }
+  const level = SLIDE_LEVELS.indexOf(name);
   const btn = document.getElementById('slideBtn');
-  if (btn) btn.textContent = `SLIDING: ${mode === 'loose' ? 'LOTS' : 'NORMAL'}`;
-  if (announce) toast(mode === 'loose' ? 'Loose: the tail comes round on every corner.' : 'Normal grip: slides only when you provoke them.');
+  if (btn) btn.textContent = `SLIDING: ${SLIDE_LABELS[level]}`;
+  if (announce) toast(SLIDE_TOASTS[level]);
 }
 
 // Which car: Porsche 911 or the Formula Offroad buggy (start-card toggle).
@@ -1785,6 +1796,7 @@ async function boot() {
     addBakedFeatures();
     phase = 'intro';
     setLoading(1, 'Ready.');
+    applySharedLink();
     $('startBtn').disabled = false;
     $('startBtn').textContent = 'START ENGINE';
     $('startBtn').focus();
@@ -1837,6 +1849,7 @@ const mapPicker = createMapPicker({
   getTerrain: () => terrain,
   onSave: () => describeRoute(),
   onLoad: (described) => applyDescribedRoute(described, { from: 'saved' }),
+  onShare: () => currentShareUrl(),
   onFreeDrive: async ({ a }) => {
     try {
       await enterFreeDrive(a);
@@ -1918,7 +1931,7 @@ $('friendsHost').addEventListener('click', hostRoom);
 $('friendsJoin').addEventListener('click', () => joinRoom($('friendsCode').value));
 $('friendsCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom($('friendsCode').value); });
 $('friendsLeave').addEventListener('click', () => { leaveRoom(); friendsStatus('Left the room.'); });
-$('slideBtn').addEventListener('click', () => setSlideMode(slideMode === 'loose' ? 'normal' : 'loose'));
+$('slideBtn').addEventListener('click', () => setSlideMode((SLIDE_LEVELS.indexOf(slideMode) + 1) % SLIDE_LEVELS.length));
 setSlideMode(slideMode, { announce: false });
 setCarKind(carKind, { announce: false });
 document.querySelector('#stageInfo .panel-title').addEventListener('click', () => {
@@ -1927,6 +1940,37 @@ document.querySelector('#stageInfo .panel-title').addEventListener('click', () =
   hud.classList.toggle('compact');
 });
 setGearbox(gearboxAuto, { announce: false });
+
+/** A link that rebuilds the current drive for someone else, or null when there is nothing to share. */
+function currentShareUrl() {
+  const described = describeRoute();
+  if (!described) return null;
+  if (described.kind === 'baked' && route && terrain && !terrain.streaming) {
+    // Demo mountain: share the endpoints; the other side runs the same A* router.
+    return shareUrl({ kind: 'demo', a: terrain.latLonFromWorld(route.start.x, route.start.z), b: terrain.latLonFromWorld(route.finish.x, route.finish.z) });
+  }
+  return shareUrl(described, { profile: lastOsrmProfile });
+}
+
+/** `?route=…` / `?drive=…` in the address: drive what the link describes once the world is up. */
+async function applySharedLink() {
+  const shared = parseShare(location.search);
+  if (!shared || !terrain) return;
+  try {
+    if (shared.kind === 'free') {
+      await enterFreeDrive(shared.center);
+    } else if (shared.kind === 'osrm') {
+      lastOsrmProfile = shared.profile;
+      const geometry = await fetchOsrmGeometrySegmented({ a: shared.a, b: shared.b, profile: shared.profile });
+      await applyRouteGeometry(geometry);
+    } else if (shared.kind === 'demo') {
+      offroadRoute(shared.a, shared.b);
+    }
+    toast('Shared drive loaded. Click START ENGINE or press Enter.');
+  } catch (error) {
+    toast(`The shared link could not be loaded: ${error.message}`, 'error');
+  }
+}
 
 /** What the map should show of the current drive: the stage line and the car. */
 function currentForMap() {

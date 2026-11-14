@@ -98,6 +98,12 @@ country. It shows Norway only: it cannot be panned or zoomed out beyond the
 country, and every other country and the open sea are shaded (national
 outline from geoBoundaries, CC BY 4.0).
 
+**Share a drive.** **SHARE LINK** in the map footer copies a link that
+rebuilds the current drive for anyone who opens it: `?route=osrm:LAT,LON;LAT,LON;PROFILE`
+re-asks OSRM for the road between the two points, `?route=demo:LAT,LON;LAT,LON`
+routes the demo mountain's own A\* stage, and `?drive=LAT,LON` starts a free
+drive there. The link loads as soon as the game is up; press START ENGINE.
+
 **Saved routes.** The second row of the map footer keeps a named list on
 this device: type a name and press **SAVE CURRENT** to store the stage or
 free drive you are on (OSRM road, off-road A\* on the demo tile, or a free
@@ -165,10 +171,10 @@ builder still works only inside the loaded world.
 - **Route map**: click the minimap, pick two points anywhere in Norway (or
   type them), and let OSRM or the off-road A* router build the stage.
 - **Two cars**: the Porsche 911 (rear drive) and the Formula Offroad buggy
-  (1 200 hp, 4WD, paddle tyres). In the *normal* sliding mode the buggy is
+  (1 200 hp, 4WD, paddle tyres). At sliding levels 0 and 1 the buggy is
   deliberately planted: more lateral grip, less throttle kick and wander,
-  calmer yaw, so it digs in instead of stepping out; *lots* of sliding is the
-  same arcade drift feel for both.
+  calmer yaw, so it digs in instead of stepping out; levels 2 and 3 are the
+  same lively and arcade drift feel for both.
 - **Climb limits**: slope gravity is g·sin θ along and across the car, and
   each car has a steepest climbable slope: the Porsche 911 drives up to 30°,
   the Formula Offroad buggy up to 80°. Below the limit the tyres always find

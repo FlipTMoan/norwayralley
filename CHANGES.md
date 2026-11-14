@@ -23,6 +23,19 @@ _Updated 2026-11-14._
   demo tile). The footprints stay in the collision index, so a hidden house
   cannot be driven through either once you reach it (it appears first).
 
+### Changed — sliding levels 0–3
+- The SLIDING toggle cycles four levels instead of two: **0 minimal**
+  (default: planted, the tail only goes when thrown), 1 normal, 2 medium,
+  3 loose (arcade drift). The buggy's planted tuning applies at 0 and 1.
+  `window.__rally.setSlide(0–3)`.
+
+### Added — share a drive as a link
+- `share.js`: **SHARE LINK** in the map footer copies a link
+  (`?route=osrm:LAT,LON;LAT,LON;PROFILE`, `?route=demo:LAT,LON;LAT,LON` or
+  `?drive=LAT,LON`) that rebuilds the stage or free drive on the other
+  side once the game has loaded (OSRM re-routes between the endpoints, the
+  demo mountain runs its A\* again). `tests/share.test.mjs`.
+
 ### Added — debug window on phones
 - Three quick taps on the speedometer toggle the debug window (no F10 on a
   phone); `?debug=1` in the address still opens it from the start.
