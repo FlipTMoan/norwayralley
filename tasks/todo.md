@@ -87,6 +87,12 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
 - [x] Verified live: SR16 forests + NVDB signs on a streamed stage; OSM houses/water/roads via mocked Overpass and, later, live on the demo tile through the openstreetmap.fr mirror.
 
+## P. Graded roads, stage on map, reach 2026-11-14 (user requests)
+- [x] `smoothRoadHeights` (±45 m × 3) for stage, streamed and OSM roads; test.
+- [x] Map opens on the current stage + car pin; Leaflet animations off.
+- [x] LOAD 4400 / KEEP 5300 / LEAD 2800.
+- [ ] Next: local cache (≤10 GB) — `tasks/plan_20261114_terrain.md`; then 1 m corridor tiles.
+
 ## O. Houses + country mask 2026-11-14 (user requests)
 - [x] Overpass: remember the answering mirror, race when unknown, penalise failures (houses in 6 s, not 75 s+).
 - [x] 2D map: Norway outline mask (geoBoundaries, bundled, simplified), hidden above zoom 11.

@@ -8,7 +8,7 @@ import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './land
 import { buildChunkWater, waterAt } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
-import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach } from './corridor.js';
+import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights } from './corridor.js';
 import { logger } from './log.js';
 
 /**
@@ -48,9 +48,9 @@ const LOD_MID = 1500;                 // half resolution below this distance
 const FAR_STEP = 4;                   // ≈ 43 m cells for the far band
 const MID_STEP = 2;
 
-const LOAD_RADIUS = 3900;             // fetch DEM within this range of the car
-const KEEP_RADIUS = 4700;             // dispose chunks beyond this range
-const LEAD_DISTANCE = 2200;           // max look-ahead along the car's velocity
+const LOAD_RADIUS = 4400;             // fetch DEM within this range of the car
+const KEEP_RADIUS = 5300;             // dispose chunks beyond this range
+const LEAD_DISTANCE = 2800;           // max look-ahead along the car's velocity
 const MAX_CONCURRENT = 3;             // DEM downloads in flight
 const MAX_RETRIES = 3;
 const ROAD_LIFT = 0.12;
@@ -807,15 +807,11 @@ export async function createStreamingWorld({
       const h = corridorSample(samples[i].x, samples[i].z);
       raw[i] = h ?? samples[i].y ?? 0;
     }
-    const w = 9; // ±45 m of longitudinal smoothing at the 5 m sample spacing
+    // Graded like a real road: bumps shorter than ~100 m are ironed out and
+    // the corridor's embankments and cuttings take up the difference.
+    const smooth = smoothRoadHeights(raw, 5);
     for (let i = 0; i < samples.length; i++) {
-      let sum = 0;
-      let n = 0;
-      for (let k = Math.max(0, i - w); k <= Math.min(samples.length - 1, i + w); k++) {
-        sum += raw[k];
-        n++;
-      }
-      samples[i].roadY = sum / Math.max(1, n);
+      samples[i].roadY = smooth[i];
       samples[i].y = samples[i].roadY + ROAD_LIFT;
     }
     route.start = samples[0];

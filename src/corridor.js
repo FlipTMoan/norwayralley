@@ -24,6 +24,39 @@ export const MAX_REACH = 24;      // slopes taller than this just end in a face
 export const CARVE_MARGIN = 0.3;  // coarse heights sit this far under the fine slopes
 export const ROAD_LIFT = 0.12;    // carriageway sits a hair above the carved ground
 
+/**
+ * Road grade: a real road is graded, it does not copy every bump of the
+ * ground under it. Three passes of a ±`window` metre running mean (close to
+ * a Gaussian of σ ≈ window) over the raw ground heights along the line; the
+ * embankments and cuttings of the profile make up the difference. Returns a
+ * Float64Array of road heights, one per sample.
+ */
+export function smoothRoadHeights(raw, spacing, { window = 45, passes = 3 } = {}) {
+  const n = raw.length;
+  const k = Math.max(1, Math.round(window / Math.max(0.5, spacing)));
+  let cur = Float64Array.from(raw);
+  for (let p = 0; p < passes; p++) {
+    const prefix = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) prefix[i + 1] = prefix[i] + cur[i];
+    const next = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - k);
+      const b = Math.min(n - 1, i + k);
+      next[i] = (prefix[b + 1] - prefix[a]) / (b - a + 1);
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+/** Mean spacing of a sample polyline (metres). */
+export function meanSpacing(samples) {
+  if (samples.length < 2) return 1;
+  let s = 0;
+  for (let i = 1; i < samples.length; i++) s += Math.hypot(samples[i].x - samples[i - 1].x, samples[i].z - samples[i - 1].z);
+  return s / (samples.length - 1);
+}
+
 /** How far from the centre line the profile can differ from the ground. */
 export function corridorReach(half) {
   return half + SHOULDER + MAX_REACH;

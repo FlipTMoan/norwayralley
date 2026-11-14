@@ -53,6 +53,8 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
   let map = null;
   let boundsRect = null;
   let markers = [];
+  let stageLine = null;
+  let carMarker = null;
   let points = { a: null, b: null };
   let busy = false;
   let visible = false;
@@ -130,6 +132,11 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
       minZoom: 4,
       maxZoom: 18,
       worldCopyJump: false,
+      // No CSS zoom/fade animations: they depend on animation frames that a
+      // background tab never gets, which leaves the panes stuck mid-zoom.
+      zoomAnimation: false,
+      fadeAnimation: false,
+      markerZoomAnimation: false,
       maxBounds: norway.pad(0.02),
       maxBoundsViscosity: 1.0,
     }).setView([64.5, 12], 4);
@@ -223,12 +230,36 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
     fitNorway();
   }
 
-  function open(terrain, route) {
+  /** Draw the stage being driven and where the car is. */
+  function showCurrent({ stage = null, car = null } = {}) {
+    stageLine?.remove();
+    carMarker?.remove();
+    stageLine = null;
+    carMarker = null;
+    if (stage?.length > 1) {
+      stageLine = L.polyline(stage.map((p) => [p.lat, p.lon]), {
+        color: '#f0ce58', weight: 4, opacity: 0.9, interactive: false,
+      }).addTo(map);
+    }
+    if (car) {
+      carMarker = L.marker([car.lat, car.lon], {
+        icon: L.divIcon({ className: 'car-pin', html: '<span>▲ YOU</span>', iconSize: [60, 16], iconAnchor: [30, 8] }),
+        interactive: false,
+        zIndexOffset: 1000,
+      }).addTo(map);
+    }
+  }
+
+  function open(terrain, route, current = {}) {
     if (!root || !mapEl) return;
     ensureMap();
     lastRoute = route;
     clearMarkers();
     refreshSaved();
+    stageLine?.remove();
+    carMarker?.remove();
+    stageLine = null;
+    carMarker = null;
     setStatus('Click anywhere in Norway to set the START point, then the FINISH — or FREE DRIVE from the start.');
     root.classList.remove('hidden');
     visible = true;
@@ -241,7 +272,18 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
       if (fitted) return;
       fitted = true;
       map?.invalidateSize();
-      fitToTerrain(terrain);
+      if (current.stage?.length > 1) {
+        // The stage being driven, with room around it; zoom out for the country.
+        map.fitBounds(L.latLngBounds(current.stage.map((p) => [p.lat, p.lon])).pad(0.35), { maxZoom: 14 });
+        if (boundsRect) boundsRect.setBounds(norwayBounds());
+      } else if (current.car) {
+        map.setView([current.car.lat, current.car.lon], 13);
+        if (boundsRect) boundsRect.setBounds(norwayBounds());
+      } else {
+        fitToTerrain(terrain);
+      }
+      // Added after the view is final, so the overlay is projected at this zoom.
+      showCurrent(current);
     };
     requestAnimationFrame(fit);
     window.setTimeout(fit, 150);

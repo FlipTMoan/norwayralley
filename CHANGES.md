@@ -17,6 +17,21 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Changed — graded roads, stage on the map, longer streaming reach
+- **Smoother roads.** Road heights (stage routes, streamed routes and OSM
+  roads alike) are now graded with `smoothRoadHeights`: three passes of a
+  ±45 m running mean over the ground, so bumps shorter than ~100 m are
+  ironed out while hills keep their grade; the corridor's embankments and
+  cuttings take up the difference. Replaces the ±30 m single running mean.
+  `tests/roadgrade.test.mjs`.
+- The 2D map opens on the **stage being driven** (yellow line) with a red
+  "YOU" pin on the car; in free drive it centres on the car. Zoom out for
+  the whole country. Leaflet's zoom/fade animations are off (they left the
+  panes stuck mid-zoom whenever the tab had no animation frames).
+- Streaming reach: DEM chunks are fetched within 4.4 km of a point led up
+  to 2.8 km along the velocity (was 3.9 / 2.2 km) and kept to 5.3 km, so a
+  fast car no longer reaches the edge of the loaded ring.
+
 ### Fixed — houses were missing (Overpass mirror order)
 - From some networks overpass-api.de and overpass.private.coffee hang for
   the whole 25 s timeout while overpass.openstreetmap.fr answers in 0.4 s.

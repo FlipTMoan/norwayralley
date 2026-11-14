@@ -931,7 +931,7 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
   // Smooth a carriageway height along the route, then carve the engineered
   // profile (embankments / cuttings) into the shared height field *before*
   // rebuilding the mesh, so the visible surface, the ribbon and the car agree.
-  nextRoute.assignRoadY(terrain, 7);
+  nextRoute.assignRoadY(terrain);
   const carved = log.time('carve road', () => terrain.carveRoad(nextRoute.samples, {
     halfWidth: nextRoute.roadWidth + 1.2,
   }));
@@ -1874,13 +1874,22 @@ document.querySelector('#stageInfo .panel-title').addEventListener('click', () =
 });
 setGearbox(gearboxAuto, { announce: false });
 
+/** What the map should show of the current drive: the stage line and the car. */
+function currentForMap() {
+  const stage = route && !freeDrive && route.samples?.length > 1
+    ? route.samples.filter((_, i) => i % 3 === 0 || i === route.samples.length - 1).map((p) => terrain.latLonFromWorld(p.x, p.z))
+    : null;
+  const car_ = car ? terrain.latLonFromWorld(car.pos.x, car.pos.z) : null;
+  return { stage, car: car_ };
+}
+
 // The minimap is the way into the route picker: click it to open the 2D map.
 mm.addEventListener('click', () => {
   if (!loaded || !terrain) {
     toast('The mountain is still loading.', 'error');
     return;
   }
-  mapPicker.open(terrain, route);
+  mapPicker.open(terrain, route, currentForMap());
 });
 mm.title = 'Click to open the map and pick a route';
 
@@ -2029,7 +2038,7 @@ window.__rally = {
   get route() { return route; },
   get phase() { return phase; },
   get stageTime() { return stageTime; },
-  openMap: () => mapPicker.open(terrain, route),
+  openMap: () => mapPicker.open(terrain, route, currentForMap()),
   freeDrive: (lat, lon) => enterFreeDrive({ lat, lon }),
   setCar: (kind) => setCarKind(kind),
   hostRoom,

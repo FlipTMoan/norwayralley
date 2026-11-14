@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
+import { smoothRoadHeights, meanSpacing } from './corridor.js';
 
 /** How far the gravel ribbon floats above the carved ground. The car rides on
  *  the ribbon, so car.js adds the same offsets when it is on the road. */
@@ -95,15 +96,11 @@ export class StageRoute {
    * dips on embankments and through crests in cuttings instead of following
    * every bump.
    */
-  assignRoadY(terrain, window = 7) {
+  assignRoadY(terrain, window = 45) {
     const s = this.samples;
     const raw = s.map((p) => terrain.sampleBase ? terrain.sampleBase(p.x, p.z) : terrain.sample(p.x, p.z));
-    for (let i = 0; i < s.length; i++) {
-      let sum = 0;
-      let n = 0;
-      for (let k = Math.max(0, i - window); k <= Math.min(s.length - 1, i + window); k++) { sum += raw[k]; n++; }
-      s[i].roadY = sum / n;
-    }
+    const smooth = smoothRoadHeights(raw, meanSpacing(s), { window });
+    for (let i = 0; i < s.length; i++) s[i].roadY = smooth[i];
     return this;
   }
 

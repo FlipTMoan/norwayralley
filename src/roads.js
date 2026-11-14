@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
-import { carveProfile } from './corridor.js';
+import { carveProfile, smoothRoadHeights } from './corridor.js';
 
 /**
  * Real roads from OpenStreetMap for the streamed world.
@@ -78,16 +78,13 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
 }
 
 function finishRun(points, road, half, terrain) {
-  const raw = points.map((p) => terrain.sample(p.x, p.z));
-  const w = 6; // ±30 m of longitudinal smoothing
+  const raw = points.map((p) => (terrain.sampleBase ? terrain.sampleBase(p.x, p.z) : terrain.sample(p.x, p.z)));
+  const smooth = smoothRoadHeights(raw, 5); // graded: bumps shorter than ~100 m are ironed out
   const samples = [];
   let s = 0;
   for (let i = 0; i < points.length; i++) {
-    let sum = 0;
-    let n = 0;
-    for (let k = Math.max(0, i - w); k <= Math.min(points.length - 1, i + w); k++) { sum += raw[k]; n++; }
     if (i > 0) s += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-    samples.push({ x: points[i].x, z: points[i].z, roadY: sum / n, y: sum / n, s });
+    samples.push({ x: points[i].x, z: points[i].z, roadY: smooth[i], y: smooth[i], s });
   }
   const paved = isPaved(road);
   return { kind: road.kind, name: road.name, half, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };

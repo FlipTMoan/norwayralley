@@ -80,7 +80,9 @@ new pair. **NEW STAGE** (`N`) in the STAGE panel scouts a random stage from
 where you are; **MENU** (`Esc`) returns to the start screen to change car,
 gearbox or sliding without losing the stage, and `R` restarts it.
 
-The map shows Norway only: it cannot be panned or zoomed out beyond the
+The map opens on the stage you are driving (yellow line) with a red YOU pin
+on the car, or centred on the car in free drive; zoom out for the whole
+country. It shows Norway only: it cannot be panned or zoomed out beyond the
 country, and every other country and the open sea are shaded (national
 outline from geoBoundaries, CC BY 4.0).
 
@@ -184,7 +186,9 @@ builder still works only inside the loaded world.
   geometry is built up front so switching detail never causes a hitch.
 - **Carved roads**: the route is stamped into the shared height field before
   the terrain mesh is rebuilt, so the visible surface, the gravel ribbon and
-  the physics agree on where the road is.
+  the physics agree on where the road is. Road heights are graded (three
+  passes of a ±45 m running mean), so the carriageway is smooth while the
+  embankments and cuttings of the corridor follow the ground.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.
