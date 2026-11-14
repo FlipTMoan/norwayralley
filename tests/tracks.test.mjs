@@ -18,7 +18,7 @@ function setup(surface) {
   return { car, tracks, scene };
 }
 
-test('gravel leaves ruts under all four wheels, asphalt stays clean unless sliding', () => {
+test('gravel leaves ruts under all four wheels, asphalt only a faint trace unless sliding', () => {
   const gravel = setup('gravel');
   const drive = { throttle: 1, brake: 0, steer: 0, handbrake: false, jump: false };
   for (let i = 0; i < 60 * 6; i++) { gravel.car.update(1 / 60, drive); gravel.tracks.update(); }
@@ -29,10 +29,30 @@ test('gravel leaves ruts under all four wheels, asphalt stays clean unless slidi
 
   const tarmac = setup('asphalt');
   for (let i = 0; i < 60 * 6; i++) { tarmac.car.update(1 / 60, drive); tarmac.tracks.update(); }
-  assert.equal(tarmac.tracks.laid, 0, 'no marks on clean asphalt');
+  assert.ok(tarmac.tracks.laid > 100, 'asphalt is marked too');
+  const colors = tarmac.tracks.mesh.geometry.attributes.color;
+  assert.equal(colors.itemSize, 4, 'marks carry their own alpha');
+  assert.ok(colors.getW(0) < 0.2, `plain asphalt trace is faint (alpha ${colors.getW(0)})`);
+  const laidBefore = tarmac.tracks.laid;
   const slide = { throttle: 0.5, brake: 0, steer: 1, handbrake: true, jump: false };
   for (let i = 0; i < 60 * 1.5; i++) { tarmac.car.update(1 / 60, slide); tarmac.tracks.update(); }
-  assert.ok(tarmac.tracks.laid > 0, 'rubber while sliding on asphalt');
+  assert.ok(tarmac.tracks.laid > laidBefore, 'rubber while sliding on asphalt');
+  const last = (tarmac.tracks.state[0].next - 1 + 700) % 700;
+  assert.ok(colors.getW(last * 4) > 0.6, `skid rubber is strong (alpha ${colors.getW(last * 4)})`);
+  assert.ok(colors.getW(0) < gravel.tracks.mesh.geometry.attributes.color.getW(0), 'gravel ruts are clearer than asphalt traces');
+});
+
+test('open ground leaves the clearest tracks of all', () => {
+  const { car, tracks } = setup('gravel');
+  const drive = { throttle: 1, brake: 0, steer: 0, handbrake: false, jump: false };
+  for (let i = 0; i < 60 * 3; i++) { car.update(1 / 60, drive); tracks.update(); }
+  const onRoad = tracks.mesh.geometry.attributes.color.getW(0);
+  car.reset({ x: 60, z: -800, yaw: 0 }); // well off the road
+  for (let i = 0; i < 60 * 3; i++) { car.update(1 / 60, drive); tracks.update(); }
+  assert.equal(car.onRoad, false);
+  const last = (tracks.state[0].next - 1 + 700) % 700;
+  const offRoad = tracks.mesh.geometry.attributes.color.getW(last * 4);
+  assert.ok(offRoad > 0.8 && offRoad > onRoad, `off-road ${offRoad} vs gravel road ${onRoad}`);
 });
 
 test('the ring buffer wraps instead of growing', () => {

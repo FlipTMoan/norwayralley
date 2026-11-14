@@ -2,8 +2,9 @@ import * as THREE from 'three';
 
 /**
  * Tyre tracks. Every wheel lays a strip of flat quads on the ground as the
- * car moves: dark ruts on gravel and open ground, black rubber on asphalt
- * only while the tyre is sliding (drift or handbrake). Quads live in a ring
+ * car moves: clear ruts off the road, lighter ones on gravel, only a faint
+ * grey trace on asphalt that turns to black rubber while the tyre is sliding
+ * (drift or handbrake). Each mark carries its own alpha. Quads live in a ring
  * buffer per wheel, so the oldest marks fade out of existence as new ones
  * are laid; no allocation per frame. In water the same strips become a
  * pale foam wake drawn on the surface instead of the bed.
@@ -15,6 +16,14 @@ const LIFT = 0.035;               // above the ground, under the car
 const EARTH = new THREE.Color(0x3a3127);
 const RUBBER = new THREE.Color(0x15161a);
 const FOAM = new THREE.Color(0xdff2f6);
+// What a wheel leaves on each ground, and how clearly.
+const MARKS = {
+  offroad: { color: EARTH, alpha: 0.9 },
+  gravel: { color: EARTH, alpha: 0.5 },
+  asphalt: { color: RUBBER, alpha: 0.14 },
+  rubber: { color: RUBBER, alpha: 0.8 },
+  foam: { color: FOAM, alpha: 0.7 },
+};
 
 export class TrackMarks {
   constructor(scene, car) {
@@ -23,7 +32,7 @@ export class TrackMarks {
     this.wheelCount = car.wheels.length;
     const quads = QUADS_PER_WHEEL * this.wheelCount;
     this.positions = new Float32Array(quads * 4 * 3);
-    this.colors = new Float32Array(quads * 4 * 3);
+    this.colors = new Float32Array(quads * 4 * 4); // rgba: alpha is the mark's strength
     const index = new Uint32Array(quads * 6);
     for (let q = 0; q < quads; q++) {
       const v = q * 4;
@@ -31,14 +40,13 @@ export class TrackMarks {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(this.colors, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(this.colors, 4));
     geometry.setIndex(new THREE.BufferAttribute(index, 1));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6); // never culled
     this.mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,   // visible on any slope, whichever way a quad ends up facing
       transparent: true,
-      opacity: 0.6,
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -4,
@@ -54,24 +62,24 @@ export class TrackMarks {
     this.tmp = new THREE.Vector3();
   }
 
-  /** Should this wheel mark the ground right now, and in what colour? */
+  /** Should this wheel mark the ground right now, and how? → { color, alpha } */
   markFor(car) {
     if (!car.grounded) return null;
-    if (car.waterDepth > 0.03) return car.speed > 1.5 ? FOAM : null;
+    if (car.waterDepth > 0.03) return car.speed > 1.5 ? MARKS.foam : null;
     const sliding = car.drifting || car.handbrakeOn;
-    if (car.surfaceKind === 'asphalt') return sliding ? RUBBER : null;
+    if (car.surfaceKind === 'asphalt') return sliding ? MARKS.rubber : MARKS.asphalt;
     if (car.speed < 0.8) return null;
-    return EARTH;
+    return car.onRoad ? MARKS.gravel : MARKS.offroad;
   }
 
   update(car = this.car) {
-    const color = this.markFor(car);
+    const mark = this.markFor(car);
     car.group.updateMatrixWorld(true);
     const wet = car.waterDepth > 0.03;
     const width = wet ? 0.9 : car.spec.wheelRadius > 0.5 ? 0.5 : 0.3;
     for (let w = 0; w < this.wheelCount; w++) {
       const st = this.state[w];
-      if (!color) { st.open = false; continue; }
+      if (!mark) { st.open = false; continue; }
       const wheel = car.wheels[w];
       this.tmp.copy(wheel.pivot.position);
       car.group.localToWorld(this.tmp);
@@ -99,7 +107,10 @@ export class TrackMarks {
       p[v + 6] = x - nx; p[v + 7] = y; p[v + 8] = z - nz;
       p[v + 9] = x + nx; p[v + 10] = y; p[v + 11] = z + nz;
       const c = this.colors;
-      for (let k = 0; k < 4; k++) { c[v + k * 3] = color.r; c[v + k * 3 + 1] = color.g; c[v + k * 3 + 2] = color.b; }
+      const cv = q * 4 * 4;
+      for (let k = 0; k < 4; k++) {
+        c[cv + k * 4] = mark.color.r; c[cv + k * 4 + 1] = mark.color.g; c[cv + k * 4 + 2] = mark.color.b; c[cv + k * 4 + 3] = mark.alpha;
+      }
       st.last = { x, y, z };
       this.laid++;
       this.dirty = true;

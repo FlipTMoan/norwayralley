@@ -17,6 +17,16 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Changed — climb limits and track strength
+- Slope gravity is now g·sin θ along and across the car (it used to fade on
+  steep ground). Each car has `maxClimb`: Porsche 30°, Formula Offroad 80°.
+  Below it the drive and lateral grip are floored so the car can always
+  climb (margin shrinking towards the limit); above it tyre load falls with
+  cos θ and the car slides back. `tests/climb.test.mjs`: Porsche climbs 25°,
+  not 35°; buggy climbs 70°, not 85°.
+- Tyre tracks carry a per-mark alpha: off-road 0.9, gravel road 0.5, asphalt
+  0.14 (a faint trace, no longer clean), skid rubber 0.8, foam 0.7.
+
 ### Added — a real splash
 - `water.js` keeps the lakes and rivers it builds and answers
   `waterAt(x, z) → { depth, surface }` for the sea (DTM height 0 counts as

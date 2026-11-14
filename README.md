@@ -138,6 +138,14 @@ builder still works only inside the loaded world.
   another scene with `?scene=<name>`.
 - **Route map**: click the minimap, pick two points anywhere in Norway (or
   type them), and let OSRM or the off-road A* router build the stage.
+- **Climb limits**: slope gravity is g·sin θ along and across the car, and
+  each car has a steepest climbable slope: the Porsche 911 drives up to 30°,
+  the Formula Offroad buggy up to 80°. Below the limit the tyres always find
+  enough bite (a margin that shrinks towards the limit); above it the load on
+  the tyres falls away and gravity wins, so the car slides back.
+- **Tyre tracks by surface**: clear ruts on open ground, lighter ones on a
+  gravel road, only a faint grey trace on asphalt that turns to black rubber
+  while sliding, and a foam wake on water.
 - **Water**: the car knows the sea, the fjord shore, OSM lakes and rivers.
   Hitting water throws a splash (and a second, bigger one when the bed drops
   away), the front wheels throw spray while wading, tyre tracks turn into a

@@ -87,6 +87,10 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Overpass robustness: queue, mirrors, breaker, retries; SR16/NVDB independent.
 - [x] Verified live: SR16 forests + NVDB signs on a streamed stage; OSM houses/water/roads via mocked Overpass and, later, live on the demo tile through the openstreetmap.fr mirror.
 
+## M. Climb limits + track strength 2026-11-14 (user request)
+- [x] g·sin θ slope gravity; `maxClimb` 30° (911) / 80° (buggy) with grip floor below, cos θ load above; tests.
+- [x] Tracks: per-mark alpha by surface (off-road clear, gravel medium, asphalt faint, rubber/foam strong).
+
 ## L. Splash 2026-11-14 (user request)
 - [x] `waterAt` lookup (sea / shore / lakes / rivers) on both terrains.
 - [x] Car: entry + plunge splash, bow spray, drag, wet grip, drowned engine, recovery to last dry ground.

@@ -50,7 +50,9 @@ export const ENGINE = { idle: IDLE_RPM, redline: REDLINE_RPM, gears: GEAR_RATIOS
  * The garage. Every number the physics and the model read per car.
  *  - power caps the drive force at speed (F ≤ P / v), torque the low end;
  *  - driveLoad is the share of weight on the driven wheels (traction cap);
- *  - gripBonus scales tyre grip per surface (paddle tyres love loose ground).
+ *  - gripBonus scales tyre grip per surface (paddle tyres love loose ground);
+ *  - maxClimb is the steepest slope (degrees) the car can drive straight up:
+ *    below it the tyres always find enough bite, above it gravity wins.
  */
 export const CARS = {
   porsche: {
@@ -58,7 +60,7 @@ export const CARS = {
     travel: { down: 0.14, up: 0.2 }, springK: 190, springD: 14, jump: 6.2,
     gears: [-6.0, 6.77, 4.05, 2.90, 2.26, 1.85], finalDrive: 3.9, idle: 1200, redline: 12000,
     torque: 380, power: 224000, upshift: 11000, downshift: 4200, driveLoad: 0.62,
-    gripBonus: { asphalt: 1, gravel: 1, offroad: 1 },
+    gripBonus: { asphalt: 1, gravel: 1, offroad: 1 }, maxClimb: 30,
     eye: { x: -0.36, y: 1.1, z: 0.12 }, shadow: [2.8, 4.6], paint: 0xd34a31,
   },
   buggy: {
@@ -67,7 +69,7 @@ export const CARS = {
     // 1 200 hp, 4WD, four gears: 61 / 102 / 153 / 212 km/h at an 8 000 rpm redline.
     gears: [-6.0, 9.0, 5.4, 3.6, 2.6], finalDrive: 3.4, idle: 1000, redline: 8000,
     torque: 1500, power: 895000, upshift: 7600, downshift: 3200, driveLoad: 1.0,
-    gripBonus: { asphalt: 0.85, gravel: 1.25, offroad: 1.4 },
+    gripBonus: { asphalt: 0.85, gravel: 1.25, offroad: 1.4 }, maxClimb: 80,
     eye: { x: 0, y: 1.6, z: -0.1 }, shadow: [3.6, 4.8], paint: 0xf0c020,
   },
 };
@@ -968,7 +970,33 @@ export class Car {
       const wet = 1 - 0.5 * clamp(this.waterDepth / 0.5, 0, 1);
       const bonus = (this.spec.gripBonus[this.surfaceKind] ?? 1) * wet;
       const drowned = this.waterDepth > 0.8 ? 0.15 : 1;
-      const maxDrive = surface.mu * bonus * this.spec.driveLoad * 9.81 * (input.handbrake ? 0.3 : 1) * drowned;
+
+      // The slope under the car, along its axis and across it. On the road
+      // sample the carved slab itself (±1.8 m), not the hillside blend beside
+      // it, or a flat road cut into a slope would keep pulling the car
+      // towards the ditch.
+      const { gx, gz } = this.terrain.gradient(this.pos.x, this.pos.z, this.onRoad ? 1.8 : 6);
+      const gF = gx * f.x + gz * f.z;
+      const gR = gx * r.x + gz * r.z;
+      const sinF = gF / Math.hypot(1, gF);
+      const sinR = gR / Math.hypot(1, gR);
+      const cosF = 1 / Math.hypot(1, gF);
+      const cosR = 1 / Math.hypot(1, gR);
+      // Climb limit: up to the car's maxClimb the tyres are guaranteed enough
+      // bite to beat gravity (a margin that shrinks towards the limit); past
+      // it the load on the tyres falls with cos θ and gravity wins.
+      const limit = (this.spec.maxClimb ?? 30) * Math.PI / 180;
+      const climbF = Math.atan(Math.abs(gF));
+      const climbR = Math.atan(Math.abs(gR));
+      const holdF = climbF <= limit && !input.handbrake
+        ? (SLOPE_G * Math.abs(sinF) + surface.rolling) * (1.1 + 0.5 * (1 - climbF / limit)) * drowned
+        : 0;
+      const holdR = climbR <= limit ? SLOPE_G * Math.abs(sinR) * 0.8 * 1.1 : 0;
+
+      const maxDrive = Math.max(
+        surface.mu * bonus * this.spec.driveLoad * 9.81 * cosF * (input.handbrake ? 0.3 : 1) * drowned,
+        holdF,
+      );
       vF += clamp(drivetrain.driveForce / this.spec.mass, -maxDrive, maxDrive) * h;
       if (drivetrain.brake > 0) {
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 21 * drivetrain.brake) * h;
@@ -993,13 +1021,9 @@ export class Car {
         vF *= Math.exp(-4.5 * h);
       }
 
-      // Gravity down the hill. On the road sample the carved slab itself
-      // (±1.8 m), not the hillside blend beside it, or a flat road cut into
-      // a slope would keep pulling the car towards the ditch.
-      const { gx, gz } = this.terrain.gradient(this.pos.x, this.pos.z, this.onRoad ? 1.8 : 6);
-      const denom = 1 + gx * gx + gz * gz;
-      vF += (-SLOPE_G * (gx * f.x + gz * f.z) / denom) * h;
-      vR += (-SLOPE_G * (gx * r.x + gz * r.z) / denom) * h * 0.8;
+      // Gravity down the hill: g·sin θ along and across the car.
+      vF += -SLOPE_G * sinF * h;
+      vR += -SLOPE_G * sinR * h * 0.8;
 
       // Slip-based lateral tyre force. The peak grip happens at a small slip
       // angle, then falls away: that is what lets the tail step out on gravel
@@ -1016,7 +1040,7 @@ export class Car {
       const shape = Math.sin(curveC * Math.atan(surface.slipK * gm.slipK * slip));
       const handbrake = input.handbrake ? 0.2 - loose * 0.06 : lerp(0.35, 1, this.slideGrip);
       const mu = surface.mu * bonus * handbrake;
-      const maxLat = mu * 9.81 * surface.peak * gm.lateral;
+      const maxLat = Math.max(mu * 9.81 * surface.peak * gm.lateral * cosR, holdR);
       const latForce = -Math.sign(vR) * maxLat * clamp(shape, 0, 1) * clamp(Math.abs(vR) / 0.35, 0, 1);
       vR += latForce * h;
 
