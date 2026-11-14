@@ -63,10 +63,41 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
     const world = road.points.map((p) => terrain.worldFromLatLon(p.lat, p.lon));
     if (!world.some(inside)) continue;
     const samples = resample(world, 5);
+    // Grade the whole way before clipping it to the chunk, on the coarse
+    // ground only: every chunk that holds a piece of this road then computes
+    // the same heights, whatever has loaded around it, so the copies agree
+    // where they overlap (and the 1 m tiles never change a road's height).
+    const ground = terrain.sampleBaseCoarse || terrain.sampleBase || terrain.sample;
+    const smooth = smoothRoadHeights(samples.map((p) => ground.call(terrain, p.x, p.z)), 5);
+    // Heights this way was already given by another chunk win, so every copy
+    // of a road agrees exactly where they overlap (sample i is the same point
+    // in every copy: the way is resampled from its first node every time).
+    // New stretches are eased onto the known ones instead of stepping.
+    const registry = terrain.roadHeights;
+    if (registry && road.id != null) {
+      const known = registry.get(road.id);
+      if (known) {
+        const FADE = 30;
+        for (let i = 0; i < samples.length; i++) {
+          if (known.has(i)) continue;
+          let k = -1;
+          for (let d = 1; d <= FADE; d++) {
+            if (known.has(i - d)) { k = i - d; break; }
+            if (known.has(i + d)) { k = i + d; break; }
+          }
+          if (k >= 0) smooth[i] += (known.get(k) - smooth[k]) * (1 - Math.abs(i - k) / FADE);
+        }
+        for (let i = 0; i < samples.length; i++) if (known.has(i)) smooth[i] = known.get(i);
+      }
+      const store = known || new Map();
+      for (let i = 0; i < samples.length; i++) if (!store.has(i)) store.set(i, smooth[i]);
+      registry.set(road.id, store);
+    }
+    samples.forEach((p, i) => { p.roadY = smooth[i]; });
     // Split into runs that are inside the padded chunk and away from the route.
     let run = [];
     const flush = () => {
-      if (run.length >= 3) out.push(finishRun(run, road, half, terrain));
+      if (run.length >= 3) out.push(finishRun(run, road, half));
       run = [];
     };
     for (const p of samples) {
@@ -78,17 +109,15 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
   return out;
 }
 
-function finishRun(points, road, half, terrain) {
-  const raw = points.map((p) => (terrain.sampleBase ? terrain.sampleBase(p.x, p.z) : terrain.sample(p.x, p.z)));
-  const smooth = smoothRoadHeights(raw, 5); // graded: bumps shorter than ~100 m are ironed out
+function finishRun(points, road, half) {
   const samples = [];
   let s = 0;
   for (let i = 0; i < points.length; i++) {
     if (i > 0) s += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-    samples.push({ x: points[i].x, z: points[i].z, roadY: smooth[i], y: smooth[i], s });
+    samples.push({ x: points[i].x, z: points[i].z, roadY: points[i].roadY, y: points[i].roadY, s });
   }
   const paved = isPaved(road);
-  return { kind: road.kind, name: road.name, half, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };
+  return { id: road.id ?? null, kind: road.kind, name: road.name, half, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };
 }
 
 /**

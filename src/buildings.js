@@ -211,6 +211,7 @@ function parseElements(elements) {
     if (!tags) continue;
     if (tags.highway && el.type === 'way' && el.geometry?.length >= 2) {
       roads.push({
+        id: el.id,
         kind: tags.highway,
         name: tags.name || tags.ref || null,
         surface: tags.surface || null,

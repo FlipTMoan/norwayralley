@@ -19,6 +19,7 @@ flowchart LR
   subgraph World
     TERRAIN[terrain.js<br/>baked GeoTIFF world]
     STREAM[stream.js<br/>streamed chunks]
+    FINE[fine.js<br/>1 m road tiles]
     WORLDGEN[worldgen.js<br/>Kartverket DEM WCS]
     LC[landcover.js]
     WATER[water.js]
@@ -32,6 +33,7 @@ flowchart LR
 
   LOOP --> CAR --> STAGE
   LOOP --> STREAM --> WORLDGEN
+  STREAM --> FINE --> WORLDGEN
   STREAM --> LC & WATER & BLD & SIGNS & STAGE
   LOOP --> TERRAIN --> STAGE
   LOOP --> RETRO
@@ -45,7 +47,8 @@ flowchart LR
 | `car.js` | Raycast-style arcade car: drivetrain, slip tyres, single-DOF suspension with bounded travel, per-wheel ground following, anti-tunnelling; water (splash, spray, drag, recovery); the lofted Porsche 911 body. |
 | `stage.js` | `StageRoute` (4–5 m samples with `nearest()` to the closest segment), A* rally router, OSRM fetch and segmentation, the gravel ribbon, posts and gates. Exports the ribbon lift constants the car rides on. |
 | `terrain.js` | The baked demo world (GeoTIFF → height field), `carveRoad` / `flattenPad`, terrain colouring, sea, vegetation, minimap. |
-| `stream.js` | Infinite world: 2048 m chunks of 192² samples fetched from Kartverket's WCS, per-chunk carve, LOD meshes with skirts, forest scatter, map features, disposal. |
+| `stream.js` | Infinite world: 2048 m chunks of 192² samples fetched from Kartverket's WCS, per-chunk carve, LOD meshes with skirts (holes under fine tiles), forest scatter, map features, disposal. |
+| `fine.js` | 1 m ground along the roads: 171 m DTM tiles inside ±100 m of the roads near the car, carved with the road profile, meshed at 1 m / 2 m with skirts; `sample()` answers from them first. |
 | `landcover.js` | Per-chunk 16 m grid of cover / species / density from OSM polygons and NIBIO SR16 tiles; ground tint. |
 | `water.js` | River and stream ribbons draped in the valley floor; flat lake polygons; remembers the bodies and answers `waterAt(x, z)` (depth + surface) for the sea, shore, lakes and rivers, which the car uses for splash, spray, drag and the foam wake. |
 | `buildings.js` | One Overpass request per chunk (`out geom`); footprint → oriented rectangle → typed house instances. |

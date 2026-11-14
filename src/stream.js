@@ -9,6 +9,7 @@ import { buildChunkWater, waterAt } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
 import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights } from './corridor.js';
+import { createFineTiles } from './fine.js';
 import { logger } from './log.js';
 
 /**
@@ -81,7 +82,7 @@ const carveTargets = new Float32Array(GSIZE * GSIZE);
  * Build one chunk's mesh geometry at a given LOD step, reusing the vertex
  * colouring and skirt approach from `lod.js` but on the chunk's own heights.
  */
-function buildChunkGeometry(chunk, step) {
+function buildChunkGeometry(chunk, step, covered = null) {
   const h = chunk.heights;
   const nCols = Math.floor(SAMPLES / step) + 1;
   const count = nCols * nCols;
@@ -116,6 +117,9 @@ function buildChunkGeometry(chunk, step) {
   const indices = [];
   for (let j = 0; j < nCols - 1; j++) {
     for (let i = 0; i < nCols - 1; i++) {
+      // A hole where a fine 1 m tile draws the ground instead (tiles are
+      // aligned to whole coarse cells, so a quad is either in or out).
+      if (covered && covered(chunk.x0 + (i + 0.5) * stride, chunk.z0 + (j + 0.5) * stride)) continue;
       const a = j * nCols + i;
       const b = a + 1;
       const c = a + nCols;
@@ -600,6 +604,7 @@ export async function createStreamingWorld({
     return lerp(lerp(a, b, fx), lerp(c, d, fx), fz);
   };
 
+  let fine = null; // the 1 m tiles, created once the world object exists (see below)
   const world = {
     streaming: true,
     generated: true,
@@ -623,12 +628,20 @@ export async function createStreamingWorld({
     buckets: new Map(),
     freeDrive,
     roads: new RoadNetwork({ spawn: { x: 0, z: 0, yaw: 0 }, name: title }),
+    roadHeights: new Map(), // OSM way id → heights per sample, shared by every chunk that holds a piece of the way
 
     worldFromLatLon: (lat, lon) => projection.worldFromLatLon(lat, lon),
     latLonFromWorld: (x, z) => projection.latLonFromWorld(x, z),
 
-    /** Natural (uncarved) ground height; falls back to the carved sample. */
+    /** Natural (uncarved) ground height: the 1 m tiles first, then the chunk grid. */
     sampleBase(x, z) {
+      const fh = fine?.sampleBase(x, z);
+      if (fh != null) return fh;
+      return this.sampleBaseCoarse(x, z);
+    },
+
+    /** Natural ground from the chunk grid only (road grading, so heights never depend on fine tiles). */
+    sampleBaseCoarse(x, z) {
       const chunk = chunks.get(chunkKey(Math.floor(x / CHUNK), Math.floor(z / CHUNK)));
       if (!chunk || chunk.state !== 'ready' || !chunk.baseHeights) return this.sample(x, z);
       const u = (x - chunk.x0) / CELL;
@@ -661,8 +674,10 @@ export async function createStreamingWorld({
       maxZ: cMaxZ,
     },
 
-    /** Bilinear height at a world position. */
+    /** Height at a world position: the 1 m tiles along the road first, then the chunk grid. */
     sample(x, z) {
+      const fh = fine?.sample(x, z);
+      if (fh != null) return fh;
       const ci = Math.floor(x / CHUNK);
       const cj = Math.floor(z / CHUNK);
       const chunk = chunks.get(chunkKey(ci, cj));
@@ -772,7 +787,9 @@ export async function createStreamingWorld({
         else if (chunk.state === 'loading') loading++;
         else if (chunk.state === 'queued') queued++;
       }
+      const f = fine ? fine.stats() : { ready: 0, loading: 0, queued: 0, triangles: 0 };
       return {
+        fine: f,
         ready,
         loading,
         queued,
@@ -791,6 +808,7 @@ export async function createStreamingWorld({
       for (const chunk of [...chunks.values()]) unloadChunk(chunk, false);
       chunks.clear();
       heightsCache.clear();
+      fine?.dispose();
       material.dispose();
       if (group.parent) group.parent.remove(group);
     },
@@ -832,8 +850,9 @@ export async function createStreamingWorld({
 
   /** Route samples (with a margin) that can reach into this chunk, as runs. */
   function routeLinesFor(chunk, route, margin) {
-    const inside = (p) => p.x >= chunk.x0 - margin && p.x <= chunk.x0 + CHUNK + margin
-      && p.z >= chunk.z0 - margin && p.z <= chunk.z0 + CHUNK + margin;
+    const size = chunk.size ?? CHUNK;
+    const inside = (p) => p.x >= chunk.x0 - margin && p.x <= chunk.x0 + size + margin
+      && p.z >= chunk.z0 - margin && p.z <= chunk.z0 + size + margin;
     const lines = [];
     let run = [];
     for (const p of route.samples) {
@@ -917,23 +936,85 @@ export async function createStreamingWorld({
   }
 
   function applyPad(chunk, cx, cz, radius, blend, target) {
+    applyPadGrid({ heights: chunk.heights, x0: chunk.x0, z0: chunk.z0, cell: CELL, n: GSIZE }, cx, cz, radius, blend, target);
+  }
+
+  /** The same levelled start disc on any height grid (`{ heights, x0, z0, cell, n }`). */
+  function applyPadGrid(grid, cx, cz, radius, blend, target) {
     const reach = radius + blend;
-    const gx0 = Math.max(0, Math.floor((cx - reach - chunk.x0) / CELL));
-    const gx1 = Math.min(SAMPLES, Math.ceil((cx + reach - chunk.x0) / CELL));
-    const gz0 = Math.max(0, Math.floor((cz - reach - chunk.z0) / CELL));
-    const gz1 = Math.min(SAMPLES, Math.ceil((cz + reach - chunk.z0) / CELL));
+    const gx0 = Math.max(0, Math.floor((cx - reach - grid.x0) / grid.cell));
+    const gx1 = Math.min(grid.n - 1, Math.ceil((cx + reach - grid.x0) / grid.cell));
+    const gz0 = Math.max(0, Math.floor((cz - reach - grid.z0) / grid.cell));
+    const gz1 = Math.min(grid.n - 1, Math.ceil((cz + reach - grid.z0) / grid.cell));
     for (let j = gz0; j <= gz1; j++) {
-      const z = chunk.z0 + j * CELL;
+      const z = grid.z0 + j * grid.cell;
       for (let i = gx0; i <= gx1; i++) {
-        const x = chunk.x0 + i * CELL;
+        const x = grid.x0 + i * grid.cell;
         const d = Math.hypot(x - cx, z - cz);
         if (d > reach) continue;
         const t = d <= radius ? 1 : 1 - smoothstep((d - radius) / blend);
-        const idx = j * GSIZE + i;
-        chunk.heights[idx] = lerp(chunk.heights[idx], target, t);
+        const idx = j * grid.n + i;
+        grid.heights[idx] = lerp(grid.heights[idx], target, t);
       }
     }
   }
+
+  /**
+   * Road lines (stage route + OSM roads of the chunks around) that reach into
+   * a rectangle. Neighbouring chunks each hold a copy of a road that crosses
+   * their border, so one copy per road is kept: the one with the most samples
+   * inside the rectangle.
+   */
+  function linesNear(x0, z0, size, margin) {
+    const minX = x0 - margin; const maxX = x0 + size + margin;
+    const minZ = z0 - margin; const maxZ = z0 + size + margin;
+    const lines = [];
+    if (world.route) lines.push(...routeLinesFor({ x0: x0 - margin, z0: z0 - margin, size: size + 2 * margin }, world.route, 0));
+    const seen = new Set();
+    const best = new Map(); // road identity → { line, inside }
+    for (const [cx, cz] of [[minX, minZ], [maxX, minZ], [minX, maxZ], [maxX, maxZ]]) {
+      const chunk = chunks.get(chunkKey(Math.floor(cx / CHUNK), Math.floor(cz / CHUNK)));
+      if (!chunk || seen.has(chunk.key) || !chunk.osmRoads?.length) continue;
+      seen.add(chunk.key);
+      for (const line of chunk.osmRoads) {
+        let inside = 0;
+        for (const p of line.samples) if (p.x >= minX && p.x <= maxX && p.z >= minZ && p.z <= maxZ) inside++;
+        if (!inside) continue;
+        const id = line.id != null ? `w${line.id}` : `${line.kind}|${line.name || ''}|${line.samples[0].x.toFixed(0)},${line.samples[0].z.toFixed(0)}`;
+        const have = best.get(id);
+        if (!have || inside > have.inside) best.set(id, { line, inside });
+      }
+    }
+    for (const { line } of best.values()) lines.push(line);
+    return lines;
+  }
+
+  // The 1 m ground along the roads (fine.js). Chunk meshes get holes under
+  // its tiles; `dirtyChunks` rebuilds them one per frame.
+  const dirtyChunks = new Set();
+  fine = createFineTiles({
+    cell: CELL,
+    fetchDem,
+    latLonFromWorld: (x, z) => world.latLonFromWorld(x, z),
+    group,
+    material,
+    linesFor: (t) => linesNear(t.x0, t.z0, t.size, 80),
+    padFor: (grid) => {
+      const route = world.route;
+      if (!route) return;
+      const sp = route.samples[0];
+      if (sp.x < grid.x0 - 60 || sp.x > grid.x0 + grid.cell * (grid.n - 1) + 60 || sp.z < grid.z0 - 60 || sp.z > grid.z0 + grid.cell * (grid.n - 1) + 60) return;
+      applyPadGrid(grid, sp.x, sp.z, 18, 34, (sp.roadY ?? sp.y) + ROAD_LIFT);
+    },
+    tint: (x, z, c) => world.tintAt(x, z, c),
+    onTileChange: (t) => {
+      const chunk = chunks.get(chunkKey(Math.floor((t.x0 + 1) / CHUNK), Math.floor((t.z0 + 1) / CHUNK)));
+      if (chunk && chunk.state === 'ready') dirtyChunks.add(chunk);
+    },
+  });
+
+  world.fine = fine;          // diagnostics (debug overlay, console)
+  world.linesNear = linesNear;
 
   // ---- chunk geometry / LOD ------------------------------------------------
   function levelFor(chunk, fx, fz) {
@@ -953,7 +1034,7 @@ export async function createStreamingWorld({
 
   function ensureChunkGeometry(chunk, level) {
     if (!chunk.geos[level]) {
-      chunk.geos[level] = buildChunkGeometry(chunk, STEPS[level]);
+      chunk.geos[level] = buildChunkGeometry(chunk, STEPS[level], (x, z) => fine?.covers(x, z));
     }
     return chunk.geos[level];
   }
@@ -1178,6 +1259,7 @@ export async function createStreamingWorld({
     carveChunk(chunk);
     rebuildChunkGeometries(chunk);
     refreshChunkCorridor(chunk);
+    fine.recarveWithin(chunk.x0 - 80, chunk.z0 - 80, CHUNK + 160);
     chunk.osmRoadGroup = buildRoadMeshes(roads, world);
     if (chunk.osmRoadGroup) chunk.group.add(chunk.osmRoadGroup);
     if (world.freeDrive && !world.roads.snapped) {
@@ -1444,6 +1526,27 @@ export async function createStreamingWorld({
       }
     }
 
+    // The 1 m ground along the roads near the car: the stage route and the
+    // road network around the led point feed the tile picker.
+    const roadPoints = [];
+    if (world.route) {
+      const s = world.route.samples;
+      for (let i = 0; i < s.length; i += 2) {
+        const p = s[i];
+        if (Math.abs(p.x - px) < 700 && Math.abs(p.z - pz) < 700) roadPoints.push(p);
+      }
+    }
+    for (const seg of world.roads.segmentsNear(px, pz, 550)) roadPoints.push({ x: seg.ax, z: seg.az });
+    fine.update(fx, fz, roadPoints.length ? roadPoints : [{ x: px, z: pz }]);
+    if (dirtyChunks.size) {
+      const chunk = dirtyChunks.values().next().value;
+      dirtyChunks.delete(chunk);
+      if (chunk.state === 'ready') {
+        rebuildChunkGeometries(chunk);
+        refreshChunkCorridor(chunk);
+      }
+    }
+
     // LOD geometry builds: one per frame, nearest chunk first.
     let budget = 1;
     const loaded = [...chunks.values()]
@@ -1470,6 +1573,7 @@ export async function createStreamingWorld({
     world.routeIndex = buildRouteIndex(route);
     assignRoadY(route);
     bucketRoute(route);
+    fine.recarveWithin(-Infinity, -Infinity, Infinity);
     for (const chunk of [...chunks.values()]) {
       if (chunk.state !== 'ready') continue;
       carveChunk(chunk);

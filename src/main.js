@@ -1978,7 +1978,7 @@ function updateDebug(now) {
     : 'not loaded';
   const pos = car ? `${car.pos.x.toFixed(0)}, ${car.pos.y.toFixed(1)}, ${car.pos.z.toFixed(0)}` : '—';
   const worldLine = streamStats
-    ? `stream     ${streamStats.ready} chunks ready · ${streamStats.loading} loading · ${streamStats.queued} queued · ${streamStats.triangles.toLocaleString()} tris · ${streamStats.trees} trees · ${streamStats.houses} houses`
+    ? `stream     ${streamStats.ready} chunks ready · ${streamStats.loading} loading · ${streamStats.queued} queued · ${streamStats.triangles.toLocaleString()} tris · ${streamStats.trees} trees · ${streamStats.houses} houses · 1 m tiles ${streamStats.fine?.ready ?? 0} (${streamStats.fine?.loading ?? 0} loading, ${Math.round((streamStats.fine?.triangles || 0) / 1000)}k tris)`
     : `terrain    ${lodStats.chunks ?? 0} chunks  ${(lodStats.triangles ?? 0).toLocaleString()} tris  LOD ${JSON.stringify(lodStats.levels ?? {})}`;
   debugPanel.textContent = [
     `RETRO NORWAY RALLY · debug (F3)`,

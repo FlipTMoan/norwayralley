@@ -35,14 +35,14 @@ User requests (in order received):
 - [x] Settings line on the start screen: cache size + CLEAR.
 
 ### Commit 3 — fine tiles (`src/fine.js`)
-- [ ] 170.67 m tiles (16 coarse cells) at 1 m from the same WCS, chosen along
+- [x] 170.67 m tiles (16 coarse cells) at 1 m from the same WCS, chosen along
       the road within ±100 m of road points near the car (route samples or
       RoadNetwork segments), priority by distance, ≤ 30 live, disposed > 900 m.
-- [ ] Carved with the same corridor profile + start pad; `world.sample` /
+- [x] Carved with the same corridor profile + start pad; `world.sample` /
       `sampleBase` answer from fine tiles first (physics feels 1 m).
-- [ ] Fine mesh: 1 m within 250 m, 2 m beyond, skirts; coarse chunk geometry
+- [x] Fine mesh: 1 m within 250 m, 2 m beyond, skirts; coarse chunk geometry
       gets holes under ready tiles (cell-aligned), rebuilt one chunk per frame.
-- [ ] Re-carve tiles when a chunk's OSM roads arrive; tests with a fake DEM.
+- [x] Re-carve tiles when a chunk's OSM roads arrive; tests with a fake DEM.
 
 ## Assumptions
 - "1 m tiles" = 1 m elevation samples (Kartverket's national DTM) in a band

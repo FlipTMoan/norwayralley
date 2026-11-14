@@ -79,14 +79,22 @@ html, body {
 }
 
 /* --------------------------------------------------------------- timer */
-#topCenter {
+/* Right column: the STAGE panel with the stage timer and progress under it. */
+#rightColumn {
   position: absolute;
   top: 18px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 20px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+#rightColumn > * { pointer-events: auto; }
+#topCenter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
   pointer-events: none;
 }
@@ -140,8 +148,9 @@ html, body {
 /* --------------------------------------------------------------- speed */
 #speedBox {
   position: absolute;
-  left: 20px;
-  bottom: 20px;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
   min-width: 184px;
   padding: 8px 14px 9px;
   background: var(--panel);
@@ -194,9 +203,7 @@ html, body {
   box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.35);
 }
 #stageInfo {
-  position: absolute;
-  top: 18px;
-  right: 20px;
+  position: relative;
   width: 252px;
   padding: 11px 12px 10px;
   font-size: 11px;
@@ -572,23 +579,23 @@ kbd {
   #stageInfo { width: 226px; }
   #brand { top: 12px; left: 12px; }
   .brand-title { font-size: 16px; }
-  #speedBox { left: 12px; bottom: 12px; min-width: 158px; }
+  #speedBox { top: 12px; min-width: 158px; }
   #minimapWrap { right: 12px; bottom: 12px; transform: scale(.86); transform-origin: bottom right; }
   #helpLine { display: none; }
-  #topCenter { top: 12px; }
+  #rightColumn { top: 12px; right: 12px; }
   #timer { font-size: 20px; }
   #best { display: none; }
   #progressWrap { width: 38vw; }
 }
 
 @media (max-width: 700px) {
-  #stageInfo { top: 74px; right: 10px; width: 205px; padding: 8px 9px; }
+  #rightColumn { top: 74px; right: 10px; }
+  #stageInfo { width: 205px; padding: 8px 9px; }
   #brand { transform: none; }
-  #topCenter { left: auto; right: 10px; transform: none; align-items: flex-end; }
   #timerBox { padding: 5px 9px; }
   .timer-label { display: none; }
   #progressWrap { width: 180px; }
-  #speedBox { bottom: 92px; }
+  #speedBox { transform: translateX(-50%) scale(.8); transform-origin: top center; }
   #minimapWrap { display: none; }
   #touchControls { display: flex; }
   #stageInfo { max-height: calc(100vh - 180px); overflow: auto; }
@@ -845,13 +852,12 @@ kbd {
   #touchControls > div { gap: 10px; }
   #touchControls button { width: 84px; height: 84px; font-size: 13px; }
   .touch-right button[data-touch="throttle"] { width: 100px; height: 100px; }
-  #speedBox { left: 12px; bottom: 106px; min-width: 150px; transform: scale(.85); transform-origin: bottom left; }
+  #speedBox { top: 6px; min-width: 150px; transform: translateX(-50%) scale(.85); transform-origin: top center; }
   #minimapWrap { display: block; right: 12px; bottom: 106px; transform: scale(.62); transform-origin: bottom right; }
-  #topCenter { top: 6px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
+  #rightColumn { top: 6px; right: 10px; }
   #timer { font-size: 18px; }
   #progressWrap { width: 160px; }
   #helpLine, #brand { display: none; }
-  #stageInfo { top: 6px; right: 10px; }
 }
 
 /* --------------------------------------------------------------- friends */

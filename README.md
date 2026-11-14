@@ -281,6 +281,14 @@ first chunk's roads arrive. There is no finish and no stage time to beat;
 In a normal stage the same OSM roads appear as side roads (cut away where
 they would overlap the OSRM stage road).
 
+**Two resolutions.** The streamed world is a 10.7 m grid (2 km chunks within
+4.4 km of the car, loading in the background as you drive, so free drive is
+unlimited). Inside ±100 m of the roads near the car the same Kartverket DTM
+is fetched again at **1 m** in 171 m tiles: carved with the road profile,
+drawn as their own meshes (1 m close by, 2 m then 3 m further out) with the coarse
+mesh cut away underneath, and used by the car's physics. Up to 30 tiles are
+held and dropped 900 m behind; everything is cached locally.
+
 ## Play with friends
 
 Press **PLAY WITH FRIENDS** on the start card. One player hosts a room and

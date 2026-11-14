@@ -17,6 +17,36 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Changed — HUD layout
+- The speedometer sits top centre (where the stage timer was); the stage
+  timer and progress bar sit under the STAGE panel in a right-hand column.
+  Phone layouts follow.
+
+### Fixed — road heights no longer depend on load order
+- OSM roads are now graded over the whole way, on the coarse ground only,
+  before being clipped to a chunk, so every chunk holding a piece of a road
+  computes the same heights whatever has loaded around it, and the 1 m tiles
+  never change a road's height. Lines carry their OSM way id and the fine
+  tiles keep one copy per road (neighbouring chunks each held one), which
+  had left the carriageway wavy at chunk borders.
+
+### Added — 1 m ground along the road (`fine.js`)
+- Streamed worlds now fetch the same Kartverket DTM at **1 m** in 171 m
+  tiles (16 coarse cells, so they align with the chunk grid) inside ±100 m
+  of the roads near the car: the stage route and the road network around a
+  point led along the velocity. Up to 30 tiles are held, nearest first,
+  two downloads at a time beside the chunk downloads, dropped beyond 900 m,
+  and cached like every other DEM.
+- Each tile is carved with the same road profile and start pad, drawn as its
+  own mesh (1 m within 150 m of the car, 2 m to 400 m, 3 m beyond, with skirts), and the
+  coarse chunk mesh gets a cell-aligned hole under it, rebuilt one chunk per
+  frame. `sample()` / `sampleBase()` answer from the tiles first, so the car
+  rides the 1 m ground; roads stay graded (see above). Tiles are re-carved
+  when a chunk's OSM roads arrive or the stage changes.
+- The 10.7 m chunks remain for everything else (the horizon), loading in
+  the background as before; free drive stays unlimited. The F3 overlay shows
+  the tile count. `tests/fine.test.mjs`.
+
 ### Fixed — roads were drawn twice
 - The corridor mesh drew the carriageway too (an earth slab 14 cm under the
   ribbon), so the road read as two interleaved layers. It now starts where

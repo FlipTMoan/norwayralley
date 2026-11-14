@@ -17,15 +17,6 @@
       <span class="brand-stage" id="stageName">PREIKESTOLEN CLIMB</span>
     </div>
 
-    <div id="topCenter">
-      <div id="timerBox">
-        <span class="timer-label">STAGE TIME</span>
-        <span id="timer">00:00.000</span>
-        <span id="best">BEST --:--.---</span>
-      </div>
-      <div id="progressWrap"><div id="progressBar"></div><div id="progressDots"></div></div>
-      <div id="players" class="hidden"></div>
-    </div>
 
     <div id="speedBox">
       <div class="speed-row"><span id="speed">000</span><span class="speed-unit">KM/H</span><span id="rpm" class="rpm-num">01200</span><span class="speed-unit">RPM</span></div>
@@ -33,6 +24,7 @@
       <div id="rpmWrap"><div id="rpmFill"></div><span id="rpmText">900</span></div>
     </div>
 
+    <div id="rightColumn">
     <div id="stageInfo" class="panel">
       <div class="panel-title">STAGE</div>
       <div class="stat"><span>DISTANCE</span><b id="stageLength">—</b></div>
@@ -43,6 +35,16 @@
         <button id="menuBtn" title="Back to the start screen to change car, gearbox or sliding (Esc). R restarts the stage.">MENU</button>
       </div>
       <div class="panel-foot">Click the minimap to pick your own route · © OpenStreetMap contributors · SR16 © NIBIO · Skilt: Statens vegvesen (NLOD)</div>
+    </div>
+    <div id="topCenter">
+      <div id="timerBox">
+        <span class="timer-label">STAGE TIME</span>
+        <span id="timer">00:00.000</span>
+        <span id="best">BEST --:--.---</span>
+      </div>
+      <div id="progressWrap"><div id="progressBar"></div><div id="progressDots"></div></div>
+      <div id="players" class="hidden"></div>
+    </div>
     </div>
     <div id="minimapWrap">
       <canvas id="minimap" width="190" height="190" title="Click to open the map and pick a route"></canvas>

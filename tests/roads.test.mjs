@@ -63,3 +63,33 @@ test('RoadNetwork answers nearest segment and spawn poses, and forgets chunks', 
   assert.equal(net.nearest(50, 7).distance, Infinity);
   assert.equal(net.segmentCount, 0);
 });
+
+test('copies of one way prepared by two chunks share the same heights where they overlap', async () => {
+  const { prepareChunkRoads } = await import('../src/roads.js');
+  // A way crossing the border between chunk A (x < 0) and chunk B (x ≥ 0).
+  const way = { id: 42, kind: 'residential', name: 'Grenseveien', points: Array.from({ length: 41 }, (_, i) => ({ lat: 59, lon: 6 + (i - 20) * 0.0002 })) };
+  const registry = new Map();
+  const make = (groundEast) => ({
+    worldFromLatLon: (lat, lon) => ({ x: (lon - 6) * 55000, z: (59 - lat) * 111000 }),
+    // Chunk A was prepared while B was unloaded: east of the border it only guessed the ground.
+    sampleBaseCoarse: (x) => (x >= 0 ? groundEast(x) : 100 + x * 0.01),
+    roadHeights: registry,
+  });
+  const a = prepareChunkRoads([way], make(() => 100), { x0: -2048, z0: -1024, size: 2048 });
+  const b = prepareChunkRoads([way], make((x) => 100 + x * 0.03), { x0: 0, z0: -1024, size: 2048 });
+  assert.equal(a.length, 1);
+  assert.equal(b.length, 1);
+  assert.equal(a[0].id, 42);
+  const byPos = new Map(a[0].samples.map((p) => [`${p.x.toFixed(2)},${p.z.toFixed(2)}`, p.roadY]));
+  let shared = 0;
+  for (const p of b[0].samples) {
+    const h = byPos.get(`${p.x.toFixed(2)},${p.z.toFixed(2)}`);
+    if (h == null) continue;
+    shared++;
+    assert.ok(Math.abs(h - p.roadY) < 1e-9, `height differs at x=${p.x.toFixed(1)}: ${h} vs ${p.roadY}`);
+  }
+  assert.ok(shared > 10, `overlapping samples ${shared}`);
+  // Where chunk B extends beyond A's copy, the heights ease away without a step.
+  const sb = b[0].samples;
+  for (let i = 1; i < sb.length; i++) assert.ok(Math.abs(sb[i].roadY - sb[i - 1].roadY) < 0.6, `step of ${(sb[i].roadY - sb[i - 1].roadY).toFixed(2)} m at ${i}`);
+});
