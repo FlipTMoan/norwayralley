@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
-import { carveProfile, smoothRoadHeights } from './corridor.js';
+import { carveProfile, smoothRoadHeights, ROAD_HALF_STANDARD } from './corridor.js';
 import { cachedJson } from './cache.js';
 
 /**
@@ -17,9 +17,13 @@ import { cachedJson } from './cache.js';
  */
 
 /** Half width in metres per OSM highway class. */
+// Half widths of the ribbon. With the 0.9 m shoulders the flat cut-out is
+// 6 m wide for every ordinary road (ROAD_HALF_STANDARD); only the biggest
+// roads are wider.
 export const ROAD_HALF = {
-  motorway: 5.0, trunk: 4.2, primary: 3.8, secondary: 3.4, tertiary: 3.2,
-  unclassified: 2.8, residential: 2.8, living_street: 2.4, service: 2.2, track: 2.0,
+  motorway: 4.1, trunk: 3.1, primary: 3.1, secondary: ROAD_HALF_STANDARD, tertiary: ROAD_HALF_STANDARD,
+  unclassified: ROAD_HALF_STANDARD, residential: ROAD_HALF_STANDARD, living_street: ROAD_HALF_STANDARD,
+  service: ROAD_HALF_STANDARD, track: ROAD_HALF_STANDARD,
 };
 const UNPAVED = /^(gravel|unpaved|dirt|ground|compacted|fine_gravel|earth|grass|sand|mud|pebblestone)$/;
 

@@ -14,7 +14,7 @@ import {
   buildRoadVisuals,
 } from './stage.js';
 import { Car, CARS, GRIP_MODES } from './car.js';
-import { fetchOsmChunk, buildChunkHouses } from './buildings.js';
+import { fetchOsmChunk, buildChunkHouses, BuildingIndex, cullHouses } from './buildings.js';
 import { buildChunkWater, SEA_LEVEL } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { buildCorridorGeometry, corridorMesh } from './corridor.js';
@@ -152,6 +152,7 @@ let loaded = false;
 let hasStarted = false;
 let freeDrive = false; // streaming world without a stage: no finish, no timer goal
 let bakedFeatures = null;   // OSM houses/water + NVDB signs on the baked demo tile
+let lastBakedCull = -1;
 // Friends: a peer-to-peer room; other players are drawn as named ghost cars.
 let session = null;
 const ghosts = new Map();   // peer id → { car, label, kind }
@@ -444,7 +445,7 @@ async function applyDescribedRoute(shared, { from = 'room' } = {}) {
       const points = shared.points.map(([x, z]) => ({ x, z }));
       const sharedRoute = makeRoute(points, terrain, {
         simplify: false, smooth: 0, spacing: 4, name: shared.name || 'Shared stage', source: 'shared',
-        roadWidth: shared.roadWidth || 3.2, surface: shared.surface || 'gravel',
+        roadWidth: shared.roadWidth || 2.1, surface: shared.surface || 'gravel',
       });
       setRoute(sharedRoute, { announce: false });
     }
@@ -705,7 +706,11 @@ async function addBakedFeatures() {
     const osm = await fetchOsmChunk(bbox);
     if (terrain !== t || !osm) return;
     const houses = buildChunkHouses(osm.buildings, t, route ? buildRouteIndex(route) : null, 11);
-    if (houses) group.add(houses);
+    if (houses) {
+      group.add(houses);
+      t.buildings = new BuildingIndex();
+      t.buildings.setChunk('baked', houses.userData.boxes);
+    }
     const water = buildChunkWater(osm, t, { x0: -t.sizeX / 2, z0: -t.sizeZ / 2, size: Math.max(t.sizeX, t.sizeZ) });
     if (water) {
       group.add(water);
@@ -1634,6 +1639,11 @@ function updateWorld(dt) {
     water.position.set(Math.round(car.pos.x / 64) * 64, SEA_LEVEL, Math.round(car.pos.z / 64) * 64);
   }
   if (!car) return;
+  // Demo tile: houses only within 250 m of the car (the streamed world does its own).
+  if (bakedFeatures && time - lastBakedCull > 0.25) {
+    lastBakedCull = time;
+    cullHouses(bakedFeatures.getObjectByName('houses'), car.pos.x, car.pos.z);
+  }
   sun.position.set(car.pos.x - 650, car.pos.y + 900, car.pos.z + 470);
   sun.target.position.set(car.pos.x, car.pos.y, car.pos.z);
   sun.target.updateMatrixWorld();
@@ -2011,6 +2021,7 @@ function frame(now) {
       : input;
     carState = car.update(dt, effective);
     if (carState.splash) audio.splash(carState.splash);
+    if (carState.crash > 3) audio.thud(Math.min(1, carState.crash / 20));
     if (carState.recovered) toast('Fished out of the water and put back on dry land.');
     if (!tracks || tracks.car !== car) {
       tracks?.dispose();

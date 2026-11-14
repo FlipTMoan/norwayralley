@@ -24,7 +24,7 @@ test('carveProfile keeps the carriageway exact and tucks the slopes under the ma
   const heights = base.slice();
   const samples = [];
   for (let z = -10; z <= 170; z += 5) samples.push({ x: 80, z, roadY: 114 }); // ground height at the centre line
-  carveProfile({ heights, base, x0: 0, z0: 0, cell, n }, [{ half: 3, samples }], { lift: 0 });
+  carveProfile({ heights, base, x0: 0, z0: 0, cell, n }, [{ half: 3.1, samples }], { lift: 0 }); // 3.1 + 0.9 m shoulder = 4 m flat
   const at = (x, z) => heights[(z / cell) * n + x / cell];
   assert.ok(Math.abs(at(80, 80) - 114) < 1e-6, 'centre line at road height');
   assert.ok(Math.abs(at(84, 80) - 114) < 1e-6, 'shoulder flat (4 m = half + shoulder)');
@@ -87,4 +87,19 @@ test('the corridor mesh leaves the carriageway to the ribbon (no second surface 
     const xs = [pos.getX(idx[t]), pos.getX(idx[t + 1]), pos.getX(idx[t + 2])];
     assert.ok(Math.max(...xs) < 0 || Math.min(...xs) > 0, `triangle crosses the road: ${xs}`);
   }
+});
+
+test('carveProfile marks the road band and the slopes so meshes can colour them', async () => {
+  const { carveProfile, SHOULDER } = await import('../src/corridor.js');
+  const n = 81; const cell = 1;
+  const base = new Float32Array(n * n).fill(100);
+  const heights = base.slice();
+  const roadMask = new Uint8Array(n * n);
+  const line = { half: 3, surface: 'asphalt', samples: [{ x: 0, z: 40, roadY: 104 }, { x: 80, z: 40, roadY: 104 }] };
+  carveProfile({ heights, base, x0: 0, z0: 0, cell, n, roadMask }, [line]);
+  const at = (x, z) => roadMask[z * n + x];
+  assert.equal(at(40, 40), 3, 'asphalt on the centre line');
+  assert.equal(at(40, 40 + 3 + Math.floor(SHOULDER)), 3, 'asphalt out to the shoulder');
+  assert.equal(at(40, 40 + 8), 1, 'embankment slope beside it');
+  assert.equal(at(40, 5), 0, 'untouched ground far away');
 });

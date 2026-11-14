@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clamp, damp, lerp, wrapAngle } from './geo.js';
 import { ROAD_RIBBON_LIFT, ROAD_CROWN, ROAD_SHOULDER } from './stage.js';
 import { profileHeight, corridorReach, ROAD_LIFT } from './corridor.js';
+import { pushOutOfBox } from './buildings.js';
 
 // Porsche 911 (classic rally spec) proportions, metres.
 const WHEELBASE = 2.45;
@@ -29,6 +30,9 @@ const WATER_DRAG = 0.22;           // v² drag per metre of wetted depth (m⁻¹
 const WATER_DRAG_MAX = 16;         // m/s²: a car hitting deep water stops hard, not instantly
 const SINK_DEPTH = 1.3;            // roof under: the engine is dead
 const SINK_TIME = 2.5;             // seconds under before the car is fished out
+const CAR_RADIUS = 1.05;           // the car as a disc, for house walls
+const WALL_BOUNCE = 0.25;          // how much of the speed into a wall comes back
+const WALL_SCRAPE = 0.85;          // speed kept after a hit (the rest went into the wall)
 // Five-speed 911-style box on a 12 000 rpm engine. At the redline the gears
 // run out at 60 / 100 / 140 / 180 / 220 km/h, so 2nd covers ~30–100 km/h,
 // 3rd ~45–140 and so on (wheel radius 0.35 m, final drive 3.9).
@@ -349,6 +353,7 @@ export class Car {
     this.sunkTime = 0;
     this.sprayClock = 0;
     this.lastDry = null;      // last pose on dry ground, for the recovery
+    this.crash = 0;           // speed into a house wall this frame (m/s), for sound and shake
 
     this.pitch = 0;
     this.roll = 0;
@@ -915,6 +920,7 @@ export class Car {
     // (Phase 3, "anti-tunneling": the cannon-es advice applied to the raycast
     // vehicle — smaller dt, stiffer suspension).
     this.handbrakeOn = Boolean(input.handbrake);
+    this.crash = 0;
     const steps = clamp(Math.ceil(dt / (1 / 120)), 1, MAX_SUBSTEPS);
     const h = dt / steps;
     this.surfaceKind = this.onRoad ? (this.roadQuery?.surface || 'gravel') : 'offroad';
@@ -958,6 +964,7 @@ export class Car {
       waterDepth: this.waterDepth,
       splash: this.splash,
       recovered: this.recovered,
+      crash: this.crash,
     };
   }
 
@@ -1127,6 +1134,29 @@ export class Car {
       this.vel.multiplyScalar(0.2);
       vF *= 0.2;
       vR *= 0.2;
+    }
+
+    // Houses are solid: push the car back out of any wall it ran into, kill
+    // the speed into the wall (a little bounce), keep most of the rest.
+    const walls = this.terrain.buildings?.near(this.pos.x, this.pos.z, 40);
+    if (walls?.length) {
+      for (const box of walls) {
+        const hit = pushOutOfBox(box, this.pos.x, this.pos.z, CAR_RADIUS);
+        if (!hit) continue;
+        this.pos.x += hit.nx * hit.depth;
+        this.pos.z += hit.nz * hit.depth;
+        const vn = this.vel.x * hit.nx + this.vel.y * hit.nz;
+        if (vn < 0) {
+          this.vel.x -= hit.nx * vn * (1 + WALL_BOUNCE);
+          this.vel.y -= hit.nz * vn * (1 + WALL_BOUNCE);
+          this.vel.multiplyScalar(WALL_SCRAPE);
+          this.crash = Math.max(this.crash, -vn);
+          this.landingImpact = Math.max(this.landingImpact, clamp(-vn / 15, 0, 1));
+          this.yawVel *= 0.5;
+        }
+        vF = this.vel.x * f2.x + this.vel.y * f2.z;
+        vR = this.vel.x * r2.x + this.vel.y * r2.z;
+      }
     }
 
     const groundY = this.groundAt(this.pos.x, this.pos.z);

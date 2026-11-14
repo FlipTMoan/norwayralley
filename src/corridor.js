@@ -19,20 +19,25 @@ import { terrainColor } from './terrain.js';
 
 export const FILL_SLOPE = 1.5;    // metres of run per metre of drop on an embankment
 export const CUT_SLOPE = 1.0;     // cuttings stand steeper
-export const SHOULDER = 1.0;      // flat shoulder beyond the road's half width
 export const RIBBON_SHOULDER = 0.9; // the road ribbon (stage.js) covers this far beyond the half width
+export const SHOULDER = RIBBON_SHOULDER; // the flat cut-out band ends exactly where the ribbon ends
+// Standard road: 2.1 m half width + 0.9 m shoulders = a 6 m wide flat cut-out.
+export const ROAD_HALF_STANDARD = 2.1;
+export const CUTOUT_WIDTH = 2 * (ROAD_HALF_STANDARD + SHOULDER);
 export const MAX_REACH = 24;      // slopes taller than this just end in a face
 export const CARVE_MARGIN = 0.3;  // coarse heights sit this far under the fine slopes
 export const ROAD_LIFT = 0.12;    // carriageway sits a hair above the carved ground
+export const ASPHALT_HEX = 0x4b4d4f; // colour of the carved road band in the ground meshes (matches the ribbon)
+export const GRAVEL_HEX = 0x7d7769;
 
 /**
  * Road grade: a real road is graded, it does not copy every bump of the
- * ground under it. Three passes of a ±`window` metre running mean (close to
+ * ground under it. Three passes of a ±`window` metre (60 m) running mean (close to
  * a Gaussian of σ ≈ window) over the raw ground heights along the line; the
  * embankments and cuttings of the profile make up the difference. Returns a
  * Float64Array of road heights, one per sample.
  */
-export function smoothRoadHeights(raw, spacing, { window = 45, passes = 3 } = {}) {
+export function smoothRoadHeights(raw, spacing, { window = 60, passes = 3 } = {}) {
   const n = raw.length;
   const k = Math.max(1, Math.round(window / Math.max(0.5, spacing)));
   let cur = Float64Array.from(raw);
@@ -92,9 +97,10 @@ export function segmentRoadY(a, b, t) {
  * Nearest segment wins. Returns the number of cells changed.
  */
 export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
-  const { heights, base, x0, z0, cell, n } = grid;
+  const { heights, base, x0, z0, cell, n, roadMask = null } = grid;
   const bestD = new Float32Array(heights.length).fill(Infinity);
   const target = new Float32Array(heights.length);
+  const kind = new Uint8Array(roadMask ? heights.length : 0); // 1 slope, 2 gravel road, 3 asphalt road
   for (const line of lines) {
     if (!line || !line.samples || line.samples.length < 2) continue;
     const half = line.half ?? line.roadWidth;
@@ -125,6 +131,7 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
           if (d > shoulder && Math.abs(y - ground) > 1e-3) y -= CARVE_MARGIN;
           bestD[idx] = d;
           target[idx] = y;
+          if (roadMask) kind[idx] = d <= shoulder ? (line.surface === 'asphalt' ? 3 : 2) : 1;
         }
       }
     }
@@ -134,6 +141,7 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
     if (!Number.isFinite(bestD[idx])) continue;
     if (heights[idx] !== target[idx]) touched++;
     heights[idx] = target[idx];
+    if (roadMask) roadMask[idx] = kind[idx];
   }
   return touched;
 }

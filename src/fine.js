@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, triSample } from './geo.js';
 import { terrainColor } from './terrain.js';
-import { carveProfile, ROAD_LIFT } from './corridor.js';
+import { carveProfile, ROAD_LIFT, ASPHALT_HEX, GRAVEL_HEX } from './corridor.js';
 import { logger } from './log.js';
 
 /**
@@ -69,7 +69,9 @@ export function createFineTiles({
 
   function carve(t) {
     t.heights.set(t.base);
-    const grid = { heights: t.heights, base: t.base, x0: t.x0, z0: t.z0, cell: STEP, n: N };
+    t.roadMask ||= new Uint8Array(N * N);
+    t.roadMask.fill(0);
+    const grid = { heights: t.heights, base: t.base, x0: t.x0, z0: t.z0, cell: STEP, n: N, roadMask: t.roadMask };
     const lines = linesFor(t) || [];
     if (lines.length) carveProfile(grid, lines, { lift: ROAD_LIFT });
     padFor?.(grid);
@@ -96,8 +98,12 @@ export function createFineTiles({
         positions[idx * 3] = x; positions[idx * 3 + 1] = y; positions[idx * 3 + 2] = z;
         const gx = (at(gi + step, gj) - at(gi - step, gj)) / (2 * stride);
         const gz = (at(gi, gj + step) - at(gi, gj - step)) / (2 * stride);
-        terrainColor(y, Math.hypot(gx, gz), x, z, color);
-        tint?.(x, z, color);
+        const road = t.roadMask ? t.roadMask[gj * N + gi] : 0;
+        if (road >= 2) color.setHex(road === 3 ? ASPHALT_HEX : GRAVEL_HEX);
+        else {
+          terrainColor(y, Math.hypot(gx, gz), x, z, color);
+          if (!road) tint?.(x, z, color);
+        }
         colors[idx * 3] = color.r; colors[idx * 3 + 1] = color.g; colors[idx * 3 + 2] = color.b;
       }
     }

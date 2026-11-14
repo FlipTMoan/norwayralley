@@ -95,6 +95,7 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Rooms: any player's stage change propagates (guest → host → others); verified live with two tabs.
 - [x] Roads drawn once: corridor mesh covers only the slopes outside the ribbon.
 - [x] 1 m corridor tiles (`fine.js`): ±100 m of roads, holes in the chunk mesh, physics from tiles; tests.
+- [x] Solid houses (`BuildingIndex`, push-out in car.js, thud); road band coloured as road, no land-cover tint on it.
 
 ## O. Houses + country mask 2026-11-14 (user requests)
 - [x] Overpass: remember the answering mirror, race when unknown, penalise failures (houses in 6 s, not 75 s+).

@@ -3,12 +3,12 @@ import { clamp, hash2, lerp, smoothstep, triSample, localProjection } from './ge
 import { terrainColor } from './terrain.js';
 import { fetchDem } from './worldgen.js';
 import { makeRoute, buildRoadVisuals, buildRouteIndex } from './stage.js';
-import { fetchOsmChunk, overpassBlocked, buildChunkHouses } from './buildings.js';
+import { fetchOsmChunk, overpassBlocked, buildChunkHouses, BuildingIndex, cullHouses, HOUSE_DRAW_DISTANCE } from './buildings.js';
 import { buildLandCover, addOsmAreas, COVER, SPECIES, tintByCover } from './landcover.js';
 import { buildChunkWater, waterAt } from './water.js';
 import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
-import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights } from './corridor.js';
+import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights, ASPHALT_HEX, GRAVEL_HEX, ROAD_HALF_STANDARD } from './corridor.js';
 import { createFineTiles } from './fine.js';
 import { logger } from './log.js';
 
@@ -106,8 +106,14 @@ function buildChunkGeometry(chunk, step, covered = null) {
       positions[idx * 3 + 2] = z;
       const gx = (at(gi + step, gj) - at(gi - step, gj)) / (2 * stride);
       const gz = (at(gi, gj + step) - at(gi, gj - step)) / (2 * stride);
-      terrainColor(height, Math.hypot(gx, gz), x, z, color);
-      if (chunk.cover) tintByCover(chunk.cover, x, z, color);
+      // The carved road band is road-coloured and never takes the land-cover
+      // tint; the cut/fill slopes keep bare ground colours.
+      const road = chunk.roadMask ? chunk.roadMask[gj * GSIZE + gi] : 0;
+      if (road >= 2) color.setHex(road === 3 ? ASPHALT_HEX : GRAVEL_HEX);
+      else {
+        terrainColor(height, Math.hypot(gx, gz), x, z, color);
+        if (chunk.cover && !road) tintByCover(chunk.cover, x, z, color);
+      }
       colors[idx * 3] = color.r;
       colors[idx * 3 + 1] = color.g;
       colors[idx * 3 + 2] = color.b;
@@ -392,7 +398,9 @@ function applyChunkOsm(world, chunk, osm, hooks) {
     if (houses) {
       chunk.buildingGroup = houses;
       chunk.group.add(houses);
+      world.buildings.setChunk(chunk.key, houses.userData.boxes);
       hooks.houses(houses.userData.count || 0);
+      hooks.cull?.(houses);
     }
   } catch (error) {
     log.warn(`houses skipped for ${chunk.key}: ${error.message}`);
@@ -545,6 +553,7 @@ export async function createStreamingWorld({
   let inFlight = 0;
   let disposed = false;
   let lastFocus = { x: points[0].x, z: points[0].z };
+  let lastHouseCull = -Infinity;
   let focusVel = { x: 0, z: 0 };
   let triangles = 0;
   let treeCount = 0;
@@ -629,6 +638,7 @@ export async function createStreamingWorld({
     freeDrive,
     roads: new RoadNetwork({ spawn: { x: 0, z: 0, yaw: 0 }, name: title }),
     roadHeights: new Map(), // OSM way id → heights per sample, shared by every chunk that holds a piece of the way
+    buildings: new BuildingIndex(), // solid house footprints, for the car
 
     worldFromLatLon: (lat, lon) => projection.worldFromLatLon(lat, lon),
     latLonFromWorld: (x, z) => projection.latLonFromWorld(x, z),
@@ -857,9 +867,9 @@ export async function createStreamingWorld({
     let run = [];
     for (const p of route.samples) {
       if (inside(p)) run.push(p);
-      else if (run.length) { if (run.length >= 2) lines.push({ half: route.roadWidth, samples: run }); run = []; }
+      else if (run.length) { if (run.length >= 2) lines.push({ half: route.roadWidth, surface: route.surface, samples: run }); run = []; }
     }
-    if (run.length >= 2) lines.push({ half: route.roadWidth, samples: run });
+    if (run.length >= 2) lines.push({ half: route.roadWidth, surface: route.surface, samples: run });
     return lines;
   }
 
@@ -876,9 +886,11 @@ export async function createStreamingWorld({
     if (route) lines.push(...routeLinesFor(chunk, route, 80));
     if (chunk.osmRoads?.length) lines.push(...chunk.osmRoads);
     let touched = 0;
+    chunk.roadMask ||= new Uint8Array(GSIZE * GSIZE);
+    chunk.roadMask.fill(0);
     if (lines.length) {
       touched = carveProfile(
-        { heights: chunk.heights, base: chunk.baseHeights, x0: chunk.x0, z0: chunk.z0, cell: CELL, n: GSIZE },
+        { heights: chunk.heights, base: chunk.baseHeights, x0: chunk.x0, z0: chunk.z0, cell: CELL, n: GSIZE, roadMask: chunk.roadMask },
         lines,
         { lift: ROAD_LIFT },
       );
@@ -1178,6 +1190,7 @@ export async function createStreamingWorld({
 
   const featureHooks = {
     houses: (n) => { houseCount += n; },
+    cull: (group) => cullHouses(group, lastFocus.x, lastFocus.z, HOUSE_DRAW_DISTANCE),
     signs: (c) => refreshChunkSigns(c),
     roads: (c) => refreshChunkOsmRoads(c),
     surfaces: (c) => applyChunkSurfaces(c),
@@ -1354,6 +1367,7 @@ export async function createStreamingWorld({
     treeCount = Math.max(0, treeCount - (chunk.trees || 0));
     houseCount = Math.max(0, houseCount - (chunk.buildingGroup?.userData.count || 0));
     world.roads.removeChunk(chunk.key);
+    world.buildings.removeChunk(chunk.key);
     chunk.corridorMesh = null;
     chunks.delete(chunk.key);
     triangles = 0;
@@ -1547,6 +1561,15 @@ export async function createStreamingWorld({
       }
     }
 
+    // Houses are drawn only within HOUSE_DRAW_DISTANCE of the car (4× a second).
+    const nowMs = performance.now();
+    if (nowMs - lastHouseCull > 250) {
+      lastHouseCull = nowMs;
+      for (const chunk of chunks.values()) {
+        if (chunk.state === 'ready' && chunk.buildingGroup) cullHouses(chunk.buildingGroup, fx, fz, HOUSE_DRAW_DISTANCE);
+      }
+    }
+
     // LOD geometry builds: one per frame, nearest chunk first.
     let budget = 1;
     const loaded = [...chunks.values()]
@@ -1600,6 +1623,7 @@ export async function createStreamingWorld({
           chunk.group.add(houses);
           houseCount += houses.userData.count || 0;
         }
+        world.buildings.setChunk(chunk.key, houses?.userData.boxes || []);
       }
       refreshChunkRoad(chunk);
       refreshChunkOsmRoads(chunk);
@@ -1684,7 +1708,7 @@ export async function createStreamingWorld({
     smooth: 1,
     spacing: 5,
     simplifyEpsilon: 2,
-    roadWidth: profile === 'driving' ? 3.4 : 2.4,
+    roadWidth: profile === 'driving' ? ROAD_HALF_STANDARD : 1.6,
     surface: profile === 'driving' ? 'asphalt' : 'gravel',
   });
   if (route.length < 20) {

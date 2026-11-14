@@ -121,6 +121,26 @@ export class RallyAudio {
     this.wade.gain.gain.setTargetAtTime(depth > 0 ? Math.min(0.16, speed * 0.006 * Math.min(1, depth / 0.4)) : 0, t, 0.08);
   }
 
+  /** A dull thud: the car meeting a house wall. */
+  thud(strength = 1) {
+    if (!this.ready || !this.started) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(420, t);
+    filter.frequency.exponentialRampToValueAtTime(90, t + 0.3);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.3 + 0.5 * strength, t + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+    src.connect(filter).connect(gain).connect(this.master);
+    src.start(t);
+    src.stop(t + 0.4);
+  }
+
   /** One splash: a bright slap, then a low whoomph that darkens as it decays. */
   splash(strength = 1) {
     if (!this.ready || !this.started) return;

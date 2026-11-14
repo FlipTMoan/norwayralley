@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
-import { smoothRoadHeights, meanSpacing, RIBBON_SHOULDER } from './corridor.js';
+import { smoothRoadHeights, meanSpacing, RIBBON_SHOULDER, ROAD_HALF_STANDARD } from './corridor.js';
 import { cache } from './cache.js';
 
 /** How far the gravel ribbon floats above the carved ground. The car rides on
@@ -60,7 +60,7 @@ class MinHeap {
  *  query used for road grip, progress and the HUD.                     *
  * ------------------------------------------------------------------ */
 export class StageRoute {
-  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = 3.2, surface = 'gravel' } = {}) {
+  constructor(points, terrain, { name = 'Rally stage', source = 'generated', roadWidth = ROAD_HALF_STANDARD, surface = 'gravel' } = {}) {
     this.terrain = terrain;
     this.name = name;
     this.source = source;
@@ -476,7 +476,7 @@ export function generateRallyRoute(terrain, start, finish, { name = 'Rally stage
     smooth: 3,
     spacing: 4,
     simplifyEpsilon: 2.2,
-    roadWidth: 3.2,
+    roadWidth: ROAD_HALF_STANDARD,
   });
 }
 
@@ -795,7 +795,7 @@ export function buildOsrmRoute(terrain, geometry, { requireInside = true } = {})
     smooth: 1,
     spacing: 5,
     simplifyEpsilon: 2,
-    roadWidth: profile === 'driving' ? 3.4 : 2.4,
+    roadWidth: profile === 'driving' ? ROAD_HALF_STANDARD : 1.6,
     surface: profile === 'driving' ? 'asphalt' : 'gravel',
   });
   if (route.length < 20) {

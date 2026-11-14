@@ -196,6 +196,8 @@ builder still works only inside the loaded world.
   stage. Whoever picks a new stage, loads a saved route, scouts with N or
   starts a free drive, the whole room follows (guests hand their pick to the
   host, who relays it), and late joiners get the current stage on arrival.
+- **Solid houses**: the car cannot drive through a building; it is pushed
+  back out of the wall with a thud and loses most of its speed.
 - **Local cache**: every elevation tile, Overpass answer, NVDB sign and
   surface record, SR16 forest image, OSRM route and map tile is kept in the
   browser's IndexedDB, up to 10 GB with least-recently-used eviction, so a
@@ -203,9 +205,11 @@ builder still works only inside the loaded world.
   down. The start screen shows the size and has a CLEAR button.
 - **Carved roads**: the route is stamped into the shared height field before
   the terrain mesh is rebuilt, so the visible surface, the gravel ribbon and
-  the physics agree on where the road is. Road heights are graded (three
-  passes of a ±45 m running mean), so the carriageway is smooth while the
-  embankments and cuttings of the corridor follow the ground.
+  the physics agree on where the road is. The flat cut-out is 6 m wide
+  (2.1 m half width plus 0.9 m shoulders; only trunk roads and motorways are
+  wider), and road heights are graded (three passes of a ±60 m running
+  mean), so the carriageway is smooth while the embankments and cuttings of
+  the corridor follow the ground.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.

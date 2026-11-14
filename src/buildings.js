@@ -429,6 +429,7 @@ export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
   const yAxis = new THREE.Vector3(0, 1, 0);
   const color = new THREE.Color();
   const world = [];
+  const boxes = []; // solid footprints for the car: { x, z, yaw, hl, hw }
 
   for (const b of placements) {
     if (bodies.length >= MAX_PER_CHUNK) break;
@@ -463,6 +464,7 @@ export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
     m.compose(pos, q, scl);
     color.setHex(fam.walls[Math.floor(rand() * fam.walls.length)]);
     bodies.push({ matrix: m.clone(), color: color.clone() });
+    boxes.push({ x: rect.x, z: rect.z, yaw, hl: length / 2, hw: width / 2 });
 
     pos.set(rect.x, h + eaves - 0.02, rect.z);
     scl.set(length * 1.06, roofRise, width * 1.12);
@@ -501,6 +503,11 @@ export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    // For distance culling: where each instance stands, its real matrix, and
+    // whether it is currently drawn.
+    mesh.userData.centers = items.map((it) => ({ x: it.matrix.elements[12], z: it.matrix.elements[14] }));
+    mesh.userData.matrices = items.map((it) => it.matrix);
+    mesh.userData.shown = new Uint8Array(items.length).fill(1);
     return mesh;
   };
   group.add(instanced(body, bodies), instanced(roof, roofs));
@@ -509,5 +516,125 @@ export function buildChunkHouses(placements, terrain, routeIndex, seed = 1) {
   if (towers.length) group.add(instanced(body, towers));
   if (spires.length) group.add(instanced(spire, spires));
   group.userData.count = bodies.length;
+  group.userData.boxes = boxes;
   return group;
+}
+
+export const HOUSE_DRAW_DISTANCE = 250; // metres from the car within which houses are drawn
+
+const HIDDEN_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
+
+/**
+ * Draw only the houses within `radius` of (cx, cz): every other instance
+ * gets a zero-scale matrix. Returns how many are drawn. Cheap enough to run
+ * a few times a second over every loaded chunk.
+ */
+export function cullHouses(group, cx, cz, radius = HOUSE_DRAW_DISTANCE) {
+  if (!group) return 0;
+  const r2 = radius * radius;
+  let drawn = 0;
+  for (const mesh of group.children) {
+    const { centers, matrices, shown } = mesh.userData;
+    if (!centers) continue;
+    let changed = false;
+    for (let i = 0; i < centers.length; i++) {
+      const dx = centers[i].x - cx;
+      const dz = centers[i].z - cz;
+      const show = dx * dx + dz * dz <= r2 ? 1 : 0;
+      if (show) drawn++;
+      if (shown[i] === show) continue;
+      shown[i] = show;
+      mesh.setMatrixAt(i, show ? matrices[i] : HIDDEN_MATRIX);
+      changed = true;
+    }
+    if (changed) {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere?.();
+    }
+  }
+  return drawn;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Solid houses                                                        *
+ * ------------------------------------------------------------------ */
+
+/**
+ * If a disc of `radius` at (px, pz) overlaps the house box, the push that
+ * frees it: `{ nx, nz, depth }` (unit normal out of the wall, metres).
+ * Boxes are the oriented footprints `{ x, z, yaw, hl, hw }` the builder
+ * placed; `yaw` is the rotation about Y that the mesh was given.
+ */
+export function pushOutOfBox(box, px, pz, radius) {
+  const dx = px - box.x;
+  const dz = pz - box.z;
+  const c = Math.cos(box.yaw);
+  const s = Math.sin(box.yaw);
+  // World → the box's local frame (inverse of three.js's rotation about Y).
+  const lx = dx * c - dz * s;
+  const lz = dx * s + dz * c;
+  const ox = box.hl + radius - Math.abs(lx);
+  const oz = box.hw + radius - Math.abs(lz);
+  if (ox <= 0 || oz <= 0) return null;
+  let nlx = 0;
+  let nlz = 0;
+  let depth;
+  if (ox < oz) { nlx = lx < 0 ? -1 : 1; depth = ox; } else { nlz = lz < 0 ? -1 : 1; depth = oz; }
+  return { nx: nlx * c + nlz * s, nz: -nlx * s + nlz * c, depth };
+}
+
+/** House footprints of every loaded chunk in 64 m buckets, for the car. */
+export class BuildingIndex {
+  constructor(cell = 64) {
+    this.cell = cell;
+    this.buckets = new Map();
+    this.byChunk = new Map();
+  }
+
+  key(i, j) { return `${i},${j}`; }
+
+  setChunk(chunkKey, boxes) {
+    this.removeChunk(chunkKey);
+    const list = boxes || [];
+    for (const b of list) {
+      const r = Math.hypot(b.hl, b.hw);
+      const i0 = Math.floor((b.x - r) / this.cell); const i1 = Math.floor((b.x + r) / this.cell);
+      const j0 = Math.floor((b.z - r) / this.cell); const j1 = Math.floor((b.z + r) / this.cell);
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const k = this.key(i, j);
+          let bucket = this.buckets.get(k);
+          if (!bucket) this.buckets.set(k, (bucket = []));
+          bucket.push({ box: b, chunk: chunkKey });
+        }
+      }
+    }
+    this.byChunk.set(chunkKey, list);
+  }
+
+  removeChunk(chunkKey) {
+    if (!this.byChunk.has(chunkKey)) return;
+    for (const [k, bucket] of this.buckets) {
+      const kept = bucket.filter((e) => e.chunk !== chunkKey);
+      if (kept.length) this.buckets.set(k, kept); else this.buckets.delete(k);
+    }
+    this.byChunk.delete(chunkKey);
+  }
+
+  /** Boxes whose bucket lies within `radius` of (x, z) (a superset; test each). */
+  near(x, z, radius) {
+    const r = Math.ceil(radius / this.cell);
+    const bi = Math.floor(x / this.cell);
+    const bj = Math.floor(z / this.cell);
+    const out = new Set();
+    for (let j = -r; j <= r; j++) {
+      for (let i = -r; i <= r; i++) {
+        const bucket = this.buckets.get(this.key(bi + i, bj + j));
+        if (bucket) for (const e of bucket) out.add(e.box);
+      }
+    }
+    return [...out];
+  }
+
+  get count() { let n = 0; for (const l of this.byChunk.values()) n += l.length; return n; }
 }

@@ -17,6 +17,37 @@ _Updated 2026-11-14._
 - Removed the topo-drape mesh (`buildBasemapMesh`); the topo texture still
   feeds the minimap.
 
+### Changed — houses drawn within 250 m only
+- `cullHouses` hides every house instance farther than 250 m from the car
+  (zero-scale matrices, refreshed four times a second per chunk and on the
+  demo tile). The footprints stay in the collision index, so a hidden house
+  cannot be driven through either once you reach it (it appears first).
+
+### Changed — a 6 m cut-out and smoother grading
+- Every ordinary road is now 2.1 m half width + 0.9 m shoulders: the flat
+  cut-out carved into the ground is exactly 6 m wide (`CUTOUT_WIDTH`), and
+  the flat shoulder of the profile ends where the ribbon ends (no lip). Only
+  motorways (10 m), trunk and primary roads (8 m) are wider. Stage routes,
+  OSM roads and the demo stage all use it; foot/bike trails are 1.6 m half.
+- Road grading window ±60 m × 3 passes (was 45 m): the carriageway is
+  smoother still, the embankments and cuttings take up the rest.
+
+### Added — solid houses
+- Every placed house keeps its oriented footprint; `BuildingIndex` (64 m
+  buckets, per chunk, dropped with the chunk; the demo tile too) answers
+  `near(x, z)` and the car treats itself as a 1.05 m disc against those
+  boxes: it is pushed back out of the wall, the speed into the wall is
+  killed with a small bounce, the rest is scraped down, with a thud and
+  camera shake. You can no longer drive through a house.
+  `tests/crash.test.mjs`.
+
+### Fixed — carved road band coloured as road, never by land cover
+- `carveProfile` now records what each ground cell became (road band:
+  asphalt or gravel; cut/fill slope). Chunk and 1 m tile meshes colour the
+  band dark grey / gravel to match the ribbon and never apply the OSM /
+  SR16 land-cover tint there; slopes keep bare ground colours. No more
+  green showing through on the asphalt. Test in `tests/corridor.test.mjs`.
+
 ### Changed — one build runs on GitHub Pages and on a PC
 - `vite.config.js` uses a relative `base` (`./`), so `dist/` works from any
   static file server at any path (and `npm run preview` at `/`), not only

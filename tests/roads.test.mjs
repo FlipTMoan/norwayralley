@@ -18,7 +18,7 @@ test('prepareChunkRoads clips, resamples and smooths a road', () => {
   assert.ok(s.length > 300, 'resampled at 5 m');
   const bumps = s.map((p) => Math.abs(p.roadY - (100 + 50))).reduce((a, b) => Math.max(a, b), 0);
   assert.ok(bumps < 0.2, `road height smoothed (max deviation ${bumps.toFixed(2)})`);
-  assert.equal(lines[0].half, 3.2);
+  assert.equal(lines[0].half, 2.1, 'ordinary roads: 2.1 m half → 6 m cut-out');
   assert.ok(lines[0].paved);
   assert.ok(!isPaved({ kind: 'track' }) && isPaved({ kind: 'track', surface: 'asphalt' }));
 });
@@ -38,7 +38,7 @@ test('carvePolylines carves the engineered profile into a grid', () => {
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) heights[j * n + i] = 50 + i * 0.5; // ground 66 under the road
   const samples = [];
   for (let z = -10; z <= 270; z += 5) samples.push({ x: 128, z, roadY: 70 }); // road 4 m above the ground: on fill
-  const touched = carvePolylines({ heights, x0: 0, z0: 0, cell, n }, [{ half: 3, samples }], { lift: 0.12 });
+  const touched = carvePolylines({ heights, x0: 0, z0: 0, cell, n }, [{ half: 3.1, samples }], { lift: 0.12 }); // 4 m flat band
   assert.ok(touched > 0);
   const at = (x, z) => heights[(z / cell) * n + x / cell];
   assert.ok(Math.abs(at(128, 100) - 70.12) < 1e-4, 'centre at road height');
