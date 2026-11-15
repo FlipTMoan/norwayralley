@@ -1,6 +1,13 @@
 # Changes
 
-_Updated 2026-11-14._
+_Updated 2026-11-15._
+
+## 2026-11-15
+
+### Changed — roads 50 % wider
+- Two-lane roads are 10.5 m wide (5.25 m half) in an 18 m cut-through,
+  single-lane roads 4.5 m (2.25 m half) filling a 7.5 m cut-through;
+  shoulders stay 1.5 m. `LANES` in `corridor.js`.
 
 ## 2026-11-14
 

@@ -30,8 +30,8 @@ export const ASPHALT_HEX = 0x4b4d4f;  // colour of the carved road band in the g
 export const GRAVEL_HEX = 0x7d7769;
 /** Road classes: carriageway half width and cut-through half width (metres). */
 export const LANES = {
-  two: { half: 3.5, cut: 8 },    // normal two-lane road: 7 m + 1.5 m shoulders, 16 m cut-through
-  one: { half: 1.5, cut: 3 },    // single lane: 3 m + 1.5 m shoulders = the whole 6 m cut-through
+  two: { half: 5.25, cut: 9 },     // normal two-lane road: 10.5 m + 1.5 m shoulders, 18 m cut-through
+  one: { half: 2.25, cut: 3.75 },  // single lane: 4.5 m + 1.5 m shoulders = the whole 7.5 m cut-through
 };
 
 /** Half width of the flat part: carriageway plus shoulder. */

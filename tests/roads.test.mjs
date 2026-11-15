@@ -18,8 +18,8 @@ test('prepareChunkRoads clips, resamples and smooths a road', () => {
   assert.ok(s.length > 300, 'resampled at 5 m');
   const bumps = s.map((p) => Math.abs(p.roadY - (100 + 50))).reduce((a, b) => Math.max(a, b), 0);
   assert.ok(bumps < 0.2, `road height smoothed (max deviation ${bumps.toFixed(2)})`);
-  assert.equal(lines[0].half, 3.5, 'tertiary: two-lane carriageway');
-  assert.equal(lines[0].cut, 8, 'two-lane: 16 m cut-through');
+  assert.equal(lines[0].half, 5.25, 'tertiary: two-lane carriageway');
+  assert.equal(lines[0].cut, 9, 'two-lane: 18 m cut-through');
   assert.ok(Number.isFinite(lines[0].samples[10].edgeL) && Number.isFinite(lines[0].samples[10].edgeR), 'rim heights assigned');
   assert.ok(lines[0].paved);
   assert.ok(!isPaved({ kind: 'track' }) && isPaved({ kind: 'track', surface: 'asphalt' }));

@@ -7,9 +7,9 @@ import { Car } from '../src/car.js';
 import { slopedTerrain } from './road-physics.test.mjs';
 
 test('profile: flat shoulder to shoulder, a smooth blend to the cut-through edge, untouched beyond', () => {
-  const { half, cut } = LANES.two; // 6.5 m road, 1 m shoulders, 16 m cut-through
+  const { half, cut } = LANES.two; // 10.5 m road, 1.5 m shoulders, 18 m cut-through
   const flat = half + SHOULDER;
-  assert.equal(flat, 5);
+  assert.equal(flat, 6.75, 'flat out to 6.75 m: 5.25 m half plus the 1.5 m shoulder');
   assert.equal(profileHeight(100, 90, 0, half, cut), 100);
   assert.equal(profileHeight(100, 90, flat, half, cut), 100, 'flat out to the shoulder');
   const mid = profileHeight(100, 90, (flat + cut) / 2, half, cut);
@@ -20,8 +20,8 @@ test('profile: flat shoulder to shoulder, a smooth blend to the cut-through edge
   assert.equal(profileHeight(100, 90, cut, half, cut, 92), 92, 'rim at the smoothed edge height');
   assert.ok(Math.abs(profileHeight(100, 90, cut + 0.75, half, cut, 92) - 91) < 1e-9, 'feather halfway');
   const one = LANES.one;
-  assert.equal(one.half + SHOULDER, 3, 'single lane: 3 m + 1.5 m shoulders');
-  assert.equal(corridorReach(one.half, one.cut), 3 + 1.5, '6 m cut-through plus the feather');
+  assert.equal(one.half + SHOULDER, 3.75, 'single lane: 4.5 m + 1.5 m shoulders');
+  assert.equal(corridorReach(one.half, one.cut), 3.75 + 1.5, '7.5 m cut-through plus the feather');
 });
 
 test('carveProfile keeps the carriageway exact and tucks the slopes under the margin', () => {
