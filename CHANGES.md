@@ -16,6 +16,19 @@ _Updated 2026-11-15._
   it, and the box is twice the size (76 px arrow, 36 px distance).
   `tests/turns.test.mjs`.
 
+### Fixed — bouncy car after the real jumps
+- Two causes. The lift remembered from a ramp survived the landing, so one
+  step after touching down on flat ground the car launched again at the
+  same speed (a trampoline). And a 4 cm gap within 0.15 s already counted
+  as flight, so every kink and bump in the terrain mesh hopped the car:
+  272 take-offs in 40 s of throttle on the demo stage's verges. Now the
+  landing spends the lift, a take-off needs the free path above the ground
+  from the very next step (so a ramp holds the car until its lip) and a
+  gap of 0.25 m after 0.3 s, no wheel may be pressed into a slope above the
+  body, and the surface-following lift is capped at a 1:1 slope (a bank is
+  not a ramp). Same run: 8 take-offs; following the road at 90 km/h,
+  59 → 9. Crests and table-tops still launch exactly once.
+
 ### Changed — real jumps
 - Gravity is 9.81 m/s² (was a game value of 24) and take-off is ballistic
   instead of the car being glued to the ground: the car keeps the vertical

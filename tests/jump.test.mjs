@@ -30,15 +30,17 @@ function fly(kmh, z0, metres) {
   car.setRoute(route);
   car.reset({ x: 0, z: z0, yaw: 0 });
   car.vF = kmh / 3.6;
-  let flight = 0, longest = 0, clearance = 0;
+  let flight = 0, longest = 0, clearance = 0, takeoffs = 0, wasGrounded = true;
   while (car.pos.z < z0 + metres) {
     const cruise = { throttle: car.speed * 3.6 < kmh ? 1 : 0, brake: 0, steer: 0, handbrake: false, jump: false };
     car.update(1 / 60, cruise);
     if (!car.grounded) { flight += 1 / 60; clearance = Math.max(clearance, car.pos.y - terrain.sample(car.pos.x, car.pos.z)); } else flight = 0;
     longest = Math.max(longest, flight);
+    if (wasGrounded && !car.grounded) takeoffs++;
+    wasGrounded = car.grounded;
     if (car.speed < 1) break;
   }
-  return { longest, clearance, car };
+  return { longest, clearance, takeoffs, car };
 }
 
 test('a crest holds the car at 20 km/h and launches it at 100 km/h', () => {
@@ -54,4 +56,15 @@ test('a table-top jump sends the car further the faster it goes', () => {
   const b = fly(120, 200, 200);
   assert.ok(a.longest > 0.5, `60 km/h: ${a.longest.toFixed(2)} s in the air`);
   assert.ok(b.longest > a.longest, `120 km/h flies longer: ${b.longest.toFixed(2)} s vs ${a.longest.toFixed(2)} s`);
+});
+
+test('the car leaves the ground once per jump and stays down after landing', () => {
+  // The ramp must hold the car until its lip (no hop on the way up) and the
+  // landing must spend the lift (no trampoline off the flat ground beyond).
+  for (const kmh of [60, 120]) {
+    const run = fly(kmh, 200, 200);
+    assert.equal(run.takeoffs, 1, `${kmh} km/h over the table-top: ${run.takeoffs} take-offs`);
+  }
+  const crest = fly(100, -60, 120);
+  assert.equal(crest.takeoffs, 1, `crest at 100 km/h: ${crest.takeoffs} take-offs`);
 });

@@ -113,7 +113,7 @@ flowchart TD
   S --> L[longitudinal: drive, brakes, drag, rolling, slope]
   S --> T[lateral: slip-angle tyre curve, handbrake, gravel wander]
   S --> Y[yaw: bicycle model, speed-softened]
-  S --> G[ground: bounded bounce spring, ballistic take-off when free flight clears the ground ahead, wheel-first landing]
+  S --> G[ground: bounded bounce spring, ballistic take-off when free flight opens a real gap to the ground ahead, wheel-first landing that spends the lift]
   G --> V[visual: pitch/roll from ground samples, body roll/dive, per-wheel travel, dust]
 ```
 

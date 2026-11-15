@@ -18,8 +18,9 @@ const WHEEL_TRAVEL = { down: 0.14, up: 0.2 };
  * far less integration risk. These are the numbers that shape it. */
 const MASS = 1180;                 // kg (Porsche; the buggy has its own spec)
 const GRAVITY = 9.81;              // m/s²: real gravity, so a crest taken fast really launches the car
-const TAKEOFF_LOOK = 0.15;         // s of ballistic flight tested against the ground ahead
-const TAKEOFF_CLEARANCE = 0.04;    // m the free-flight path must clear the ground by to leave it
+const TAKEOFF_LOOK = 0.3;          // s of ballistic flight tested against the ground ahead
+const TAKEOFF_CLEARANCE = 0.25;    // m of gap the free-flight path must open by the end of the look;
+                                   // smaller gaps are suspension and tyre travel, not flight
 const SLOPE_G = 13.5;              // effective gravity along slopes (≈1.4 g): hills bite
 // Phase 3 (V5 plan): stiffer suspension + a fine physics step. The car's ray
 // contacts read the exact same height array the terrain mesh is built from,
@@ -1215,13 +1216,26 @@ export class Car {
       if (speed > 3) {
         const vx = f.x * vF + r.x * vR;
         const vz = f.z * vF + r.z * vR;
-        // The free path must clear the ground all the way out, not only at
-        // the end: halfway up a ramp the lip is ahead but the ramp is not.
+        // The free path (from the surface, not the sprung body) must be above
+        // the ground from the very next step (on a ramp it is below it by
+        // ½gt² until the lip, however close the drop beyond) all the way out,
+        // and have opened a real gap by the end of the look: a kink in the
+        // surface or a small bump lifts the car a few centimetres, which the
+        // suspension takes without the body ever flying.
         let clears = true;
-        for (const t of [TAKEOFF_LOOK / 2, TAKEOFF_LOOK]) {
+        for (const [t, margin] of [[h, 0], [TAKEOFF_LOOK / 3, 0], [(2 * TAKEOFF_LOOK) / 3, 0], [TAKEOFF_LOOK, TAKEOFF_CLEARANCE]]) {
           const ahead = this.groundAt(this.pos.x + vx * t, this.pos.z + vz * t);
-          const free = this.pos.y + this.groundVy * t - 0.5 * GRAVITY * t * t;
-          if (free <= ahead + TAKEOFF_CLEARANCE) { clears = false; break; }
+          const free = groundY + this.groundVy * t - 0.5 * GRAVITY * t * t;
+          if (free <= ahead + margin) { clears = false; break; }
+        }
+        // ...and no wheel may be pressed into a slope above the body (the
+        // front axle on a steep climb), which is what would count as a
+        // landing one step later; a little slack so the two rules never
+        // alternate.
+        if (clears) {
+          for (const w of this.wheels) {
+            if (this.groundAt(this.pos.x + f.x * w.z + r.x * w.x, this.pos.z + f.z * w.z + r.z * w.x) - 0.3 >= this.pos.y - 0.05) { clears = false; break; }
+          }
         }
         if (clears) {
           this.grounded = false;
@@ -1230,10 +1244,11 @@ export class Car {
         }
       }
       // Surface-following vertical speed from the ground's motion under the
-      // car, clamped to a steep slope so a snap or respawn is not a launch.
+      // car, capped at a 1:1 slope: steeper is a bank or a step the car rides
+      // over, not a ramp (and a snap or respawn is not a launch either).
       if (this.prevGroundY != null && speed > 3) {
-        const cap = speed * 2 + 1;
-        this.groundVy = damp(this.groundVy, clamp((groundY - this.prevGroundY) / h, -cap, cap), 40, h);
+        const cap = speed;
+        this.groundVy = damp(this.groundVy, clamp((groundY - this.prevGroundY) / h, -cap, cap), 120, h);
       } else {
         this.groundVy = 0;
       }
@@ -1263,7 +1278,11 @@ export class Car {
         this.bounce = -clamp(impact * 0.015, 0, this.spec.travel.down);
         this.bounceVel = -clamp(impact * 0.12, 0, 2.4);
         this.verticalVel = 0;
-        this.prevGroundY = groundY; // the ground-following speed carries on (a hop on a ramp keeps its lift)
+        // The landing takes the vertical momentum: the ground-following speed
+        // starts again from rest, otherwise the lift remembered from the ramp
+        // would throw the car straight back up off flat ground.
+        this.groundVy = 0;
+        this.prevGroundY = groundY;
         this.grounded = true;
         this.airborneAt = -1;
       }

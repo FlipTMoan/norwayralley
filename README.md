@@ -201,10 +201,12 @@ builder still works only inside the loaded world.
   automatic or manual shifting, and a Spacebar jump with landing absorption.
 - **Real jumps**: gravity is 9.81 m/s² and take-off is ballistic. The car
   carries the vertical speed the ground has been giving it, and when free
-  flight with that speed would clear the ground ahead, it flies: a crest or
-  a table-top launches the car further the faster it is taken, while a slow
-  car just follows the surface. The flight ends when a wheel meets the
-  ground again, and the suspension absorbs the landing.
+  flight with that speed would open a real gap to the ground ahead, it
+  flies: a crest or a table-top launches the car further the faster it is
+  taken, while a slow car, a bump or a kink in the surface just works the
+  suspension. The flight ends when a wheel meets the ground again, the
+  suspension absorbs the landing, and the car stays down: the lift it had
+  before the jump is spent on landing.
 - **50 km/h off the road**: rough ground takes the power. Off the carved
   road no car is driven past 50 km/h, and a car arriving faster is bled down
   to it; the roads themselves are unrestricted.
