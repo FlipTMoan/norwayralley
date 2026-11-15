@@ -10,7 +10,7 @@ function course() {
   const step = (n, dyaw = 0) => {
     for (let i = 0; i < n; i++) {
       yaw += dyaw;
-      x -= Math.sin(yaw) * 2; z += Math.cos(yaw) * 2; s += 2; // left is -x when heading +z
+      x += Math.sin(yaw) * 2; z += Math.cos(yaw) * 2; s += 2; // the car's forward(): left is +x when heading +z
       push();
     }
   };
@@ -24,8 +24,8 @@ function course() {
 }
 
 test('a left bend has a positive angle in the car\'s yaw sense', () => {
-  assert.ok(turnAngle({ x: 0, z: 1 }, { x: -1, z: 1 }) > 0, 'heading +z then bending to -x is left');
-  assert.ok(turnAngle({ x: 0, z: 1 }, { x: 1, z: 1 }) < 0, 'bending to +x is right');
+  assert.ok(turnAngle({ x: 0, z: 1 }, { x: 1, z: 1 }) > 0, 'heading +z then bending to +x is left (screen-right is world -x)');
+  assert.ok(turnAngle({ x: 0, z: 1 }, { x: -1, z: 1 }) < 0, 'bending to -x is right');
 });
 
 test('findTurns picks the two bends, their direction and severity', () => {

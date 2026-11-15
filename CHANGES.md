@@ -10,6 +10,10 @@ _Updated 2026-11-15._
   one while racing: an arrow rotated by the bend's angle (orange for a
   hairpin), LEFT / RIGHT with EASY / HAIRPIN, and the distance to the
   turn-in rounded to 50 m (NOW inside it). Nothing in free drive.
+- Fixed the same day: the note had LEFT and RIGHT swapped (the chase camera
+  looks along +Z with screen-right at world −X, and the turn sign followed
+  the world axes). The arrow and text now follow the bend as the player sees
+  it, and the box is twice the size (76 px arrow, 36 px distance).
   `tests/turns.test.mjs`.
 
 ### Changed — real jumps

@@ -22,9 +22,13 @@ function heading(a, b) {
   return { x: b.x - a.x, z: b.z - a.z };
 }
 
-/** Signed heading change in degrees from direction u to v, positive to the left. */
+/**
+ * Signed heading change in degrees from direction u to v, positive to the left.
+ * The chase camera looks along +Z with screen-right at world -X, so a turn
+ * from +Z towards +X is a left turn (the same sense as the car's yaw).
+ */
 export function turnAngle(u, v) {
-  const cross = u.x * v.z - u.z * v.x;
+  const cross = u.z * v.x - u.x * v.z;
   const dot = u.x * v.x + u.z * v.z;
   return Math.atan2(cross, dot) * DEG;
 }
