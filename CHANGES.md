@@ -4,6 +4,30 @@ _Updated 2026-11-15._
 
 ## 2026-11-15
 
+### Added — pace notes: the next turn under the speedometer
+- `turns.js` reads the stage line for bends (heading change across 12 m
+  chords, runs of ≥ 20° merged into one turn) and the HUD shows the next
+  one while racing: an arrow rotated by the bend's angle (orange for a
+  hairpin), LEFT / RIGHT with EASY / HAIRPIN, and the distance to the
+  turn-in rounded to 50 m (NOW inside it). Nothing in free drive.
+  `tests/turns.test.mjs`.
+
+### Changed — real jumps
+- Gravity is 9.81 m/s² (was a game value of 24) and take-off is ballistic
+  instead of the car being glued to the ground: the car keeps the vertical
+  speed the ground has been giving it and leaves the surface when free
+  flight would clear the ground 0.075 s and 0.15 s ahead. A crest holds the
+  car at 20 km/h and launches it at 100; a table-top throws it further the
+  faster it goes. The flight ends when any wheel reaches the ground (less
+  the suspension travel), wheels are never drawn under the ground in the
+  air either, and an airborne car is dry until it lands on the water. The
+  Space jump impulses were scaled to the new gravity (same height).
+  `tests/jump.test.mjs`.
+
+### Changed — 50 km/h off the road
+- Off the road the drive is cut at 50 km/h and anything above it is bled
+  off at up to 8 m/s²; roads are unrestricted. `tests/offroad-limit.test.mjs`.
+
 ### Changed — roads 50 % wider
 - Two-lane roads are 10.5 m wide (5.25 m half) in an 18 m cut-through,
   single-lane roads 4.5 m (2.25 m half) filling a 7.5 m cut-through;

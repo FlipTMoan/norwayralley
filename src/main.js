@@ -25,6 +25,7 @@ import { RallyAudio } from './audio.js';
 import { createMapPicker } from './map.js';
 import { cache, requestPersistence } from './cache.js';
 import { shareUrl, parseShare, copyText } from './share.js';
+import { findTurns, nextTurn, roundedDistance } from './turns.js';
 import { createStreamingWorld } from './stream.js';
 import { generateTerrain, isInNorway } from './worldgen.js';
 import { logger, initErrorLogging, dumpLog, PerfMonitor } from './log.js';
@@ -160,6 +161,7 @@ const ghosts = new Map();   // peer id → { car, label, kind }
 let myCallsign = (() => { try { return localStorage.getItem('rally.callsign') || makeCallsign(); } catch { return makeCallsign(); } })();
 let lastGeometry = null;    // the OSRM geometry of the current streamed stage (to share)
 let lastFreeCenter = null;  // the free-drive centre (to share)
+let turns = [];             // pace notes for the current stage (turns.js)
 // Small screens: fold the stage panel away while driving so the road is visible.
 const compactMedia = window.matchMedia('(max-width: 900px), (pointer: coarse)');
 function setCompactHud(on) {
@@ -973,6 +975,7 @@ function setRoute(nextRoute, { announce = false, pad = true } = {}) {
     else terrainMesh.userData.refresh?.();
   }
   route = nextRoute;
+  turns = route.free ? [] : findTurns(route.samples);
   if (roadGroup) disposeGroup(roadGroup);
   roadGroup = buildRoadVisuals(route, terrain);
   scene.add(roadGroup);
@@ -1612,7 +1615,24 @@ function updateHud() {
   if (phase === 'racing') {
     $('progressBar').style.width = `${clamp01(car.progress) * 100}%`;
   }
+  updateTurnNote();
   $('wrongWay').classList.toggle('show', car.wrongWay && phase === 'racing');
+}
+
+/** Next-turn note under the speedometer: arrow for direction and sharpness, distance in 50 m steps. */
+function updateTurnNote() {
+  const box = $('turnBox');
+  const s = car.roadQuery?.point?.s;
+  const turn = phase === 'racing' && s != null ? nextTurn(turns, s) : null;
+  box.classList.toggle('hidden', !turn);
+  if (!turn) return;
+  const metres = roundedDistance(turn, s);
+  const side = turn.angle > 0 ? 'LEFT' : 'RIGHT';
+  $('turnDist').textContent = metres > 0 ? `${metres} m` : 'NOW';
+  $('turnKind').textContent = turn.severity === 'hairpin' ? `HAIRPIN ${side}` : turn.severity === 'slight' ? `EASY ${side}` : side;
+  // The arrow points up the road and swings into the bend: left turns rotate anticlockwise on screen.
+  $('turnArrow').style.transform = `rotate(${-Math.max(-150, Math.min(150, turn.angle))}deg)`;
+  box.classList.toggle('hairpin', turn.severity === 'hairpin');
 }
 
 function updateBestFromStorage() {

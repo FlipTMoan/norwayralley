@@ -17,7 +17,9 @@ const WHEEL_TRAVEL = { down: 0.14, up: 0.2 };
  * with spring suspension and a slip-based tyre model gives the same feel with
  * far less integration risk. These are the numbers that shape it. */
 const MASS = 1180;                 // kg (Porsche; the buggy has its own spec)
-const GRAVITY = 24;                // game gravity in the air: comes down hard
+const GRAVITY = 9.81;              // m/s²: real gravity, so a crest taken fast really launches the car
+const TAKEOFF_LOOK = 0.15;         // s of ballistic flight tested against the ground ahead
+const TAKEOFF_CLEARANCE = 0.04;    // m the free-flight path must clear the ground by to leave it
 const SLOPE_G = 13.5;              // effective gravity along slopes (≈1.4 g): hills bite
 // Phase 3 (V5 plan): stiffer suspension + a fine physics step. The car's ray
 // contacts read the exact same height array the terrain mesh is built from,
@@ -28,6 +30,7 @@ const SUSPENSION_D = 14;           // damping of the body bounce
 const MAX_SUBSTEPS = 8;            // physics substeps per rendered frame
 const WATER_DRAG = 0.22;           // v² drag per metre of wetted depth (m⁻¹)
 const WATER_DRAG_MAX = 16;         // m/s²: a car hitting deep water stops hard, not instantly
+export const OFFROAD_MAX_SPEED = 50 / 3.6; // m/s: rough ground is a 50 km/h surface, whatever the car
 const SINK_DEPTH = 1.3;            // roof under: the engine is dead
 const SINK_TIME = 2.5;             // seconds under before the car is fished out
 const CAR_RADIUS = 1.05;           // the car as a disc, for house walls
@@ -63,7 +66,7 @@ export const ENGINE = { idle: IDLE_RPM, redline: REDLINE_RPM, gears: GEAR_RATIOS
 export const CARS = {
   porsche: {
     key: 'porsche', name: 'Porsche 911', mass: 1180, wheelbase: 2.45, track: 1.62, wheelRadius: 0.35, frontAxle: 1.25,
-    travel: { down: 0.14, up: 0.2 }, springK: 190, springD: 14, jump: 6.2,
+    travel: { down: 0.14, up: 0.2 }, springK: 190, springD: 14, jump: 4.0,
     gears: [-6.0, 6.77, 4.05, 2.90, 2.26, 1.85], finalDrive: 3.9, idle: 1200, redline: 12000,
     torque: 380, power: 224000, upshift: 11000, downshift: 4200, driveLoad: 0.62,
     gripBonus: { asphalt: 1, gravel: 1, offroad: 1 }, maxClimb: 30,
@@ -71,7 +74,7 @@ export const CARS = {
   },
   buggy: {
     key: 'buggy', name: 'Formula Offroad', mass: 1500, wheelbase: 2.9, track: 2.1, wheelRadius: 0.62, frontAxle: 1.45,
-    travel: { down: 0.35, up: 0.45 }, springK: 120, springD: 11, jump: 7.5,
+    travel: { down: 0.35, up: 0.45 }, springK: 120, springD: 11, jump: 4.8,
     // 1 200 hp, 4WD, four gears: 61 / 102 / 153 / 212 km/h at an 8 000 rpm redline.
     gears: [-6.0, 9.0, 5.4, 3.6, 2.6], finalDrive: 3.4, idle: 1000, redline: 8000,
     torque: 1500, power: 895000, upshift: 7600, downshift: 3200, driveLoad: 1.0,
@@ -332,6 +335,8 @@ export class Car {
 
     this.pos = new THREE.Vector3(0, 0, 0);
     this.vel = new THREE.Vector2(0, 0);
+    this.groundVy = 0; // vertical speed while following the surface (m/s)
+    this.prevGroundY = null;
     this.yaw = 0;
     this.yawVel = 0;
     this.verticalVel = 0;
@@ -737,6 +742,8 @@ export class Car {
     }
     this.pos.set(pose.x, this.terrain.sample(pose.x, pose.z), pose.z);
     this.vel.set(0, 0);
+    this.groundVy = 0;
+    this.prevGroundY = null;
     this.yaw = pose.yaw || 0;
     this.spawnYaw = this.yaw;
     this.yawVel = 0;
@@ -1018,7 +1025,10 @@ export class Car {
         surface.mu * bonus * this.spec.driveLoad * 9.81 * cosF * (input.handbrake ? 0.3 : 1) * drowned,
         holdF,
       );
-      vF += clamp(drivetrain.driveForce / this.spec.mass, -maxDrive, maxDrive) * h;
+      let driveAccel = clamp(drivetrain.driveForce / this.spec.mass, -maxDrive, maxDrive);
+      // Off the road the ground takes the power: no drive past 50 km/h.
+      if (!this.onRoad && Math.abs(vF) >= OFFROAD_MAX_SPEED && Math.sign(driveAccel) === Math.sign(vF)) driveAccel = 0;
+      vF += driveAccel * h;
       if (drivetrain.brake > 0) {
         vF -= Math.sign(vF) * Math.min(Math.abs(vF) / h, 21 * drivetrain.brake) * h;
       }
@@ -1032,6 +1042,11 @@ export class Car {
       vF -= Math.sign(vF) * surface.rolling * h;
       vF -= vF * Math.abs(vF) * surface.drag * h;
       vF -= vF * (this.onRoad ? 0.02 : 0.12) * h;
+      if (!this.onRoad) {
+        // Rough ground bleeds off anything above 50 km/h (downhill, or arriving fast from the road).
+        const over = Math.abs(vF) - OFFROAD_MAX_SPEED;
+        if (over > 0) vF -= Math.sign(vF) * Math.min(over, Math.min(8, 2 + over) * h);
+      }
       if (this.waterDepth > 0) {
         // Water drag: grows with the square of speed and the wetted depth.
         const k = WATER_DRAG * Math.min(this.waterDepth, 1.2);
@@ -1190,8 +1205,41 @@ export class Car {
       if (this.bounce <= -this.spec.travel.down) this.bounceVel = Math.max(0, this.bounceVel);
       this.pos.y = groundY + this.bounce;
 
-      const contacts = this.sampleWheels(groundY);
-      if (contacts === 0 && this.pos.y > groundY + 0.5) {
+      // Take-off is ballistic: the car carries the vertical speed the ground
+      // has been giving it, and when free flight with that speed would clear
+      // the ground ahead (a crest or a jump taken fast enough, gravity no
+      // longer able to bend the path down onto the surface), it flies. The
+      // decision uses the speed from before this step, so a lip launches the
+      // car with the ramp's lift instead of the drop beyond it.
+      const speed = Math.hypot(vF, vR);
+      if (speed > 3) {
+        const vx = f.x * vF + r.x * vR;
+        const vz = f.z * vF + r.z * vR;
+        // The free path must clear the ground all the way out, not only at
+        // the end: halfway up a ramp the lip is ahead but the ramp is not.
+        let clears = true;
+        for (const t of [TAKEOFF_LOOK / 2, TAKEOFF_LOOK]) {
+          const ahead = this.groundAt(this.pos.x + vx * t, this.pos.z + vz * t);
+          const free = this.pos.y + this.groundVy * t - 0.5 * GRAVITY * t * t;
+          if (free <= ahead + TAKEOFF_CLEARANCE) { clears = false; break; }
+        }
+        if (clears) {
+          this.grounded = false;
+          this.airborneAt = 0;
+          this.verticalVel = this.groundVy;
+        }
+      }
+      // Surface-following vertical speed from the ground's motion under the
+      // car, clamped to a steep slope so a snap or respawn is not a launch.
+      if (this.prevGroundY != null && speed > 3) {
+        const cap = speed * 2 + 1;
+        this.groundVy = damp(this.groundVy, clamp((groundY - this.prevGroundY) / h, -cap, cap), 40, h);
+      } else {
+        this.groundVy = 0;
+      }
+      this.prevGroundY = groundY;
+      const contacts = this.grounded ? this.sampleWheels(groundY) : 0;
+      if (this.grounded && contacts === 0 && this.pos.y > groundY + 0.5) {
         this.grounded = false;
         this.airborneAt = 0;
         this.verticalVel = Math.max(0.6, this.verticalVel);
@@ -1200,7 +1248,13 @@ export class Car {
       this.verticalVel -= GRAVITY * h;
       this.pos.y += this.verticalVel * h;
       if (this.airborneAt >= 0) this.airborneAt += h;
-      if (this.pos.y <= groundY) {
+      // Whichever wheel reaches the ground first ends the flight: on an
+      // upslope that is the front axle, well before the body's own footprint
+      // (less the suspension travel, so a crest under the rear axle does not
+      // count as a landing).
+      let landY = groundY;
+      for (const w of this.wheels) landY = Math.max(landY, this.groundAt(this.pos.x + f.x * w.z + r.x * w.x, this.pos.z + f.z * w.z + r.z * w.x) - 0.3);
+      if (this.pos.y <= landY) {
         // The suspension eats the landing instead of the car snapping to the
         // surface. A hard landing bottoms out the springs and pitches forward.
         const impact = -this.verticalVel;
@@ -1209,6 +1263,7 @@ export class Car {
         this.bounce = -clamp(impact * 0.015, 0, this.spec.travel.down);
         this.bounceVel = -clamp(impact * 0.12, 0, 2.4);
         this.verticalVel = 0;
+        this.prevGroundY = groundY; // the ground-following speed carries on (a hop on a ramp keeps its lift)
         this.grounded = true;
         this.airborneAt = -1;
       }
@@ -1308,8 +1363,9 @@ export class Car {
       this.group.updateMatrixWorld(true);
     }
     // Final guarantee in world space: no wheel's lowest point under the
-    // ground at its own position, whatever the body's pitch and roll did.
-    if (this.grounded) {
+    // ground at its own position, whatever the body's pitch and roll did
+    // (or, skimming low in the air, whatever the ground does under it).
+    {
       let deficit = 0;
       for (const w of this.wheels) {
         this.tmpV.copy(w.pivot.position);
@@ -1333,7 +1389,8 @@ export class Car {
     const w = this.terrain.waterAt ? this.terrain.waterAt(this.pos.x, this.pos.z) : null;
     // Only water the body has actually reached counts: a car flying over the
     // fjord is dry until it comes down to the surface.
-    const depth = w && w.depth > 0 && this.pos.y <= w.surface + 0.15 ? w.depth : 0;
+    const touching = w && w.depth > 0 && this.grounded && this.pos.y <= w.surface + 0.15;
+    const depth = touching ? w.depth : 0;
     this.splash = 0;
     this.recovered = false;
     // Two splashes: the wheels breaking the surface at the shore, and the

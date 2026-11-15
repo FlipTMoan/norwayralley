@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-14._
+_Updated 2026-11-15._
 
 Retro Norway Rally is a static, browser-only Three.js game. There is no
 backend: terrain, map features and road signs are fetched straight from
@@ -44,7 +44,8 @@ flowchart LR
 | Module | Responsibility |
 |---|---|
 | `main.js` | Renderer, lights, game phases (`loading → intro → countdown → racing → finished`), input, three cameras (`1` overhead, `2` chase, `3` driver's seat), HUD, minimap (click → route map), off-road A* from map picks, debug handle `window.__rally`. |
-| `car.js` | Raycast-style arcade car: drivetrain, slip tyres, single-DOF suspension with bounded travel, per-wheel ground following, anti-tunnelling; water (splash, spray, drag, recovery); the lofted Porsche 911 body. |
+| `car.js` | Raycast-style arcade car: drivetrain, slip tyres, single-DOF suspension with bounded travel, per-wheel ground following, ballistic take-off and wheel-first landing under real gravity, 50 km/h off the road, anti-tunnelling; water (splash, spray, drag, recovery); the lofted Porsche 911 body. |
+| `turns.js` | Pace notes from the stage line: bends (direction, angle, severity) and the next one ahead with its distance in 50 m steps for the HUD. |
 | `stage.js` | `StageRoute` (4–5 m samples with `nearest()` to the closest segment), A* rally router, OSRM fetch and segmentation, the gravel ribbon, posts and gates. Exports the ribbon lift constants the car rides on. |
 | `terrain.js` | The baked demo world (GeoTIFF → height field), `carveRoad` / `flattenPad`, terrain colouring, sea, vegetation, minimap. |
 | `stream.js` | Infinite world: 2048 m chunks of 192² samples fetched from Kartverket's WCS, per-chunk carve, LOD meshes with skirts (holes under fine tiles), forest scatter, map features, disposal. |
@@ -112,7 +113,7 @@ flowchart TD
   S --> L[longitudinal: drive, brakes, drag, rolling, slope]
   S --> T[lateral: slip-angle tyre curve, handbrake, gravel wander]
   S --> Y[yaw: bicycle model, speed-softened]
-  S --> G[ground: bounded bounce spring, 4 wheel contacts, airborne / landing]
+  S --> G[ground: bounded bounce spring, ballistic take-off when free flight clears the ground ahead, wheel-first landing]
   G --> V[visual: pitch/roll from ground samples, body roll/dive, per-wheel travel, dust]
 ```
 

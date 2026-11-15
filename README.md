@@ -199,6 +199,20 @@ builder still works only inside the loaded world.
   weight transfer, a Pacejka-style slip curve for lateral grip, gravel vs.
   asphalt friction, six forward gears plus reverse, an engine torque curve,
   automatic or manual shifting, and a Spacebar jump with landing absorption.
+- **Real jumps**: gravity is 9.81 m/s² and take-off is ballistic. The car
+  carries the vertical speed the ground has been giving it, and when free
+  flight with that speed would clear the ground ahead, it flies: a crest or
+  a table-top launches the car further the faster it is taken, while a slow
+  car just follows the surface. The flight ends when a wheel meets the
+  ground again, and the suspension absorbs the landing.
+- **50 km/h off the road**: rough ground takes the power. Off the carved
+  road no car is driven past 50 km/h, and a car arriving faster is bled down
+  to it; the roads themselves are unrestricted.
+- **Pace notes**: while racing a stage, a box under the speedometer shows
+  the next turn: an arrow swinging into the bend (its angle is the bend's),
+  LEFT / RIGHT with EASY or HAIRPIN for the sharpness, and the distance to
+  the turn-in in 50 m steps (NOW once you are in it). Free drive has no
+  planned route and so no notes.
 - **Chunked terrain LOD**: the height field is cut into a grid of chunks whose
   count scales with the sample grid (49 chunks for the demo's 512², 121 for a
   generated 784²). Each chunk has three detail levels (1×, 2× and 4×
