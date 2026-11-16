@@ -74,7 +74,7 @@ namespace Rally.Vehicle
                     baseNormals = deformed.normals;
                     verts = (Vector3[])baseVerts.Clone();
                 }
-                mask = new RenderTexture(MaskSize, MaskSize, 0, RenderTextureFormat.R8) { name = "car damage mask" };
+                mask = new RenderTexture(MaskSize, MaskSize, 0, RenderTextureFormat.R8, RenderTextureReadWrite.Linear) { name = "car damage mask" }; // linear: a mask, not a colour (R8 sRGB is unsupported on some GPUs)
                 mask.Create();
                 var active = RenderTexture.active;
                 RenderTexture.active = mask;

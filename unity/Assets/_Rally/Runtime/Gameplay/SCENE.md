@@ -1,7 +1,23 @@
-# Bootstrap scene (`Assets/_Rally/Scenes/Game.unity`)
+# Bootstrap scene (`Assets/_Rally/Scenes/Rally.unity`)
 
-_Updated 2026-11-16. The scene is not in the repository (binary); create it once in the editor as below and add it to
-Build Settings (it must be the only enabled scene — `Editor/BuildWeb.cs` builds every enabled scene)._
+_Updated 2026-11-16. **Run `Rally → Build Bootstrap Scene` (or the headless command below) and then press Play.**
+`Editor/SceneBuilder.cs` creates everything in the tables that follow — the manual steps stay here as the reference for
+what each slot is — so nothing has to be clicked:_
+
+```bash
+unity-editor -batchmode -nographics -projectPath unity -executeMethod Rally.Editor.SceneBuilder.Build -quit
+```
+
+_It is idempotent: existing assets under `Assets/_Rally/Settings` and `Assets/_Rally/Prefabs` are kept (edit them freely),
+missing ones are created, the scene is regenerated and added to Build Settings as the only enabled scene. The first Play works
+offline (`UseFakeSources` is on and `EditorQuery` is `?drive=59.032,6.065`). Placeholders until real art arrives: cone
+trees in five species colours (three LODs + billboard), colour-coded capsules per actor kind, flat-colour terrain splat
+arrays. The Porsche prefab (`Prefabs/Car_Porsche911.prefab`) comes from the WoTiger FBX: the importer is scaled so the
+wheelbase measures 2.45 m, the four FBX wheels hang under pivot/spin pairs at the CarSpec axles, textures are wired by
+hand into URP Lit copies under `Settings/Car`. Particle, light and trail slots stay empty (every component tolerates that).
+`Assets/_Rally/Tests/PlayMode/SceneSmokeTests.cs` boots the scene offline, starts the engine and asserts the car drives;
+it needs a GPU (`-nographics` has no compute kernels), so run it with a display:
+`unity-editor -batchmode -projectPath unity -runTests -testPlatform PlayMode -testResults results.xml`._
 
 ## 1. Project settings
 
@@ -11,7 +27,7 @@ Build Settings (it must be the only enabled scene — `Editor/BuildWeb.cs` build
   10 `Props`, 12 `Actors`, 13 `Car`; tags `Car`, `Actor`. **Physics → Layer Collision Matrix**: Car ↔ Buildings/Trees/Props
   on, Car ↔ Water on (trigger), Car ↔ Actors off (the actors' own disc test reports hits), Actors ↔ Buildings/Trees/Props on.
 - **Graphics → URP asset** (`Assets/_Rally/Settings/RallyURP.asset`, Create → Rendering → URP Asset with Universal Renderer):
-  Depth Texture **on**, Opaque Texture **on**, Shadow cascades 4, shadow distance 200 (WorldStyleSO.Apply rewrites these),
+  Forward+, Depth Texture **on**, Opaque Texture **on**, Shadow cascades 4, shadow distance 200 (WorldStyleSO.Apply rewrites these),
   HDR on, MSAA off (the CRT feature / render scale handles the look). Renderer asset: add the **Screen Space Ambient Occlusion**
   feature and, for the retro preset, the **CrtRenderFeature** (`Rally/CRT` shader). Set the asset in Graphics *and* Quality.
 - **Player → Web**: handled by `Rally → Build Web`.
@@ -24,7 +40,7 @@ Build Settings (it must be the only enabled scene — `Editor/BuildWeb.cs` build
 | **Vegetation Set** (`VegetationSet.asset`) | 5 prototypes in order spruce, pine, birch, mountain birch, shrub: 3 LOD meshes, a billboard quad (x −0.5..0.5, y 0..1), a `Rally/Tree` material and a billboard copy with `_Billboard` 1. Unassigned prototypes are skipped. |
 | **Actor Set** (`ActorSet.asset`) | One prefab per `ActorKind` (moose, deer, sheep, reindeer, pedestrian, dog, cyclist, tractor) plus a `Fallback` (a capsule is fine). Prefabs may carry an Animator with `Speed` (float) and `State` (int); `ActorView` is added at spawn when missing. |
 | Road materials | `RoadTarmac` and `RoadGravel`: URP Lit (or your own) — the ribbon's sub-mesh 0 is tarmac, 1 gravel; UV u = −1..2 across (markings by u), v = metres / 4. |
-| **Car prefab** (`Porsche.prefab`) | Root: `Rigidbody` (kinematic is set by code), `BoxCollider`, `CarController` (Kind, GripMode, four `WheelPivots` + optional `WheelSpins`; the layer masks are set by GameController), `CarEffects` (Dust / Spray / Exhaust particle systems in world simulation space, two rear TrailRenderers, brake-light renderer with an emissive material, two headlight spot lights), `CarDamageVisual` (Body renderer on `Rally/CarBody`, WindscreenCrack quad, headlights, Smoke / Sparks particle systems, Bumper / Bonnet transforms), `CarAudio` (no slots). Models: `Assets/_Rally/Art/Cars` (see `docs/car-models.md`). Layer `Car`. |
+| **Car prefab** (`Car_Porsche911.prefab`) | Root: `Rigidbody` (kinematic is set by code), `BoxCollider`, `CarController` (Kind, GripMode, four `WheelPivots` + optional `WheelSpins`; the layer masks are set by GameController), `CarEffects` (Dust / Spray / Exhaust particle systems in world simulation space, two rear TrailRenderers, brake-light renderer with an emissive material, two headlight spot lights), `CarDamageVisual` (Body renderer on `Rally/CarBody`, WindscreenCrack quad, headlights, Smoke / Sparks particle systems, Bumper / Bonnet transforms), `CarAudio` (no slots). Models: `Assets/_Rally/Art/Cars` (see `docs/car-models.md`). Layer `Car`. |
 | **HUD** (`Hud.uxml` + `Hud.uss`, Panel Settings asset) | A UI Toolkit document with elements named exactly: Labels `speed`, `gear`, `clock`, `penalty`, `noteKind`, `noteDist`, `surface`, `status`, `distLeft`; VisualElements `rpmBar` (width is set in %, class `redline` toggled), `arrow` (rotated by the turn angle, + = anticlockwise), `damageBar` (width %), `turnBox` (hidden when there is no note). |
 
 ## 3. GameObjects

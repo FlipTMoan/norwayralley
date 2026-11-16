@@ -53,3 +53,12 @@
 - Rule: when parallel agents write a project nobody can compile, run an
   integration pass (asmdef graph, duplicate types, call-site signatures) before
   pushing, and say plainly in the report that nothing has compiled.
+
+## 2026-11-16 — Unity headless runs
+- PlayMode tests of this project cannot run with `-nographics`: the null device reports compute support but has no
+  compiled kernels (`Kernel 'Carve' not found`) and no random-write R32 textures. Run them with a display
+  (`DISPLAY=:0`, no `-nographics`); editor scripts and the web build are fine headless.
+- `LogAssert.NoUnexpectedReceived()` fails on warnings too; fix the warning's root cause (missing resource, sRGB R8)
+  rather than expecting it.
+- When reading a component field after `DestroyImmediate` of its GameObject, Unity's `?:` null check reports
+  "none": log before destroying.

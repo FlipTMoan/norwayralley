@@ -19,7 +19,8 @@ Shader "Rally/CRT"
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Frag
-            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+            // URP Core.hlsl first: Blit.hlsl needs TEXTURE2D_X and the XR macros it defines.
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.core/Runtime/Utilities/Blit.hlsl"
 
             float _Scanlines, _Dither, _Curvature, _Vignette;
@@ -47,8 +48,8 @@ Shader "Rally/CRT"
                 col = lerp(col, floor(col * 31 + threshold) / 31, _Dither);
 
                 // Scanlines: every other internal row darker.
-                float line = fmod(px.y, 2) < 1 ? 1 : 1 - _Scanlines;
-                col *= line;
+                float scan = fmod(px.y, 2) < 1 ? 1 : 1 - _Scanlines; // "line" is an HLSL keyword
+                col *= scan;
 
                 float vig = 1 - _Vignette * dot(c, c) * 0.5;
                 return float4(col * vig, 1);

@@ -17,6 +17,15 @@ The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` 
    the packages in `Packages/manifest.json` (URP, Burst, Mathematics, Collections, Input System,
    Test Framework, glTFast).
 
+## Build the bootstrap scene and press Play
+
+**Rally → Build Bootstrap Scene** (or headless:
+`unity-editor -batchmode -nographics -projectPath unity -executeMethod Rally.Editor.SceneBuilder.Build -quit`)
+creates the URP asset, volume profile, panel settings, world style with placeholder art, the actor
+capsules, the Porsche prefab from the WoTiger FBX and `Assets/_Rally/Scenes/Rally.unity`, and sets the
+Player Settings (Input System, linear colour). Then press Play: `UseFakeSources` is on, so the first run
+needs no network. Details and the slot reference: `Assets/_Rally/Runtime/Gameplay/SCENE.md`.
+
 ## Run the EditMode tests
 
 **Window → General → Test Runner → EditMode → Run All.** The Geo tests
@@ -28,6 +37,13 @@ Headless (what CI does):
 
 ```bash
 unity-editor -batchmode -nographics -projectPath unity -runTests -testPlatform EditMode -testResults results.xml
+```
+
+The PlayMode smoke test (`Assets/_Rally/Tests/PlayMode`) boots the bootstrap scene offline, starts the
+engine and checks that the car drives; it needs a real GPU, so drop `-nographics` and run it with a display:
+
+```bash
+unity-editor -batchmode -projectPath unity -runTests -testPlatform PlayMode -testResults results.xml
 ```
 
 ## Build for the web

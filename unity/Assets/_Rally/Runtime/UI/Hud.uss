@@ -1,5 +1,6 @@
 /* Retro HUD: the JS game's amber-on-dark look (legacy-js/src/style.css #hud, #turnBox), bigger turn box as of 2026-11-15. */
-.hud { position: absolute; left: 0; top: 0; right: 0; bottom: 0; -unity-font-definition: resource('Fonts/PressStart2P'); color: rgb(255, 196, 64); }
+/* The JS game used Press Start 2P; drop a .ttf under a Resources/Fonts folder and add `-unity-font-definition: resource('Fonts/PressStart2P');` to .hud to get it back. */
+.hud { position: absolute; left: 0; top: 0; right: 0; bottom: 0; color: rgb(255, 196, 64); }
 .top { position: absolute; top: 12px; left: 16px; flex-direction: row; }
 .clock { font-size: 28px; }
 .penalty { font-size: 18px; color: rgb(255, 80, 60); margin-left: 12px; }

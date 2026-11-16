@@ -4,6 +4,23 @@ _Updated 2026-11-16._
 
 ## 2026-11-16
 
+### Unity: bootstrap scene built by code, PlayMode smoke test
+- `unity/Assets/_Rally/Editor/SceneBuilder.cs` (`Rally → Build Bootstrap Scene`,
+  `-executeMethod Rally.Editor.SceneBuilder.Build`) does what SCENE.md asked a
+  human to click: URP asset + Forward+ renderer (SSAO, CRT feature off), volume
+  profile, UI Toolkit panel settings, WorldStyle / VegetationSet / ActorSet with
+  procedural placeholders (cone trees, capsule actors, flat splat arrays), road,
+  water, sky and building materials, the Porsche prefab from the WoTiger FBX
+  (scaled to the 2.45 m wheelbase, FBX wheels under pivot/spin pairs), and the
+  `Rally.unity` scene with every GameController slot filled; Input System and
+  linear colour in Player Settings.
+- `Tests/PlayMode/SceneSmokeTests`: boots the scene offline, starts the engine and
+  asserts the car drives > 5 m with no unexpected log output (needs a GPU).
+- Fixes found by it: the car damage mask is now a linear R8 texture (sRGB R8 is
+  unsupported on this GPU), the FBX mesh is readable for the CPU dent path, and
+  `Hud.uss` no longer references the Press Start 2P font that was never in the
+  repository. `GameController.Phase` is public for tests.
+
 ### Repository: JS game moved to `legacy-js/`, Unity rewrite started
 - The Three.js game (sources, tests, `public/`, Vite config, `package.json`)
   now lives in `legacy-js/`; the Pages workflow builds from there, so the

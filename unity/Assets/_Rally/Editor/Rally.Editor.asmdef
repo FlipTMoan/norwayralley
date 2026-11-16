@@ -1,7 +1,21 @@
 {
   "name": "Rally.Editor",
   "rootNamespace": "Rally.Editor",
-  "references": [],
+  "references": [
+    "Rally.Core",
+    "Rally.World",
+    "Rally.Vehicle",
+    "Rally.Actors",
+    "Rally.Gameplay",
+    "Rally.Presentation",
+    "Rally.UI",
+    "Rally.Net",
+    "Unity.Mathematics",
+    "Unity.RenderPipelines.Universal.Runtime",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Editor",
+    "Unity.RenderPipelines.Core.Editor"
+  ],
   "includePlatforms": [ "Editor" ],
   "excludePlatforms": [],
   "autoReferenced": true,

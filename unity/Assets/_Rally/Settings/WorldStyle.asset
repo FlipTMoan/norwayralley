@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cb9526b345293405597c3e8e33ad6203, type: 3}
+  m_Name: WorldStyle
+  m_EditorClassIdentifier: Rally.World::Rally.World.WorldStyleSO
+  Mode: 1
+  TerrainMaterial: {fileID: 2100000, guid: 28a45a5165438409fb28f9a0addc1d5b, type: 2}
+  TextureTiling: 6
+  FlatShading: 0
+  SnowLineOffset: 0
+  TreeLineOffset: 0
+  ClipmapLevels: 7
+  Vegetation: {fileID: 11400000, guid: 8450d27a7bf86ed01ba417a16c93e52a, type: 2}
+  ScatterShader: {fileID: 7200000, guid: 65b9a0adec5fa8bef815f4b9a5c30810, type: 3}
+  TreeDensity: 1
+  TreeScale: 1
+  TreeDrawDistance: 900
+  LakeMaterial: {fileID: 2100000, guid: 161ad1cf75cf845c0bb9c3ca180a2081, type: 2}
+  RiverMaterial: {fileID: 2100000, guid: 4f415a08c498ef947b4592d12e3e5dc2, type: 2}
+  SeaMaterial: {fileID: 2100000, guid: c433cffadde5612bfadf804216b30cbe, type: 2}
+  BuildingMaterial: {fileID: 2100000, guid: e4a5c291c45ff96c5b4b2e01ac3e5353, type: 2}
+  SkyMaterial: {fileID: 2100000, guid: 7ed52f0131fe273e29f032576f61acad, type: 2}
+  FogColor: {r: 0.72, g: 0.78, b: 0.85, a: 1}
+  FogDensity: 0.00035
+  HeightFogColor: {r: 0.74, g: 0.79, b: 0.86, a: 1}
+  HeightFogDensity: 0.0004
+  HeightFogBase: 0
+  PostProfile: {fileID: 11400000, guid: b53e79cae0d934a9994df43b629d79c3, type: 2}
+  Bloom: 1
+  BloomIntensity: 0.35
+  AcesTonemapping: 1
+  Vignette: 1
+  VignetteIntensity: 0.25
+  MotionBlur: 1
+  MotionBlurIntensity: 0.3
+  Ssao: 1
+  ShadowCascades: 4
+  ShadowDistance: 200

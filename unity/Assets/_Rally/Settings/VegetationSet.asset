@@ -1,0 +1,72 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9bc93ae22bdc192bb80ac437e432e41b, type: 3}
+  m_Name: VegetationSet
+  m_EditorClassIdentifier: Rally.World::Rally.World.VegetationSetSO
+  Prototypes:
+  - Name: spruce
+    Lods:
+    - {fileID: 4300000, guid: 9374c052d6da381b793e06ee3be3654d, type: 2}
+    - {fileID: 4300000, guid: 2d1f7f2796ed1c7d5a950cc82a8c4dd1, type: 2}
+    - {fileID: 4300000, guid: 04e11ec72c28d82fa8fb2a29b6037dec, type: 2}
+    Material: {fileID: 2100000, guid: 31318f96809be9880897bb3934d9bc8f, type: 2}
+    Billboard: {fileID: 4300000, guid: 9bff963c859b7c42f86540959c697c45, type: 2}
+    BillboardMaterial: {fileID: 2100000, guid: 98989cdb76a95068786f3e55c4002406, type: 2}
+    TrunkRadius: 0.25
+    Height: 14
+    ScaleRange: {x: 0.8, y: 1.3}
+  - Name: pine
+    Lods:
+    - {fileID: 4300000, guid: 11d0dcbed7ec8306aa57563739f447e2, type: 2}
+    - {fileID: 4300000, guid: cfdd7b2e080758c7a9e4b85c5bbf0935, type: 2}
+    - {fileID: 4300000, guid: 7d69722636c78dd09a5afc085b19ff4f, type: 2}
+    Material: {fileID: 2100000, guid: 761791381089b2e94a92e212911dc61c, type: 2}
+    Billboard: {fileID: 4300000, guid: 9bff963c859b7c42f86540959c697c45, type: 2}
+    BillboardMaterial: {fileID: 2100000, guid: 70982a38bed900175af334294f33561f, type: 2}
+    TrunkRadius: 0.28
+    Height: 12
+    ScaleRange: {x: 0.8, y: 1.3}
+  - Name: birch
+    Lods:
+    - {fileID: 4300000, guid: 4354af1c7c0796feb8d36881a079a5db, type: 2}
+    - {fileID: 4300000, guid: 806c566abaaaef8148b4b276a5d63a9a, type: 2}
+    - {fileID: 4300000, guid: 88b77f89c174ed62b8999e3f8cfcb963, type: 2}
+    Material: {fileID: 2100000, guid: 866ced7cde02b10a595dfb90950286b0, type: 2}
+    Billboard: {fileID: 4300000, guid: 9bff963c859b7c42f86540959c697c45, type: 2}
+    BillboardMaterial: {fileID: 2100000, guid: da6ff247af3e09426a72c8efe3d5673e, type: 2}
+    TrunkRadius: 0.18
+    Height: 10
+    ScaleRange: {x: 0.8, y: 1.3}
+  - Name: mountain birch
+    Lods:
+    - {fileID: 4300000, guid: 9e361bd1e33e8d379892185126ead1f3, type: 2}
+    - {fileID: 4300000, guid: 3b7a1dcd8f53a9780bc5465e7f707579, type: 2}
+    - {fileID: 4300000, guid: 878ffe1374e10e3bab9bcf0d9d44fbbc, type: 2}
+    Material: {fileID: 2100000, guid: 6c1f4d1860eebb817a9733fd772d3a45, type: 2}
+    Billboard: {fileID: 4300000, guid: 9bff963c859b7c42f86540959c697c45, type: 2}
+    BillboardMaterial: {fileID: 2100000, guid: d36ea791a74f0bd0b801956333a6d8a1, type: 2}
+    TrunkRadius: 0.12
+    Height: 5
+    ScaleRange: {x: 0.8, y: 1.3}
+  - Name: shrub
+    Lods:
+    - {fileID: 4300000, guid: e5918213001810341957d9ba67ee7367, type: 2}
+    - {fileID: 4300000, guid: f402389f7798fc076af4c7ac6b7d3768, type: 2}
+    - {fileID: 4300000, guid: d89cb31aa57a835d29c2b914491422f9, type: 2}
+    Material: {fileID: 2100000, guid: 636d87744eab1ee6b89242347f3db0f3, type: 2}
+    Billboard: {fileID: 4300000, guid: 9bff963c859b7c42f86540959c697c45, type: 2}
+    BillboardMaterial: {fileID: 2100000, guid: 8759324244898ba32b04cdb78a064f07, type: 2}
+    TrunkRadius: 0.05
+    Height: 1.6
+    ScaleRange: {x: 0.8, y: 1.3}
+  LodDistances: {x: 60, y: 180, z: 450}
+  FarShadows: 0

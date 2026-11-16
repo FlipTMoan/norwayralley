@@ -101,6 +101,8 @@ namespace Rally.Gameplay
         CarController car;
         CarAudio audio;
         readonly GameFlow flow = new GameFlow();
+        /// <summary>The stage phase (Loading → Intro → Countdown → Racing → Finished), for tests and tools.</summary>
+        public Phase Phase => flow.Phase;
         ActorManager actors;
         readonly Dictionary<CrossingActor, ActorView> actorViews = new Dictionary<CrossingActor, ActorView>();
         Session session;
