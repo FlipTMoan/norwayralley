@@ -1,0 +1,88 @@
+name: Unity Web build
+
+on:
+  push:
+    branches: [main]
+    paths: ['unity/**', '.github/workflows/unity.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unity-web
+  cancel-in-progress: true
+
+env:
+  UNITY_VERSION: 6000.6.0f1   # keep in sync with unity/ProjectSettings/ProjectVersion.txt
+
+jobs:
+  # Without a Unity licence secret the jobs below cannot run; skip them quietly instead of failing
+  # every push until the secrets (UNITY_LICENSE, UNITY_EMAIL, UNITY_PASSWORD) are added.
+  license:
+    name: Licence present?
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - id: check
+        env:
+          LIC: ${{ secrets.UNITY_LICENSE }}
+        run: echo "ok=$([ -n \"$LIC\" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: EditMode tests
+    needs: license
+    if: needs.license.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: Library-Tests-${{ hashFiles('unity/Packages/manifest.json', 'unity/ProjectSettings/ProjectVersion.txt') }}
+          restore-keys: Library-Tests-
+      - uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          unityVersion: ${{ env.UNITY_VERSION }}
+          testMode: EditMode
+          artifactsPath: test-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unity-test-results
+          path: test-results
+
+  build:
+    name: Web build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: Library-WebGL-${{ hashFiles('unity/Packages/manifest.json', 'unity/ProjectSettings/ProjectVersion.txt') }}
+          restore-keys: Library-WebGL-
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          unityVersion: ${{ env.UNITY_VERSION }}
+          targetPlatform: WebGL
+          buildMethod: Rally.Editor.BuildWeb.Build
+          buildsPath: unity/Build
+          buildName: Web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unity-web
+          path: unity/Build/Web
+          if-no-files-found: error

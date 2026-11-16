@@ -1,0 +1,9 @@
+{
+  "name": "Rally.Editor",
+  "rootNamespace": "Rally.Editor",
+  "references": [],
+  "includePlatforms": [ "Editor" ],
+  "excludePlatforms": [],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

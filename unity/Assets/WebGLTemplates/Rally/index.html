@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#111614">
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <!-- Same pinned versions as legacy-js/package.json (leaflet 1.9.4, peerjs 1.5.4). -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js" crossorigin=""></script>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111614; color: #e9e6dc; font-family: "Segoe UI", Arial, Helvetica, sans-serif; }
+    #unity-container { position: fixed; inset: 0; }
+    #unity-canvas { width: 100%; height: 100%; display: block; background: #111614; touch-action: none; }
+    #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: #111614; z-index: 20; transition: opacity .4s; }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading .kicker { font-size: 12px; letter-spacing: .28em; color: #f0ce58; }
+    #loading h1 { margin: 0; font-size: 28px; letter-spacing: .12em; }
+    #loading-track { width: min(60vw, 360px); height: 8px; background: #26302b; border-radius: 4px; overflow: hidden; }
+    #loading-bar { width: 0; height: 100%; background: #f0ce58; transition: width .2s; }
+    #loading-text { font-size: 13px; color: #a9b3ad; }
+    #map-overlay { position: fixed; inset: 0; display: none; z-index: 30; background: rgba(8, 12, 10, .82); }
+    #map-overlay.open { display: flex; flex-direction: column; }
+    #map-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; font-size: 13px; letter-spacing: .2em; }
+    #map-head button { background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+    #map { flex: 1; min-height: 0; margin: 0 16px; border: 1px solid #3a463f; }
+    #map-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; font-size: 13px; }
+    #map-foot select, #map-foot button { background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+    #map-foot button.primary { background: #f0ce58; color: #111614; font-weight: bold; }
+    #map-foot button:disabled { opacity: .45; cursor: default; }
+    #map-status { flex-basis: 100%; color: #a9b3ad; }
+    .route-pin span { display: inline-block; width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--pin); color: #111614; font-weight: bold; }
+    .route-pin span { transform: rotate(-45deg); }
+    #footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; padding: 4px 16px; font-size: 10px; line-height: 1.4; color: #8e9a93; background: rgba(17, 22, 20, .6); pointer-events: none; }
+    #footer a { color: #b7c1bb; pointer-events: auto; }
+  </style>
+</head>
+<body>
+  <div id="unity-container">
+    <canvas id="unity-canvas" tabindex="-1" aria-label="Retro Norway Rally"></canvas>
+  </div>
+
+  <div id="loading" role="status" aria-live="polite">
+    <div class="kicker">KARTVERKET 1 M DTM · EPSG:25833</div>
+    <h1>RETRO NORWAY RALLY</h1>
+    <div id="loading-track"><div id="loading-bar"></div></div>
+    <div id="loading-text">Waking the mountain…</div>
+  </div>
+
+  <div id="map-overlay" role="dialog" aria-label="2D route map">
+    <div id="map-head">
+      <span>NORGE · 2D ROUTE PICKER — PICK TWO POINTS</span>
+      <button id="map-close" title="Close the map">✕</button>
+    </div>
+    <div id="map"></div>
+    <div id="map-foot">
+      <label>ROUTE BY
+        <select id="map-profile" title="OSRM road profile (pins snap to its nearest road within 1 km), or the game's own off-road router">
+          <option value="driving" selected>driving</option>
+          <option value="cycling">cycling</option>
+          <option value="foot">foot</option>
+          <option value="offroad">off-road (A*)</option>
+        </select>
+      </label>
+      <button id="map-free" disabled title="Stream the world around the start point and drive anywhere on the real roads">FREE DRIVE HERE</button>
+      <button id="map-generate" class="primary" disabled>GENERATE ROUTE</button>
+      <div id="map-status">Click the map to set the START point, then the FINISH — each pin snaps to the nearest road within 1 km — or FREE DRIVE from the start.</div>
+    </div>
+  </div>
+
+  <div id="footer">
+    Terrain: Kartverket NHM DTM (CC BY 4.0) · Forest: SR16 © NIBIO (NLOD) · Map data © OpenStreetMap contributors (ODbL) ·
+    Road signs: data under NLOD from Statens vegvesen · Routing: OSRM · Outline: geoBoundaries (CC BY 4.0) · Made by Filip Tobias Moan © 2026
+  </div>
+
+  <script>
+    // ---- Unity loader ---------------------------------------------------------------------
+    // Brotli with decompression fallback (see Editor/BuildWeb.cs): GitHub Pages cannot send
+    // Content-Encoding, so the loader inflates the .br files itself. Unity's loader picks WebGPU
+    // when the build lists it first and the browser has it, else WebGL 2.
+    var unityInstance = null;
+    var canvas = document.getElementById('unity-canvas');
+    var buildUrl = 'Build';
+    var config = {
+      arguments: [],
+      dataUrl: buildUrl + '/{{{ DATA_FILENAME }}}',
+      frameworkUrl: buildUrl + '/{{{ FRAMEWORK_FILENAME }}}',
+#if USE_THREADS
+      workerUrl: buildUrl + '/{{{ WORKER_FILENAME }}}',
+#endif
+#if USE_WASM
+      codeUrl: buildUrl + '/{{{ CODE_FILENAME }}}',
+#endif
+#if MEMORY_FILENAME
+      memoryUrl: buildUrl + '/{{{ MEMORY_FILENAME }}}',
+#endif
+#if SYMBOLS_FILENAME
+      symbolsUrl: buildUrl + '/{{{ SYMBOLS_FILENAME }}}',
+#endif
+      streamingAssetsUrl: 'StreamingAssets',
+      companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+      productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+      productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+      matchWebGLToCanvasSize: true,
+      devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+    };
+
+    // Full-window canvas that follows the window (and phone rotation).
+    function fitCanvas() {
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+    }
+    window.addEventListener('resize', fitCanvas);
+    window.addEventListener('orientationchange', fitCanvas);
+    fitCanvas();
+
+    var loaderScript = document.createElement('script');
+    loaderScript.src = buildUrl + '/{{{ LOADER_FILENAME }}}';
+    loaderScript.onload = function () {
+      createUnityInstance(canvas, config, function (progress) {
+        document.getElementById('loading-bar').style.width = Math.round(progress * 100) + '%';
+        document.getElementById('loading-text').textContent = progress < 1 ? 'Loading ' + Math.round(progress * 100) + '%' : 'Starting…';
+      }).then(function (instance) {
+        unityInstance = instance;
+        document.getElementById('loading').classList.add('hidden');
+      }).catch(function (message) {
+        document.getElementById('loading-text').textContent = String(message);
+      });
+    };
+    document.body.appendChild(loaderScript);
+
+    // ---- Leaflet route picker (map.js), driven from C# through dom.jslib ------------------
+    // Events to Unity: SendMessage('Map', 'OnMapEvent', JSON) with
+    //   { ev: 'pick', which: 0|1, lat, lon } | { ev: 'generate', start, finish, profile }
+    //   | { ev: 'free', start, profile } | { ev: 'close' }
+    window.rallyMap = (function () {
+      var NORWAY = [[57.5, 3.5], [71.4, 31.5]];
+      var map = null, pins = [null, null], routeLine = null, worldRect = null, next = 0;
+      var overlay = document.getElementById('map-overlay');
+      var statusEl = document.getElementById('map-status');
+      var profileEl = document.getElementById('map-profile');
+      var freeBtn = document.getElementById('map-free');
+      var genBtn = document.getElementById('map-generate');
+
+      function send(payload) { if (unityInstance) unityInstance.SendMessage('Map', 'OnMapEvent', JSON.stringify(payload)); }
+      function latLon(ll) { return ll ? { lat: ll.lat, lon: ll.lng } : null; }
+      function icon(label, color) {
+        return L.divIcon({ className: 'route-pin', html: '<span style="--pin:' + color + '">' + label + '</span>', iconSize: [26, 26], iconAnchor: [13, 26] });
+      }
+      function buttons() {
+        freeBtn.disabled = !pins[0];
+        genBtn.disabled = !(pins[0] && pins[1]);
+      }
+      function setPin(which, lat, lon) {
+        if (!map) return;
+        if (pins[which]) pins[which].setLatLng([lat, lon]);
+        else pins[which] = L.marker([lat, lon], { icon: icon(which ? 'F' : 'S', which ? '#d34a31' : '#f0ce58'), draggable: true }).addTo(map)
+          .on('dragend', function (e) { var p = latLon(e.target.getLatLng()); send({ ev: 'pick', which: which, lat: p.lat, lon: p.lon }); });
+        buttons();
+      }
+      function ensure() {
+        if (map) return;
+        var bounds = L.latLngBounds(NORWAY);
+        map = L.map('map', { minZoom: 4, maxZoom: 18, zoomAnimation: false, fadeAnimation: false, markerZoomAnimation: false, maxBounds: bounds.pad(0.02), maxBoundsViscosity: 1.0 }).setView([64.5, 12], 4);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19, bounds: bounds }).addTo(map);
+        map.on('click', function (e) {
+          var which = next;
+          next = which === 0 ? 1 : 0;
+          setPin(which, e.latlng.lat, e.latlng.lng);
+          send({ ev: 'pick', which: which, lat: e.latlng.lat, lon: e.latlng.lng });
+        });
+        document.getElementById('map-close').onclick = function () { api.close(); send({ ev: 'close' }); };
+        genBtn.onclick = function () {
+          send({ ev: 'generate', start: latLon(pins[0].getLatLng()), finish: latLon(pins[1].getLatLng()), profile: profileEl.value });
+        };
+        freeBtn.onclick = function () { send({ ev: 'free', start: latLon(pins[0].getLatLng()), profile: profileEl.value }); };
+      }
+      var api = {
+        open: function (options) {
+          overlay.classList.add('open');
+          ensure();
+          options = options || {};
+          if (options.start) setPin(0, options.start.lat, options.start.lon);
+          if (options.finish) setPin(1, options.finish.lat, options.finish.lon);
+          if (options.world) {
+            var w = options.world;
+            var rect = [[w.minLat, w.minLon], [w.maxLat, w.maxLon]];
+            if (worldRect) worldRect.setBounds(rect); else worldRect = L.rectangle(rect, { color: '#f0ce58', weight: 2, dashArray: '6 6', fill: false, interactive: false }).addTo(map);
+          }
+          next = pins[0] && !pins[1] ? 1 : 0;
+          buttons();
+          setTimeout(function () { map.invalidateSize(); if (pins[0] && !options.world) map.setView(pins[0].getLatLng(), Math.max(map.getZoom(), 11)); }, 50);
+        },
+        close: function () { overlay.classList.remove('open'); },
+        status: function (text) { statusEl.textContent = text; },
+        setPin: setPin,
+        setRoute: function (pts) {
+          if (!map) return;
+          if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+          if (pts && pts.length) routeLine = L.polyline(pts, { color: '#f0ce58', weight: 3 }).addTo(map);
+        },
+      };
+      return api;
+    })();
+  </script>
+</body>
+</html>

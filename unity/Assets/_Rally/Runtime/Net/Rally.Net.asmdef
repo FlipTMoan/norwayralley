@@ -1,0 +1,7 @@
+{
+  "name": "Rally.Net",
+  "rootNamespace": "Rally.Net",
+  "references": [ "Rally.Core", "Rally.Geo", "Unity.Mathematics" ],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Rally.Gameplay",
+  "rootNamespace": "Rally.Gameplay",
+  "references": [ "Rally.Core", "Rally.Actors", "Rally.Track", "Rally.Vehicle", "Rally.World", "Rally.Roads", "Rally.Geo", "Unity.Mathematics" ],
+  "autoReferenced": true
+}

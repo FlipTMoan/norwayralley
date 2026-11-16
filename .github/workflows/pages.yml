@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read      # to download the unity-web artifact from unity.yml
   pages: write
   id-token: write
 
@@ -30,6 +31,20 @@ jobs:
         working-directory: legacy-js
       - run: npm run build
         working-directory: legacy-js
+      # Serve the Unity build at /norwayralley/unity/ from the newest successful run of
+      # unity.yml. Before the first Unity build exists this step simply finds nothing.
+      - name: Add the Unity web build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow unity.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId' || true)
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "No successful Unity build yet; deploying the JS game alone."
+          else
+            mkdir -p legacy-js/dist/unity
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name unity-web --dir legacy-js/dist/unity \
+              || echo "unity-web artifact of run $run_id is gone (expired); deploying the JS game alone."
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: legacy-js/dist

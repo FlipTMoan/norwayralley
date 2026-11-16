@@ -1,0 +1,33 @@
+{
+  "name": "Rally.Tests.Edit",
+  "rootNamespace": "Rally.Tests.Edit",
+  "references": [
+    "Rally.Core",
+    "Rally.Geo",
+    "Rally.World",
+    "Rally.Roads",
+    "Rally.Track",
+    "Rally.Vehicle",
+    "Rally.Actors",
+    "Rally.Gameplay",
+    "Unity.Mathematics",
+    "Unity.Collections",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner",
+    "Rally.Net"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "noEngineReferences": false
+}

@@ -1,0 +1,22 @@
+/* Retro HUD: the JS game's amber-on-dark look (legacy-js/src/style.css #hud, #turnBox), bigger turn box as of 2026-11-15. */
+.hud { position: absolute; left: 0; top: 0; right: 0; bottom: 0; -unity-font-definition: resource('Fonts/PressStart2P'); color: rgb(255, 196, 64); }
+.top { position: absolute; top: 12px; left: 16px; flex-direction: row; }
+.clock { font-size: 28px; }
+.penalty { font-size: 18px; color: rgb(255, 80, 60); margin-left: 12px; }
+.dist { font-size: 14px; margin-left: 20px; margin-top: 10px; }
+.turnBox { position: absolute; top: 20px; right: 20px; flex-direction: row; align-items: center; padding: 10px 18px; background-color: rgba(0, 0, 0, 0.55); border-radius: 8px; }
+.arrow { width: 76px; height: 76px; background-image: resource('UI/arrow'); -unity-background-scale-mode: scale-to-fit; }
+.noteDist { font-size: 36px; margin-left: 14px; }
+.noteKind { font-size: 13px; margin-left: 14px; }
+.bottom { position: absolute; bottom: 16px; left: 16px; right: 16px; flex-direction: row; align-items: flex-end; }
+.dial { flex-direction: row; align-items: flex-end; }
+.speed { font-size: 48px; }
+.unit { font-size: 12px; margin-left: 6px; margin-bottom: 8px; }
+.gear { font-size: 32px; margin-left: 24px; color: rgb(255, 255, 255); }
+.rpm { width: 220px; height: 12px; margin-left: 24px; margin-bottom: 10px; background-color: rgba(0, 0, 0, 0.5); }
+.rpmBar { height: 100%; width: 0%; background-color: rgb(255, 196, 64); }
+.rpmBar.redline { background-color: rgb(255, 60, 40); }
+.surface { font-size: 12px; margin-left: 24px; margin-bottom: 8px; }
+.damage { width: 120px; height: 8px; margin-left: auto; margin-bottom: 10px; background-color: rgba(0, 0, 0, 0.5); }
+.damageBar { height: 100%; width: 0%; background-color: rgb(255, 60, 40); }
+.status { position: absolute; bottom: 60px; left: 0; right: 0; -unity-text-align: middle-center; font-size: 14px; color: rgb(255, 255, 255); }

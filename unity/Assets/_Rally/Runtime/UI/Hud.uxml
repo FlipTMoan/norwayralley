@@ -1,0 +1,26 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+  <Style src="Hud.uss" />
+  <ui:VisualElement name="hud" class="hud">
+    <ui:VisualElement class="top">
+      <ui:Label name="clock" text="0:00.00" class="clock" />
+      <ui:Label name="penalty" text="" class="penalty" />
+      <ui:Label name="distLeft" text="" class="dist" />
+    </ui:VisualElement>
+    <ui:VisualElement name="turnBox" class="turnBox">
+      <ui:VisualElement name="arrow" class="arrow" />
+      <ui:Label name="noteDist" text="300" class="noteDist" />
+      <ui:Label name="noteKind" text="EASY LEFT" class="noteKind" />
+    </ui:VisualElement>
+    <ui:VisualElement class="bottom">
+      <ui:VisualElement class="dial">
+        <ui:Label name="speed" text="0" class="speed" />
+        <ui:Label text="km/h" class="unit" />
+        <ui:Label name="gear" text="1" class="gear" />
+        <ui:VisualElement class="rpm"><ui:VisualElement name="rpmBar" class="rpmBar" /></ui:VisualElement>
+      </ui:VisualElement>
+      <ui:Label name="surface" text="GRAVEL" class="surface" />
+      <ui:VisualElement class="damage"><ui:VisualElement name="damageBar" class="damageBar" /></ui:VisualElement>
+    </ui:VisualElement>
+    <ui:Label name="status" text="" class="status" />
+  </ui:VisualElement>
+</ui:UXML>

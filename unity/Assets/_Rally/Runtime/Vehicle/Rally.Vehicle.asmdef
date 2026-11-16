@@ -1,0 +1,7 @@
+{
+  "name": "Rally.Vehicle",
+  "rootNamespace": "Rally.Vehicle",
+  "references": [ "Rally.Core", "Rally.Track", "Unity.Mathematics", "Unity.Collections", "Unity.Burst", "Unity.InputSystem" ],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

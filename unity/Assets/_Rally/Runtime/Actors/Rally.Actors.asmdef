@@ -1,0 +1,6 @@
+{
+  "name": "Rally.Actors",
+  "rootNamespace": "Rally.Actors",
+  "references": [ "Rally.Core", "Unity.Mathematics", "Unity.Collections" ],
+  "autoReferenced": true
+}
