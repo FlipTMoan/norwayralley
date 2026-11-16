@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-16._
+_Updated 2026-11-16 (evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -124,3 +124,54 @@ flowchart TD
 Vite with a relative `base`; `npm test` runs Node tests under
 `legacy-js/tests/` (browser globals stubbed); GitHub Actions runs the tests,
 builds and deploys `legacy-js/dist/` to Pages on every push to `main`.
+
+
+## Unity / WebAssembly rewrite (`unity/`)
+
+Started 2026-11-16 from `tasks/plan_20261116_unity.md`. Unity 6 (6000.6),
+URP, WebGPU first with a WebGL 2 fallback, IL2CPP → wasm. Nothing has been
+compiled yet (no Unity on the build machine); `unity/docs/integration-review.md`
+lists what to verify in the editor. The JS game in `legacy-js/` stays live
+until the Unity build reaches parity.
+
+```mermaid
+flowchart TB
+  subgraph Browser
+    DOM[Leaflet map · loader · friends panel]
+    JS[jslib bridges<br/>idb.jslib IndexedDB · peer.jslib PeerJS · dom.jslib URL/storage]
+  end
+  subgraph Unity["Unity (wasm, one C# thread)"]
+    UI[Rally.UI<br/>UI Toolkit HUD] --> GP[Rally.Gameplay<br/>GameController · GameFlow · ShareLinks]
+    PR[Rally.Presentation<br/>CameraRig · CRT feature · SkyAndTime] --> GP
+    NET[Rally.Net<br/>Session · GhostTrack · IceConfig] --> GP
+    GP --> VH[Rally.Vehicle<br/>CarSim port · CarController PhysX · CarDamage · effects · audio]
+    GP --> AC[Rally.Actors<br/>SpawnRules · CrossingActor · ActorManager]
+    GP --> TR[Rally.Track<br/>StageRoute · PaceNotes · RoadWalk]
+    VH --> TR
+    TR --> RD[Rally.Roads<br/>RoadGraph · ProfileGrader · RibbonMesh]
+    RD --> WD[Rally.World<br/>TileScheduler · TerrainTile · Clipmap · Carve.compute · Scatter.compute · Vegetation · Water · Buildings · TileWorld:IGround]
+    VH --> CORE
+    AC --> CORE
+    WD --> GEO[Rally.Geo<br/>Kartverket WCS · Overpass · SR16 · NVDB · OSRM · GeoCache · breakers · fakes]
+    GEO --> CORE[Rally.Core<br/>Utm33 · Proj · FloatingOrigin · HeightGrid · IGround · RoadConstants · RallyRandom]
+  end
+  GEO <--> JS
+  NET <--> JS
+  UI <--> DOM
+```
+
+| Layer | What it owns |
+|---|---|
+| Core | EPSG:25833 frame, floating origin (rebases every 2048 m), the `HeightGrid` ground truth, `IGround`, road profile constants, seeded RNG, log. |
+| Geo | Every geodata request with the JS URL formats, the IndexedDB cache **shared with the JS game** (same database), circuit breakers, fakes for tests. |
+| World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, physics colliders (buildings mesh, pooled tree capsules, props, water triggers), procedural sky. |
+| Roads | OSM road graph with NVDB attributes, grading, carve segments, ribbon meshes, `Nearest`. |
+| Track | Stage line (4 m samples, segment-nearest), pace notes (positive = left in Unity's frame), the seeded `RoadWalk` endless-stage generator. |
+| Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. |
+| Actors | Seeded encounters by land cover (moose, deer, sheep, reindeer north of 65°, pedestrians, dogs, cyclists, tractors), crossing state machine, hits and near misses. |
+| Gameplay | Phases, clock, penalties, retirement, share links in the JS formats, the bootstrap `GameController`. |
+| Net | PeerJS rooms byte-compatible with the JS wire format, ghost cars, ICE config with a TURN slot. |
+| UI / Presentation | HUD, start screen hooks, three cameras, CRT presenter, sun by hour/month/latitude. |
+
+Car art: `unity/Assets/_Rally/Art/Cars/<name>/` with a `LICENSE.txt` each
+(CC BY 4.0 models only; list in `unity/docs/car-models.md`).

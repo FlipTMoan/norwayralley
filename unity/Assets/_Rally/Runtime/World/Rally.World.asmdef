@@ -1,0 +1,7 @@
+{
+  "name": "Rally.World",
+  "rootNamespace": "Rally.World",
+  "references": [ "Rally.Core", "Rally.Geo", "Unity.Mathematics", "Unity.Collections", "Unity.Burst", "Unity.RenderPipelines.Universal.Runtime", "Unity.RenderPipelines.Core.Runtime" ],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

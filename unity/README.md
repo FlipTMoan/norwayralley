@@ -81,7 +81,7 @@ before deploying Pages. Add these repository secrets (Settings → Secrets and v
 
 ```
 unity/
-  Assets/_Rally/Runtime/<Layer>/      one asmdef per layer, Core ← Geo ← World ← Roads ← Track ← Vehicle/Actors ← Gameplay ← Net/UI/Presentation
+  Assets/_Rally/Runtime/<Layer>/      one asmdef per layer, Core ← Geo ← World ← Roads ← Track ← Vehicle/Actors/Net/UI/Presentation ← Gameplay (GameController, see Gameplay/SCENE.md)
     Core/                             Utm33, LatLon, Proj, Bounds25833, FloatingOrigin, HeightGrid, IGround, RallyRandom, RallyLog
     Geo/                              every geodata client (ports of worldgen.js, buildings.js, landcover.js, signs.js, stage.js, cache.js)
       Sources/                        the interfaces + plain data: IDemSource, IRoadSource, IFeatureSource, ILandcoverSource, ISignSource, IRouter, IGeoCache

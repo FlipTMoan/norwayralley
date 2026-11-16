@@ -1,0 +1,70 @@
+// Road / pad carve into one heightmap slice. GPU twin of CarveJob.cs (keep the two in step).
+//
+// Every texel of the tile takes the profile of the NEAREST segment within reach (corridor.js
+// carveProfile: nearest wins so crossings do not fight), evaluated from the untouched base heights:
+//   d <= HalfWidth               -> road height lerped along the segment
+//   HalfWidth < d < +Shoulder    -> smoothstep blend from the road height to the natural ground
+//   beyond                       -> untouched
+// Segments are fed in batches of at most MAX_SEGMENTS per dispatch; _First == 1 on the first batch
+// resets the slice to the base heights and the scratch best-distance texture to +inf, later batches
+// keep refining, so an arbitrary number of segments still gives "nearest of all wins".
+//
+// Texel (x, y) = HeightGrid[row = y, col = x] = tile-local position (x, y) * _CellM from the south-west corner.
+#pragma kernel Carve
+
+#define MAX_SEGMENTS 2048
+
+struct CarveSegment            // mirrors Rally.World.CarveSegment (32 bytes)
+{
+    float2 a, b;               // tile-local metres
+    float ha, hb;              // road heights at a and b (lift included)
+    float halfWidth;           // flat band
+    float shoulder;            // blend width
+};
+
+Texture2DArray<float> _Base;              // untouched DTM, one slice per tile
+RWTexture2DArray<float> _Heights;         // carved result, same slice index
+RWTexture2DArray<float> _Mask;            // 1 on the flat band, 0.5 on the blend, 0 untouched (scatter avoidance)
+RWTexture2D<float> _BestD;                // scratch, N x N, distance of the segment that wrote the texel so far
+StructuredBuffer<CarveSegment> _Segments;
+int _SegmentCount;
+int _Slice;
+int _N;
+int _First;
+float _CellM;
+
+float Smoothstep01(float t) { t = saturate(t); return t * t * (3.0 - 2.0 * t); }
+
+[numthreads(8, 8, 1)]
+void Carve(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_N || id.y >= (uint)_N) return;
+    uint3 texel = uint3(id.xy, (uint)_Slice);
+    float ground = _Base[texel];
+    float2 p = float2(id.xy) * _CellM;
+
+    float bestD = _First ? 1e30 : _BestD[id.xy];
+    float h = _First ? ground : _Heights[texel];
+    float mask = _First ? 0.0 : _Mask[texel];
+
+    int count = min(_SegmentCount, MAX_SEGMENTS);
+    for (int s = 0; s < count; s++)
+    {
+        CarveSegment seg = _Segments[s];
+        float reach = seg.halfWidth + seg.shoulder;
+        float2 lo = min(seg.a, seg.b) - reach, hi = max(seg.a, seg.b) + reach;
+        if (any(p < lo) || any(p > hi)) continue;             // box reject
+        float2 ab = seg.b - seg.a;
+        float len2 = dot(ab, ab);
+        float t = len2 > 1e-12 ? saturate(dot(p - seg.a, ab) / len2) : 0.0;
+        float d = distance(p, seg.a + ab * t);
+        if (d > reach || d >= bestD) continue;
+        bestD = d;
+        float roadY = lerp(seg.ha, seg.hb, t);
+        if (d <= seg.halfWidth) { h = roadY; mask = 1.0; }
+        else { h = lerp(roadY, ground, Smoothstep01((d - seg.halfWidth) / seg.shoulder)); mask = 0.5; }
+    }
+    _BestD[id.xy] = bestD;
+    _Heights[texel] = h;
+    _Mask[texel] = mask;
+}

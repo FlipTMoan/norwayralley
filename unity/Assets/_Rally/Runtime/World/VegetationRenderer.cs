@@ -1,0 +1,247 @@
+using Rally.Core;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.Rendering;
+
+namespace Rally.World
+{
+    /// <summary>
+    /// Draws every live tile's trees with RenderMeshIndirect, one draw per (species, LOD) bucket:
+    /// instances live in a GPU store (one slot per atlas slice, TREE_BUDGET each), Scatter.compute fills a
+    /// slot when a tile's land cover and carve are in, and per frame its Cull kernel frustum-tests,
+    /// LOD-sorts and writes the visible list plus the indirect args. The CPU never touches instances
+    /// except for the one readback per tile that feeds <see cref="TreeIndex"/> for collisions.
+    /// Without compute (WebGL 2) the same scatter runs as <see cref="ScatterJob"/> and the draw falls back
+    /// to RenderMeshInstanced from CPU-culled matrices.
+    /// </summary>
+    public sealed class VegetationRenderer : System.IDisposable
+    {
+        public const int Capacity = 2600;        // stream.js TREE_BUDGET: instances per tile
+        public const int MaxVisible = 4096;      // per (species, LOD) bucket per frame
+        public const int Buckets = VegetationSetSO.SpeciesCount * VegetationSetSO.Lods;
+        public float Density = 1f, Scale = 1f, DrawDistance = 900f;
+
+        readonly VegetationSetSO set;
+        readonly ComputeShader cs;
+        readonly TileAtlas atlas;
+        readonly TreeIndex index;
+        readonly bool gpu;
+        readonly int slots, kScatter, kClear, kCull, kArgs;
+        readonly TerrainTile[] bySlot;
+        readonly GraphicsBuffer instances, counts, tileOrigins, visible, drawCounts, args;
+        readonly Material[] materials = new Material[Buckets];
+        readonly MaterialPropertyBlock[] props = new MaterialPropertyBlock[Buckets];
+        readonly Plane[] planes = new Plane[6];
+        readonly Vector4[] planeVecs = new Vector4[6];
+        NativeArray<float4> originsCpu;
+        NativeArray<uint> zero;
+        // CPU path
+        NativeArray<TreeInstance> cpuInstances;
+        NativeArray<int> cpuCounts, jobCount;
+        NativeArray<Matrix4x4> matrices;
+        static readonly int OffsetId = Shader.PropertyToID("_InstanceOffset"), BillboardId = Shader.PropertyToID("_Billboard");
+
+        public VegetationRenderer(VegetationSetSO set, ComputeShader scatterShader, TileAtlas coarseAtlas, TreeIndex treeIndex)
+        {
+            this.set = set; cs = scatterShader; atlas = coarseAtlas; index = treeIndex;
+            slots = atlas.Slices;
+            bySlot = new TerrainTile[slots];
+            gpu = SystemInfo.supportsComputeShaders && cs != null;
+            originsCpu = new NativeArray<float4>(slots, Allocator.Persistent);
+            zero = new NativeArray<uint>(1, Allocator.Persistent);
+            tileOrigins = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots, 16);
+            for (int b = 0; b < Buckets; b++)
+            {
+                props[b] = new MaterialPropertyBlock();
+                var proto = set.Prototypes[b / VegetationSetSO.Lods];
+                if (proto == null) continue;
+                bool billboard = b % VegetationSetSO.Lods == 3;
+                var src = billboard ? proto.BillboardMaterial : proto.Material;
+                if (src == null) continue;
+                materials[b] = new Material(src);   // a copy: the keyword must not be baked into the asset
+                materials[b].SetFloat(BillboardId, billboard ? 1 : 0);
+                if (gpu) materials[b].EnableKeyword("_RALLY_INDIRECT"); else materials[b].DisableKeyword("_RALLY_INDIRECT");
+            }
+            if (gpu)
+            {
+                kScatter = cs.FindKernel("ScatterTile"); kClear = cs.FindKernel("ClearCounts"); kCull = cs.FindKernel("Cull"); kArgs = cs.FindKernel("WriteArgs");
+                instances = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots * Capacity, TreeInstance.Stride);
+                counts = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots, 4);
+                visible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, Buckets * MaxVisible, TreeInstance.Stride);
+                drawCounts = new GraphicsBuffer(GraphicsBuffer.Target.Structured, Buckets, 4);
+                args = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, Buckets, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                var a = new GraphicsBuffer.IndirectDrawIndexedArgs[Buckets];
+                for (int b = 0; b < Buckets; b++)
+                {
+                    var mesh = MeshFor(b);
+                    if (mesh == null) continue;
+                    a[b] = new GraphicsBuffer.IndirectDrawIndexedArgs { indexCountPerInstance = mesh.GetIndexCount(0), startIndex = mesh.GetIndexStart(0), baseVertexIndex = mesh.GetBaseVertex(0), instanceCount = 0, startInstance = 0 };
+                }
+                args.SetData(a);
+                var zeros = new NativeArray<uint>(slots, Allocator.Temp);
+                counts.SetData(zeros);
+                zeros.Dispose();
+                Shader.SetGlobalBuffer("_TreeVisible", visible);
+            }
+            else
+            {
+                cpuInstances = new NativeArray<TreeInstance>(slots * Capacity, Allocator.Persistent);
+                cpuCounts = new NativeArray<int>(slots, Allocator.Persistent);
+                jobCount = new NativeArray<int>(1, Allocator.Persistent);
+                matrices = new NativeArray<Matrix4x4>(MaxVisible, Allocator.Persistent);
+            }
+        }
+
+        Mesh MeshFor(int bucket)
+        {
+            var proto = set.Prototypes[bucket / VegetationSetSO.Lods];
+            int lod = bucket % VegetationSetSO.Lods;
+            if (proto == null) return null;
+            return lod == 3 ? proto.Billboard : (proto.Lods != null && lod < proto.Lods.Length ? proto.Lods[lod] : null);
+        }
+
+        /// <summary>Generate a coarse tile's trees (after its carve: the mask keeps them off roads and pads).</summary>
+        public void ScatterTile(TerrainTile tile)
+        {
+            if (tile.Key.Kind != TileKind.Coarse || !tile.HasHeights) return;
+            int slot = tile.Slice;
+            bySlot[slot] = tile;
+            uint seed = ScatterJob.Hash3(new uint3((uint)tile.Key.I, (uint)tile.Key.J, 7u));
+            int res = atlas.SplatRes;
+            if (gpu)
+            {
+                counts.SetData(zero, 0, slot, 1);
+                cs.SetTexture(kScatter, "_CoverAtlas", atlas.Cover);
+                cs.SetTexture(kScatter, "_HeightsCoarse", atlas.Heights);
+                cs.SetTexture(kScatter, "_MaskCoarse", atlas.Mask);
+                cs.SetBuffer(kScatter, "_Instances", instances);
+                cs.SetBuffer(kScatter, "_Counts", counts);
+                cs.SetInt("_Slot", slot); cs.SetInt("_Capacity", Capacity); cs.SetInt("_Res", res); cs.SetInt("_N", atlas.N);
+                cs.SetFloat("_CellM", tile.Key.CellM); cs.SetFloat("_CoverCell", tile.Key.SizeM / res);
+                cs.SetFloat("_Density", Density); cs.SetFloat("_Scale", Scale);
+                cs.SetFloat("_TreeLine", tile.TreeLine); cs.SetFloat("_SnowLine", tile.SnowLine);
+                cs.SetInt("_Seed", unchecked((int)seed));
+                cs.Dispatch(kScatter, (res + 7) / 8, (res + 7) / 8, 1);
+                // CPU copy for collisions: count first, then exactly that many instances.
+                var key = tile.Key; var origin = tile.Key.Origin;
+                AsyncGPUReadback.Request(counts, 4, slot * 4, c =>
+                {
+                    if (c.hasError || bySlot[slot] != tile) return;
+                    int n = math.min((int)c.GetData<uint>()[0], Capacity);
+                    if (n == 0) { index.RemoveTile(key); return; }
+                    AsyncGPUReadback.Request(instances, n * TreeInstance.Stride, slot * Capacity * TreeInstance.Stride, r =>
+                    {
+                        if (r.hasError || bySlot[slot] != tile) return;
+                        index.AddTile(key, origin, r.GetData<TreeInstance>(), n, set);
+                    });
+                });
+            }
+            else
+            {
+                if (!tile.Cover.IsCreated) return;
+                var job = new ScatterJob
+                {
+                    Res = res, N = atlas.N, Capacity = Capacity, CellM = tile.Key.CellM, CoverCell = tile.Key.SizeM / res,
+                    Density = Density, TreeLine = tile.TreeLine, SnowLine = tile.SnowLine, Scale = Scale, Seed = seed,
+                    Cover = tile.Cover, Heights = tile.Grid.Heights, Mask = tile.Mask,
+                    Out = cpuInstances.GetSubArray(slot * Capacity, Capacity), Count = jobCount,
+                };
+                job.Run();
+                cpuCounts[slot] = jobCount[0];
+                index.AddTile(tile.Key, tile.Key.Origin, cpuInstances.GetSubArray(slot * Capacity, Capacity), jobCount[0], set);
+            }
+        }
+
+        public void ClearTile(TerrainTile tile)
+        {
+            int slot = tile.Slice;
+            if (bySlot[slot] != tile) return;
+            bySlot[slot] = null;
+            index.RemoveTile(tile.Key);
+            if (gpu) counts.SetData(zero, 0, slot, 1); else cpuCounts[slot] = 0;
+        }
+
+        /// <summary>Once per frame after FloatingOrigin.MaybeRebase.</summary>
+        public void Render(Camera cam, int layer = 0)
+        {
+            for (int s = 0; s < slots; s++)
+            {
+                var t = bySlot[s];
+                originsCpu[s] = t == null ? float4.zero : new float4(FloatingOrigin.ToWorldXZ(t.Key.Origin), 0, 0);
+            }
+            GeometryUtility.CalculateFrustumPlanes(cam, planes);
+            var rp = new RenderParams { layer = layer, receiveShadows = true, worldBounds = new Bounds(cam.transform.position, new Vector3(4000, 2000, 4000)) };
+            if (gpu)
+            {
+                tileOrigins.SetData(originsCpu);
+                for (int p = 0; p < 6; p++) planeVecs[p] = new Vector4(planes[p].normal.x, planes[p].normal.y, planes[p].normal.z, planes[p].distance);
+                cs.SetVectorArray("_FrustumPlanes", planeVecs);
+                cs.SetVector("_CameraPos", cam.transform.position);
+                cs.SetVector("_LodDistances", new Vector4(set.LodDistances.x, set.LodDistances.y, set.LodDistances.z, DrawDistance));
+                cs.SetInt("_Capacity", Capacity); cs.SetInt("_Slots", slots); cs.SetInt("_MaxVisible", MaxVisible);
+                cs.SetBuffer(kClear, "_DrawCounts", drawCounts);
+                cs.Dispatch(kClear, 1, 1, 1);
+                cs.SetBuffer(kCull, "_Instances", instances); cs.SetBuffer(kCull, "_Counts", counts); cs.SetBuffer(kCull, "_TileOrigins", tileOrigins);
+                cs.SetBuffer(kCull, "_Visible", visible); cs.SetBuffer(kCull, "_DrawCounts", drawCounts);
+                cs.Dispatch(kCull, (slots * Capacity + 63) / 64, 1, 1);
+                cs.SetBuffer(kArgs, "_DrawCounts", drawCounts); cs.SetBuffer(kArgs, "_Args", args);
+                cs.Dispatch(kArgs, 1, 1, 1);
+                for (int b = 0; b < Buckets; b++)
+                {
+                    var mesh = MeshFor(b);
+                    if (mesh == null || materials[b] == null) continue;
+                    int lod = b % VegetationSetSO.Lods;
+                    props[b].SetInt(OffsetId, b * MaxVisible);
+                    rp.material = materials[b];
+                    rp.matProps = props[b];
+                    rp.shadowCastingMode = lod <= 1 || set.FarShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                    Graphics.RenderMeshIndirect(rp, mesh, args, 1, b);
+                }
+            }
+            else
+            {
+                var camPos = (float3)cam.transform.position;
+                for (int b = 0; b < Buckets; b++)
+                {
+                    var mesh = MeshFor(b);
+                    if (mesh == null || materials[b] == null) continue;
+                    uint species = (uint)(b / VegetationSetSO.Lods);
+                    int lodWanted = b % VegetationSetSO.Lods;
+                    int n = 0;
+                    for (int s = 0; s < slots && n < MaxVisible; s++)
+                    {
+                        if (bySlot[s] == null) continue;
+                        int baseIdx = s * Capacity;
+                        float2 o = originsCpu[s].xy;
+                        for (int k = 0; k < cpuCounts[s] && n < MaxVisible; k++)
+                        {
+                            var t = cpuInstances[baseIdx + k];
+                            if (t.Species != species) continue;
+                            var world = new float3(t.Pos.x + o.x, t.Pos.y, t.Pos.z + o.y);
+                            float d = math.distance(world, camPos);
+                            int lod = d < set.LodDistances.x ? 0 : d < set.LodDistances.y ? 1 : d < set.LodDistances.z ? 2 : 3;
+                            if (lod != lodWanted || d > DrawDistance) continue;
+                            if (!GeometryUtility.TestPlanesAABB(planes, new Bounds(world + new float3(0, 6 * t.Scale, 0), new Vector3(12, 16, 12) * t.Scale))) continue;
+                            matrices[n++] = Matrix4x4.TRS(world, Quaternion.Euler(0, math.degrees(t.Yaw), 0), Vector3.one * t.Scale);
+                        }
+                    }
+                    if (n == 0) continue;
+                    rp.material = materials[b];
+                    rp.matProps = props[b];
+                    rp.shadowCastingMode = lodWanted <= 1 || set.FarShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                    Graphics.RenderMeshInstanced(rp, mesh, 0, matrices, n);
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            originsCpu.Dispose(); zero.Dispose(); tileOrigins.Dispose();
+            instances?.Dispose(); counts?.Dispose(); visible?.Dispose(); drawCounts?.Dispose(); args?.Dispose();
+            if (cpuInstances.IsCreated) { cpuInstances.Dispose(); cpuCounts.Dispose(); jobCount.Dispose(); matrices.Dispose(); }
+            foreach (var m in materials) if (m != null) RallyObjects.Destroy(m);
+        }
+    }
+}

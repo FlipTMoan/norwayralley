@@ -12,6 +12,19 @@ _Updated 2026-11-16._
   GPU clipmap terrain, compute-shader carving, indirect-drawn vegetation).
   Plan in `tasks/plan_20261116_unity.md`.
 
+### Unity rewrite: all layers written (not yet compiled)
+- Core (coordinates, floating origin, height grid), Geo (Kartverket,
+  Overpass, SR16, NVDB, OSRM, IndexedDB cache shared with the JS game),
+  World (GPU terrain, carve, species-typed trees, sky, water, buildings,
+  colliders), Roads, Track (stage, pace notes, endless `RoadWalk`),
+  Vehicle (faithful `car.js` port, PhysX collisions, damage state and
+  visuals), Actors (animals and pedestrians crossing), Gameplay, Net
+  (PeerJS, same wire format), UI, Presentation; EditMode tests port the JS
+  suites. CI builds the web player once a Unity licence secret exists and
+  Pages serves it under `/unity/`.
+- Seven CC BY car models under `unity/Assets/_Rally/Art/Cars/` with licence
+  files; research in `unity/docs/car-models.md`.
+
 ### Changed — start and finish pins snap to the nearest road within 1 km
 - Picking, dragging or typing A or B on the route map asks OSRM `/nearest`
   for the closest road or trail of the chosen profile within 1000 m, moves

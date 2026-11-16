@@ -15,13 +15,13 @@ namespace Rally.Actors
     {
         public readonly ActorSpec Spec;
         public readonly SpawnPlan Plan;
-        public readonly RoadPoint Road;     // where the crossing line meets the road
+        public RoadPoint Road;              // where the crossing line meets the road
         public ActorState State = ActorState.Idle;
         public float2 Pos;                  // planar world position
         public float Heading;               // rad, car yaw sense
         public float Speed;                 // m/s, for animation
         public float HitSpeed;              // car speed at impact, for the penalty
-        readonly float2 start, end;         // the two verges
+        float2 start, end;                  // the two verges
         readonly bool crosses;
         float timer;
 
@@ -79,6 +79,13 @@ namespace Rally.Actors
                 return true;
             }
             return false;
+        }
+
+        /// <summary>FloatingOrigin rebase: every world-frame point moves by −delta (the manager calls this for its live actors).</summary>
+        public void Shift(float2 delta)
+        {
+            Pos -= delta; start -= delta; end -= delta;
+            Road = new RoadPoint(Road.Xz - delta, Road.Heading, Road.HalfWidth);
         }
 
         bool OnRoad()

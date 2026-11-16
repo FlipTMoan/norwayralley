@@ -1,6 +1,9 @@
 {
   "name": "Rally.UI",
   "rootNamespace": "Rally.UI",
-  "references": [ "Rally.Core", "Rally.Gameplay", "Rally.Actors", "Unity.Mathematics" ],
+  "references": [
+    "Rally.Core",
+    "Unity.Mathematics"
+  ],
   "autoReferenced": true
 }

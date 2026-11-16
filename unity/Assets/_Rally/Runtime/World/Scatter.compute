@@ -1,0 +1,134 @@
+// Tree scatter and culling on the GPU. Twin of ScatterJob.cs (same hash, same rules) for the WebGL 2 path.
+//
+// ScatterTile: one thread per 16 m land-cover cell of a coarse tile (stream.js scatterChunk):
+//   expected trees = crown cover × 4.5 (TREES_PER_CELL) × density scale, n = floor(expected + rand);
+//   each tree jittered inside the cell, dropped where the ground is sea (< 1.5 m), too steep (> 0.62),
+//   on a road / pad (carve mask), on water, fields or built-up land, or above the shrub line.
+//   Species from SR16 (1 spruce → 0, 2 pine → 1, 3 deciduous → 2 birch), with the birch share rising
+//   toward the tree line (mountain birch, prototype 3) and shrubs (4) in the band above it.
+// Cull: per frame, every stored instance → frustum + distance → LOD bucket (species × 4 LODs), written
+//   with its world position (tile origin added) for RenderMeshIndirect.
+#pragma kernel ScatterTile
+#pragma kernel ClearCounts
+#pragma kernel Cull
+#pragma kernel WriteArgs
+
+#define TREES_PER_CELL 4.5
+#define MAX_PER_CELL 8
+#define LOD_BUCKETS 20      // 5 species x 4 LODs
+
+struct TreeInstance          // mirrors Rally.World.TreeInstance (32 bytes)
+{
+    float3 pos;              // tile-local (x east, y up, z north) in the store; world in the visible list
+    float scale;
+    float yaw;
+    uint species;
+    float tint;              // 0..1 per-instance colour variation
+    float snow;              // 0..1 snow on the upper faces
+};
+
+Texture2DArray<float4> _CoverAtlas;     // R species*64, G crown, B class*28
+Texture2DArray<float> _HeightsCoarse;
+Texture2DArray<float> _MaskCoarse;
+SamplerState sampler_linear_clamp;
+RWStructuredBuffer<TreeInstance> _Instances;   // slots x capacity
+RWStructuredBuffer<uint> _Counts;              // per slot
+StructuredBuffer<float4> _TileOrigins;         // per slot: world xz of the tile's south-west corner (zw unused)
+RWStructuredBuffer<TreeInstance> _Visible;     // LOD_BUCKETS x maxVisible
+RWStructuredBuffer<uint> _DrawCounts;          // LOD_BUCKETS
+RWStructuredBuffer<uint> _Args;                // LOD_BUCKETS x 5 (IndirectDrawIndexedArgs), [1] = instanceCount
+float4 _FrustumPlanes[6];
+float3 _CameraPos;
+float4 _LodDistances;        // x,y,z switch distances, w draw distance
+int _Slot, _Capacity, _Slots, _MaxVisible, _Res, _N;
+float _CellM, _CoverCell, _Density, _TreeLine, _SnowLine, _Scale;
+uint _Seed;
+
+// pcg3d-style integer hash, identical in ScatterJob.cs: the same cell gives the same trees on every client.
+uint Hash3(uint3 v)
+{
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    return v.x;
+}
+float Rand(uint i, uint j, uint k) { return Hash3(uint3(i, j, k ^ _Seed)) * (1.0 / 4294967296.0); }
+
+float HeightAt(float2 local) { return _HeightsCoarse.SampleLevel(sampler_linear_clamp, float3((local / _CellM + 0.5) / _N, _Slot), 0); }
+
+[numthreads(8, 8, 1)]
+void ScatterTile(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Res || id.y >= (uint)_Res) return;
+    float4 cover = _CoverAtlas[uint3(id.xy, _Slot)];
+    uint species = (uint)round(cover.r * 255.0 / 64.0);
+    float crown = cover.g;
+    uint cls = (uint)round(cover.b * 255.0 / 28.0);
+    if (cls == 4 || cls == 6 || cls == 2) return;             // water, built, field
+    float expected = crown * TREES_PER_CELL * _Density;
+    if (species == 0 && crown <= 0) return;
+    uint n = min((uint)floor(expected + Rand(id.x, id.y, 0)), (uint)MAX_PER_CELL);
+    for (uint k = 0; k < n; k++)
+    {
+        float2 local = (float2(id.xy) + float2(Rand(id.x, id.y, 1 + k * 4), Rand(id.x, id.y, 2 + k * 4))) * _CoverCell;
+        float h = HeightAt(local);
+        if (h < 1.5) continue;                                    // stream.js ok(): sea / shore
+        float hx = HeightAt(local + float2(2, 0)) - HeightAt(local - float2(2, 0));
+        float hz = HeightAt(local + float2(0, 2)) - HeightAt(local - float2(0, 2));
+        if (length(float2(hx, hz)) / 4.0 > 0.62) continue;        // too steep
+        float mask = _MaskCoarse.SampleLevel(sampler_linear_clamp, float3((local / _CellM + 0.5) / _N, _Slot), 0);
+        if (mask > 0.25) continue;                                // road band, terrace or building pad
+        if (h > _TreeLine + 150) continue;                        // above the shrub band
+        // Species: SR16 first, birch share rising toward the tree line, shrubs above it.
+        uint proto = species == 2 ? 1 : species == 3 ? 2 : 0;
+        float r = Rand(id.x, id.y, 3 + k * 4);
+        float birchBias = saturate((h - (_TreeLine - 300)) / 300);
+        if (r < 0.12) proto = proto == 2 ? 0 : 2;                 // mixed stands (stream.js)
+        if (r < birchBias * 0.7) proto = 3;                       // mountain birch near the limit
+        if (h > _TreeLine) { proto = 4; if (r > 0.35) continue; } // sparse shrubs above the tree line
+        float scale = (0.8 + Rand(id.x, id.y, 4 + k * 4) * 0.5) * (0.75 + crown * 0.35) * _Scale;
+        uint idx;
+        InterlockedAdd(_Counts[_Slot], 1, idx);
+        if (idx >= (uint)_Capacity) return;
+        TreeInstance t;
+        t.pos = float3(local.x, h, local.y);
+        t.scale = scale;
+        t.yaw = Rand(id.x, id.y, 5 + k * 4) * 6.2831853;
+        t.species = proto;
+        t.tint = Rand(id.x, id.y, 6 + k * 4);
+        t.snow = saturate((h - _SnowLine + 150) / 150);
+        _Instances[_Slot * _Capacity + idx] = t;
+    }
+}
+
+[numthreads(32, 1, 1)]
+void ClearCounts(uint3 id : SV_DispatchThreadID) { if (id.x < LOD_BUCKETS) _DrawCounts[id.x] = 0; }
+
+[numthreads(64, 1, 1)]
+void Cull(uint3 id : SV_DispatchThreadID)
+{
+    uint slot = id.x / (uint)_Capacity, k = id.x % (uint)_Capacity;
+    if (slot >= (uint)_Slots || k >= _Counts[slot]) return;
+    TreeInstance t = _Instances[id.x];
+    float3 world = t.pos + float3(_TileOrigins[slot].x, 0, _TileOrigins[slot].y);
+    float d = distance(world, _CameraPos);
+    if (d > _LodDistances.w) return;
+    float radius = 8 * t.scale;
+    [unroll] for (int p = 0; p < 6; p++)
+        if (dot(_FrustumPlanes[p].xyz, world + float3(0, radius, 0)) + _FrustumPlanes[p].w < -radius) return;
+    uint lod = d < _LodDistances.x ? 0 : d < _LodDistances.y ? 1 : d < _LodDistances.z ? 2 : 3;
+    uint bucket = t.species * 4 + lod;
+    uint idx;
+    InterlockedAdd(_DrawCounts[bucket], 1, idx);
+    if (idx >= (uint)_MaxVisible) return;
+    t.pos = world;
+    _Visible[bucket * _MaxVisible + idx] = t;
+}
+
+[numthreads(32, 1, 1)]
+void WriteArgs(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= LOD_BUCKETS) return;
+    _Args[id.x * 5 + 1] = min(_DrawCounts[id.x], (uint)_MaxVisible);
+}

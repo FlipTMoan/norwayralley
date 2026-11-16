@@ -40,3 +40,16 @@
   of letting a later rule compensate: two half-rules that overlap flicker.
 - Any launch/landing pair must use consistent geometry (same wheel margin,
   with hysteresis) or they alternate every substep.
+
+
+## 2026-11-16 — `git add -A` swept the user's downloads into the repo
+- What happened: the user dropped car model zips into `unity/Assets/_Rally/Art/Cars/`
+  while I was committing a checkpoint with `git add -A`; 128 MB of archives were
+  committed and pushed before they were unpacked. They are out of the tree now but
+  remain in history unless the commits are rewritten.
+- Rule: never `git add -A` across a folder the user may be dropping files into.
+  Stage explicit paths; before any push run `git diff --cached --stat | tail` and
+  look for files > 5 MB; keep `*.zip/*.rar/*.7z` ignored under asset folders.
+- Rule: when parallel agents write a project nobody can compile, run an
+  integration pass (asmdef graph, duplicate types, call-site signatures) before
+  pushing, and say plainly in the report that nothing has compiled.

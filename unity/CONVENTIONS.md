@@ -4,7 +4,9 @@
 - Planar frame: EPSG:25833 metres (`Utm33`). Unity world x = easting − origin, z = northing − origin, y = height.
   Long-lived positions are `Utm33` doubles; `FloatingOrigin` rebases every 2048 m.
 - One assembly definition per layer under `Assets/_Rally/Runtime/<Layer>/Rally.<Layer>.asmdef`.
-  Allowed references (lower only): Core ← Geo ← World ← Roads ← Track ← Vehicle/Actors ← Gameplay ← Net/UI/Presentation.
+  Allowed references (lower only): Core ← Geo ← World ← Roads ← Track ← Vehicle/Actors, Net (Core, Geo), UI (Core),
+  Presentation (Core) ← Gameplay. Gameplay is the composition root (`GameController`) and the only assembly that
+  references Net, UI and Presentation; nothing references Gameplay.
 - Pure logic = plain C# classes/structs (no MonoBehaviour) so EditMode tests run them without a scene.
   MonoBehaviours only bind input, transforms and GPU resources.
 - "Full GPU": heights, land cover, carve masks and scatter live in textures/buffers on the GPU.

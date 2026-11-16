@@ -8,20 +8,27 @@ for unity online that fits the format."
       deploys from there (site URL unchanged).
 - [x] `unity/` skeleton: Core assembly (EPSG:25833 coords, floating origin,
       HeightGrid, IGround, seeded RNG, log), manifest, conventions.
-- [ ] Rally.Geo: source interfaces, Kartverket/Overpass/SR16/NVDB/OSRM
+- [x] Rally.Geo: source interfaces, Kartverket/Overpass/SR16/NVDB/OSRM
       clients, IndexedDB cache bridge, circuit breakers, fakes, tests.
-- [ ] Rally.World + Rally.Roads: tile scheduler, GPU clipmap terrain,
+- [x] Rally.World + Rally.Roads: tile scheduler, GPU clipmap terrain,
       compute carve (+ Burst fallback), scatter/indirect vegetation, water,
       extruded OSM buildings, road graph, grader, ribbon, TileWorld : IGround.
-- [ ] Rally.Track + Rally.Vehicle: StageRoute, pace notes, faithful CarSim
+- [x] Rally.Track + Rally.Vehicle: StageRoute, pace notes, faithful CarSim
       port with the JS tests ported.
-- [ ] Rally.Actors: spawn rules + crossing FSM (animals, pedestrians).
-- [ ] Rally.Gameplay / UI / Presentation / Net: game flow, HUD, cameras,
+- [x] Rally.Actors: spawn rules + crossing FSM (animals, pedestrians).
+- [x] Rally.Gameplay / UI / Presentation / Net: game flow, HUD, cameras,
       CRT feature, PeerJS room.
-- [ ] Web template, BuildWeb editor script, unity.yml CI, Pages serves the
+- [x] Web template, BuildWeb editor script, unity.yml CI, Pages serves the
       build under `/unity/`.
-- [ ] Car models: research free Unity-ready models → `unity/docs/car-models.md`.
-- [ ] Docs: README, ARCHITECTURE, CHANGES, unity/README.
+- [x] Car models: research free Unity-ready models → `unity/docs/car-models.md`.
+- [x] Docs: README, ARCHITECTURE, CHANGES, unity/README.
+
+- [ ] Integration review (cross-layer signatures, asmdef graph) + GameController + SCENE.md.
+- [ ] User (2026-11-16): DTM tiles preload and render while driving — velocity-led
+      ring ahead of the car (LEAD 2800 / LOAD 4400 / KEEP 5300 m as in stream.js),
+      next RoadWalk sector prefetched in endless mode, terrain visible as soon as
+      heights land, never a blocking frame, coarse → fine handover without a jump.
+- [ ] User: open in Unity 6000.6, fix compile errors, create the bootstrap scene, run EditMode tests.
 
 Not possible here: Unity is not installed on this machine, so nothing in
 `unity/` has been compiled. First open in the editor will surface API

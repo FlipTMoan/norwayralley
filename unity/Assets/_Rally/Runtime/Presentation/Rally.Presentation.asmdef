@@ -1,6 +1,12 @@
 {
   "name": "Rally.Presentation",
   "rootNamespace": "Rally.Presentation",
-  "references": [ "Rally.Core", "Unity.Mathematics", "Unity.RenderPipelines.Universal.Runtime", "Unity.RenderPipelines.Core.Runtime" ],
+  "references": [
+    "Rally.Core",
+    "Unity.Mathematics",
+    "Unity.InputSystem",
+    "Unity.RenderPipelines.Universal.Runtime",
+    "Unity.RenderPipelines.Core.Runtime"
+  ],
   "autoReferenced": true
 }

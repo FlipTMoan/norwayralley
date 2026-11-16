@@ -1,0 +1,7 @@
+{
+  "name": "Rally.Roads",
+  "rootNamespace": "Rally.Roads",
+  "references": [ "Rally.Core", "Rally.Geo", "Rally.World", "Unity.Mathematics", "Unity.Collections" ],
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

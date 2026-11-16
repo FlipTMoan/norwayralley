@@ -80,6 +80,9 @@ namespace Rally.Actors
             }
         }
 
+        /// <summary>After a FloatingOrigin rebase (delta = old → new origin): live actors move by −delta; plans are route distances and need nothing.</summary>
+        public void Shift(float2 delta) { foreach (var a in live) a.Shift(delta); }
+
         public void Clear()
         {
             foreach (var a in live) Retired?.Invoke(a);

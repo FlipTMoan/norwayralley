@@ -1,5 +1,6 @@
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Rally.Presentation
 {
@@ -36,9 +37,13 @@ namespace Rally.Presentation
         void LateUpdate()
         {
             if (Target == null) return;
-            if (Input.GetKeyDown(KeyCode.Alpha1)) CurrentMode = Mode.Overhead;
-            if (Input.GetKeyDown(KeyCode.Alpha2)) CurrentMode = Mode.Chase;
-            if (Input.GetKeyDown(KeyCode.Alpha3)) CurrentMode = Mode.Seat;
+            var kb = Keyboard.current;   // Input System, like CarController (the legacy Input class is off in this project)
+            if (kb != null)
+            {
+                if (kb.digit1Key.wasPressedThisFrame) CurrentMode = Mode.Overhead;
+                if (kb.digit2Key.wasPressedThisFrame) CurrentMode = Mode.Chase;
+                if (kb.digit3Key.wasPressedThisFrame) CurrentMode = Mode.Seat;
+            }
 
             var t = Target;
             float yaw = t.eulerAngles.y * Mathf.Deg2Rad;

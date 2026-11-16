@@ -1,7 +1,15 @@
 {
   "name": "Rally.Track",
   "rootNamespace": "Rally.Track",
-  "references": [ "Rally.Core", "Unity.Mathematics", "Unity.Collections", "Unity.Burst" ],
+  "references": [
+    "Rally.Core",
+    "Rally.Geo",
+    "Rally.World",
+    "Rally.Roads",
+    "Unity.Mathematics",
+    "Unity.Collections",
+    "Unity.Burst"
+  ],
   "autoReferenced": true,
   "noEngineReferences": false
 }
