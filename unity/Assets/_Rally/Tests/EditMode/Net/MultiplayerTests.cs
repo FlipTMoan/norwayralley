@@ -3,6 +3,7 @@ using System.Linq;
 using NUnit.Framework;
 using Rally.Geo;
 using Rally.Net;
+using StatePacket = Rally.Net.StatePacket;
 
 namespace Rally.Tests.Net
 {
@@ -14,8 +15,8 @@ namespace Rally.Tests.Net
         {
             public readonly Dictionary<string, List<Dictionary<string, object>>> Sent = new Dictionary<string, List<Dictionary<string, object>>>();
             public List<Dictionary<string, object>> To(string id) => Sent.TryGetValue(id, out var l) ? l : (Sent[id] = new List<Dictionary<string, object>>());
-            public bool Send(string id, Dictionary<string, object> msg) { To(id).Add(new Dictionary<string, object>(msg)); return true; }
-            public void Broadcast(Dictionary<string, object> msg, string exceptId) { }
+            public bool Send(string id, Dictionary<string, object> msg, string label) { To(id).Add(new Dictionary<string, object>(msg)); return true; }
+            public bool IsOpen(string id, string label) => true;
             public void Disconnect(string id) { }
             public void Close() { }
         }
@@ -104,6 +105,7 @@ namespace Rally.Tests.Net
             var wire = new FakeTransport();
             var guest = new Session("G", "porsche", wire, () => 0) { IsHost = false };
             guest.SetHostConnection("host");
+            wire.To("host").Clear();
             guest.SendRoute(Json.ParseObject("{\"kind\":\"baked\"}"));
             Assert.AreEqual(1, wire.To("host").Count);
             Assert.AreEqual("route", wire.To("host")[0].Str("t"));

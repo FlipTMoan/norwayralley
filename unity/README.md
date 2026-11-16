@@ -1,6 +1,6 @@
 # Retro Norway Rally — Unity 6 web build
 
-_Updated 2026-11-16._
+_Updated 2026-11-16 (friends rooms: two channels, heartbeat, rejoin, challenges)._
 
 The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` and is still what
 `npm run build` deploys to GitHub Pages; the Unity build is served next to it at
@@ -63,6 +63,37 @@ cd unity/Build/Web && python3 -m http.server 8000
 The Leaflet map tiles, PeerJS and the geodata services (Kartverket WCS, NIBIO SR16, Overpass,
 NVDB, OSRM) are fetched live and cached in IndexedDB (`rally-cache`, the same database the JS game
 uses, 10 GB LRU). In the editor the same cache lives under `Application.persistentDataPath/rally-cache`.
+
+## Play with friends (rooms over WebRTC)
+
+A room is a 4-letter code on the public PeerJS signalling server (`nrr-CODE`), exactly as the JS
+game, so a JS client and a Unity client can share a room. **Signalling needs the internet** (the
+PeerJS server brokers the handshake), but the data path itself is a direct WebRTC connection: when
+both devices are on one LAN / hotspot, ICE picks *host* candidates and the packets never leave the
+network. The friends panel shows what was selected — **LAN direct**, **via internet** (through the
+NATs) or **relayed** (TURN, only when `IceConfig.Turn` is set; the open question Cloudflare TURN vs
+Metered is in `Runtime/Net/IceConfig.cs`). Browsers hide LAN addresses behind mDNS `.local`
+candidates; those still count as LAN, but a router with *client isolation* (many guest Wi-Fis)
+blocks them and the pair falls back to "via internet".
+
+Per peer there are two channels (`Plugins/WebGL/peer.jslib`, `Runtime/Net/Session.cs`):
+
+- the PeerJS default channel, unreliable/unordered JSON — the 80 ms car-state packets, byte-compatible
+  with the JS game;
+- `ctl`, reliable and ordered, with sequence numbers and acks (resend after 1 s, 64 in flight) —
+  hello/join/leave, the stage hand-over, `go`, results and a 1 s heartbeat. A peer silent for 5 s is
+  dropped (reason `timeout`, its ghost disappears); a guest rejoins with 1/2/4/8…60 s backoff while
+  the game keeps running, and the host hands the same grid slot back to a callsign seen within 2
+  minutes. Messages for a closed ctl channel are queued and flushed when it reopens. A JS client has
+  no ctl channel: it gets the roster messages plainly on the state channel and ignores the rest.
+
+Challenges: the host (or a guest who picked a stage) sends `{t:'route', kind, query, seed}` where
+`query` is the share-link query (`?route=osrm:…`, `?seed=…`, `?drive=…`); every client rebuilds the
+identical stage with `GameController.LoadFromQuery`. When the host's countdown starts it sends
+`{t:'go', atMs}` on the host clock; guests align through the heartbeat round trip (`ClockSync`,
+offset = host time at the reply − send time − RTT/2) so everyone's lights go out together. Each
+finish sends `{t:'result', name, timeMs, penaltyMs}`; the host keeps the leaderboard
+(`Session.Results`) and broadcasts it as `board`, shown in the room status line.
 
 ## CI
 

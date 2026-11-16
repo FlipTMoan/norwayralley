@@ -27,6 +27,8 @@ namespace Rally.Gameplay
         public event Action<Phase> PhaseChanged;
 
         public void WorldReady() { if (Phase == Phase.Loading) Set(Phase.Intro); }
+        /// <summary>A new stage arrives mid-room (host hand-over): back to Loading so the start screen returns until the world is ready.</summary>
+        public void Reload() { StageTime = 0; PenaltyTime = 0; NearMisses = 0; Retired = false; Splits.Clear(); Hits.Clear(); Set(Phase.Loading); }
         public void StartEngine() { if (Phase == Phase.Intro) { Countdown = CountdownSeconds; Set(Phase.Countdown); } }
         public void Restart() { StageTime = 0; PenaltyTime = 0; NearMisses = 0; Splits.Clear(); Hits.Clear(); Countdown = CountdownSeconds; Set(Phase.Countdown); }
 

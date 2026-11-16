@@ -147,26 +147,12 @@ namespace Rally.Gameplay
             world = null;
         }
 
-        /// <summary>main.js boot: link → sources → world around the start → route → car → systems → intro.</summary>
+        /// <summary>main.js boot: the share link (or the editor query) becomes the first stage; see LoadFromQuery.</summary>
         async Task Boot()
         {
             string query = BrowserDom.UrlParams();
             if (string.IsNullOrEmpty(query)) query = EditorQuery;
-            link = ShareLinks.Parse(query) ?? new ShareLinks.Link(ShareLinks.Kind.Free, DefaultStart, default, "driving", 0);
-            anchor = Proj.ToUtm(link.A);
-            FloatingOrigin.Set(anchor);            // the start pin is the scene origin until the car has driven 2 km
-            CreateSources();
-            CreateWorld();
-            BrowserDom.LoaderText("Fetching terrain…");
-            status = "LOADING TERRAIN";
-            await WaitUntil(() => world.IsLoaded(float2.zero));          // the car waits only here (CONVENTIONS / stream.js)
-            await WaitUntil(() => roads.SegmentCount > 0, 20f);          // roads of the start tile (Overpass may be slow or down)
-            await CreateRoute();
-            SpawnCar();
-            WireSystems();
-            BrowserDom.LoaderHide();
-            status = "";
-            flow.WorldReady();
+            await LoadFromQuery(query);
         }
 
         /// <summary>Real services on the web (IndexedDB cache shared with the JS game); FakeSources or the file cache in the editor.</summary>
@@ -697,6 +683,8 @@ namespace Rally.Gameplay
 
         #region Friends (Rally.Net)
 
+        bool roomHooked;
+
         /// <summary>Friends panel: open a room; the code is shown in the status line.</summary>
         public async void HostRoom()
         {
@@ -705,7 +693,7 @@ namespace Rally.Gameplay
                 NewSession(true);
                 string code = await session.Host();
                 Say($"ROOM {code}", 10f);
-                Hud?.ShowRoomStatus($"Room {code}: friends press JOIN with this code");
+                ShowRoom($"Room {code}: friends press JOIN with this code");
             }
             catch (Exception e) { Say(e.Message, 6f); }
         }
@@ -725,12 +713,109 @@ namespace Rally.Gameplay
         {
             session?.Close();
             session = new Session(null, kindName);
-            session.Status += m => { Say(m, 5f); Hud?.ShowRoomStatus(m); };
+            session.Status += m => { Say(m, 5f); ShowRoom(m); };
             session.Error += m => Say(m, 6f);
             session.SlotAssigned += OnSlot;
-            session.Route += (r, from) => Say("The host picked a new stage: open their link", 8f);   // stage hand-over is not ported (see docs/integration-review.md)
+            session.Route += OnRoomRoute;
+            session.Go += ScheduleGo;
+            session.ResultsChanged += () => { if (session.Results.Count > 0) ShowRoom(session.Leaderboard()); };
+            session.PathChanged += (id, kind) => ShowRoom($"{(session.Peers.TryGetValue(id, out var p) ? p.Name : id)}: {Session.PathLabel(kind)}");
+            session.PeerLeave += (id, reason) => { if (reason == "timeout") Say("A player dropped (no answer for 5 s)", 4f); };
+            if (!roomHooked) { roomHooked = true; flow.PhaseChanged += OnRoomPhase; }
             if (Ghosts != null) Ghosts.Session = session;
-            if (host && stage != null) session.SendRoute(new Dictionary<string, object> { { "kind", link.Kind.ToString().ToLowerInvariant() }, { "query", EditorQuery } });
+            if (host && world != null) session.SendRoute(RoomRoute());
+        }
+
+        void ShowRoom(string text) => Hud?.ShowRoomStatus(text);
+
+        /// <summary>The share-link query of the stage we are on: what a guest needs to rebuild the identical stage.</summary>
+        string CurrentQuery() => link.Kind switch
+        {
+            ShareLinks.Kind.Osrm => ShareLinks.Osrm(link.A, link.B, link.Profile),
+            ShareLinks.Kind.Demo => ShareLinks.Demo(link.A, link.B),
+            ShareLinks.Kind.Endless => ShareLinks.Endless(link.Seed, link.A),
+            _ => ShareLinks.Drive(link.A),
+        };
+
+        Dictionary<string, object> RoomRoute() => new Dictionary<string, object>
+        {
+            { "kind", link.Kind.ToString().ToLowerInvariant() }, { "query", CurrentQuery() }, { "seed", (double)link.Seed },
+        };
+
+        /// <summary>A stage arrived over the room: load it; the host also relays a guest's pick to everyone else and starts the countdown together.</summary>
+        async void OnRoomRoute(Dictionary<string, object> r, string from)
+        {
+            string query = r.Str("query");
+            if (string.IsNullOrEmpty(query)) { Say("The other player's game sent a stage this build cannot load", 6f); return; }
+            try
+            {
+                await LoadFromQuery(query);
+                if (session != null && session.IsHost) { session.SendRoute(RoomRoute(), from); flow.Restart(); }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { Say(e.Message, 6f); }
+        }
+
+        /// <summary>Host: a countdown that starts here starts everywhere; a finish goes on the board.</summary>
+        void OnRoomPhase(Phase p)
+        {
+            if (session == null || session.Closed) return;
+            if (p == Phase.Countdown && session.IsHost) session.SendGo(PeerBridge.NowMs + flow.Countdown * 1000);
+            if (p == Phase.Finished && !flow.Retired && !flow.FreeDrive) session.SendResult(flow.StageTime * 1000, flow.PenaltyTime * 1000);
+        }
+
+        /// <summary>Guest: the countdown ends at <paramref name="localAtMs"/>, so it starts 3 s before (the host's own countdown is already running).</summary>
+        async void ScheduleGo(double localAtMs)
+        {
+            if (session == null || session.IsHost) return;
+            double delay = localAtMs - GameFlow.CountdownSeconds * 1000 - PeerBridge.NowMs;
+            if (delay > 0) await Task.Delay(TimeSpan.FromMilliseconds(delay));
+            if (session == null || session.Closed || car == null) return;
+            Restart();
+        }
+
+        /// <summary>
+        /// Rebuild the world from a share-link query (the boot path, and a stage handed over in a room):
+        /// link → sources → world around the start → route → car → systems. Tears the previous stage down first.
+        /// </summary>
+        public async Task LoadFromQuery(string query)
+        {
+            flow.Reload();
+            Teardown();
+            link = ShareLinks.Parse(query) ?? new ShareLinks.Link(ShareLinks.Kind.Free, DefaultStart, default, "driving", 0);
+            anchor = Proj.ToUtm(link.A);
+            FloatingOrigin.Set(anchor);            // the start pin is the scene origin until the car has driven 2 km
+            CreateSources();
+            CreateWorld();
+            BrowserDom.LoaderText("Fetching terrain…");
+            status = "LOADING TERRAIN";
+            await WaitUntil(() => world.IsLoaded(float2.zero));          // the car waits only here (CONVENTIONS / stream.js)
+            await WaitUntil(() => roads.SegmentCount > 0, 20f);          // roads of the start tile (Overpass may be slow or down)
+            await CreateRoute();
+            SpawnCar();
+            WireSystems();
+            BrowserDom.LoaderHide();
+            status = "";
+            flow.WorldReady();
+            if (session != null) car.Frozen = flow.Phase != Phase.Racing;   // a reload mid-room: the phase did not change, so OnPhase did not run
+        }
+
+        void Teardown()
+        {
+            if (world == null) return;
+            FloatingOrigin.Rebased -= OnRebased;
+            flow.PhaseChanged -= OnPhase;
+            foreach (var go in ribbons.Values) Destroy(go);
+            ribbons.Clear();
+            results.Clear();
+            foreach (var v in actorViews.Values) Destroy(v.gameObject);
+            actorViews.Clear();
+            actors = null;
+            if (car != null) Destroy(car.gameObject);
+            car = null; audio = null;
+            world.Dispose();
+            world = null; roads = null; stage = null; route = null; walk = null; edges = null; turns = null;
+            stagePoints.Clear(); sectorEnds.Clear(); prefetchPath.Clear(); lastSector = 0;
         }
 
         /// <summary>multiplayer.js spawnOffset: slot 0 on the line, pairs every 6 m back, so nobody spawns inside anybody.</summary>
