@@ -142,19 +142,24 @@ works offline.
 
 ### Routing tips
 
-Public roads do not cross the Preikestolen plateau, but the mapped hiking
-trails do, so pick `foot` there. If OSRM cannot find a usable route the status
-line says how far it had to snap each point; switch to `off-road (A*)` to
-build a stage across the mountain instead. Off-road rejects points in the
+Pins do not have to land on a road: each one is snapped to the nearest road
+or trail of the chosen profile within 1 km the moment it is placed, dragged
+or typed (and again when the profile changes), the pin moves there, and the
+status line says how far it moved and onto which road. A pin with no road
+within 1 km stays where you picked with a warning, and GENERATE ROUTE then
+refuses with the same message; the route request itself carries the 1 km
+limit. Public roads do not cross the Preikestolen plateau, but the mapped
+hiking trails do, so pick `foot` there. Switch to `off-road (A*)` to build a
+stage across the mountain instead. Off-road rejects points in the
 fjord and on cliff faces. Every finished stage gets a level start pad,
 whichever router produced it.
 
 ### Why OSRM sometimes fails here
 
 The baked demo tile is only 2 km across and sits on a mountain plateau. The
-nearest public road for driving is roughly 2 km outside it, so **driving** on
-the demo world usually fails with a snap-distance message — but the 2D map can
-now generate a world around that road instead. The **foot** profile can use the
+nearest public road for driving is roughly 2 km outside it, so **driving**
+pins on the demo world say "no driving road within 1 km" — but the 2D map can
+generate a world around that road instead. The **foot** profile can use the
 Preikestolen trails; its nearest mapped node may still be a few hundred metres
 from the point you tapped, which the status line tells you. The 3D route
 builder still works only inside the loaded world.

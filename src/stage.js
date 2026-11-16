@@ -558,59 +558,99 @@ function haversine(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+/** How far a start or finish pin may be from the nearest road (metres). */
+export const SNAP_RADIUS = 1000;
+
+/** OSRM route URL for the given points; `radiuses[i]` limits the snap of point i (null = unlimited). */
+export function osrmRouteUrl(base, points, radiuses = null) {
+  const coords = points.map((p) => `${p.lon},${p.lat}`).join(';');
+  let url = `${base}/${coords}?overview=full&geometries=geojson&steps=false`;
+  if (radiuses?.some((r) => r != null)) {
+    url += `&radiuses=${points.map((_, i) => (radiuses[i] == null ? 'unlimited' : radiuses[i])).join(';')}`;
+  }
+  return url;
+}
+
+/** The first waypoint of an OSRM `/nearest` answer within `radius` metres, as `{ lat, lon, name, distance }`, or null. */
+export function nearestWithin(data, radius = SNAP_RADIUS) {
+  if (!data || data.code !== 'Ok') return null;
+  for (const wp of data.waypoints || []) {
+    if (!wp?.location) continue;
+    const distance = wp.distance ?? 0;
+    if (radius != null && distance > radius) continue;
+    return { lat: wp.location[1], lon: wp.location[0], name: wp.name || null, distance };
+  }
+  return null;
+}
+
 /**
- * Fetch the raw road geometry from OSRM. The result is in WGS84 lat/lon, so it
- * can be projected onto the current terrain — or used to generate a brand new
- * one anywhere in Norway.
+ * Snap a point to the nearest road of the profile with OSRM's `/nearest`
+ * service, searching `radius` metres around it (null = unlimited). Resolves
+ * to `{ lat, lon, name, distance }`, or null when no road lies within the
+ * radius; throws when OSRM cannot be reached.
  */
-/**
- * Snap a point to the nearest road with OSRM and work out the road's
- * heading there (from a short route along it). Used by free drive so the
- * car always starts on tarmac even before the chunk's own roads arrive.
- * Returns `{ lat, lon, heading, name, snapped }` (heading in radians, game
- * yaw convention: 0 = +z/south, π/2 = +x/east), or null when OSRM is down.
- */
-export async function fetchOsrmNearest({ lat, lon }, { profile = 'driving' } = {}) {
+export async function snapToRoad({ lat, lon }, { profile = 'driving', radius = SNAP_RADIUS } = {}) {
   const base = (OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving).replace('/route/', '/nearest/');
+  const url = `${base}/${lon},${lat}?number=3`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const nearestUrl = `${base}/${lon},${lat}?number=1`;
-    const data = await cache.fetch(nearestUrl, async () => {
-      const response = await fetch(nearestUrl, { signal: controller.signal });
-      if (!response.ok) return null;
+    const data = await cache.fetch(url, async () => {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) throw new Error(`OSRM did not answer (HTTP ${response.status}).`);
       return response.json();
     }, { kind: 'osrm' });
-    if (!data) return null;
-    const wp = data.waypoints?.[0];
-    if (data.code !== 'Ok' || !wp?.location) return null;
-    const snapped = { lat: wp.location[1], lon: wp.location[0], name: wp.name || null, snapped: wp.distance ?? 0 };
-    // Heading: route 250 m away and read the first leg's direction.
-    let heading = 0;
-    try {
-      const away = { lat: snapped.lat + 0.0022, lon: snapped.lon + 0.004 };
-      const geometry = await fetchOsrmGeometry({ a: snapped, b: away, profile });
-      const c = geometry.coordinates;
-      if (c.length >= 2) {
-        const mPerLon = 111320 * Math.cos((snapped.lat * Math.PI) / 180);
-        const dx = (c[1].lon - c[0].lon) * mPerLon;
-        const dz = -(c[1].lat - c[0].lat) * 110950;
-        heading = Math.atan2(dx, dz);
-      }
-    } catch {
-      // No heading is fine; the road network corrects it once it has loaded.
-    }
-    return { ...snapped, heading };
-  } catch {
-    return null;
+    return nearestWithin(data, radius);
+  } catch (error) {
+    throw new Error(error?.name === 'AbortError' ? 'OSRM took too long to answer.' : error?.message || 'OSRM could not be reached.');
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
+/**
+ * Snap a point to the nearest road and work out the road's heading there
+ * (from a short route along it). Used by free drive so the car always
+ * starts on tarmac even before the chunk's own roads arrive. Returns
+ * `{ lat, lon, heading, name, snapped }` (heading in radians, game yaw
+ * convention: 0 = +z/south, π/2 = +x/east), or null when OSRM is down or
+ * no road is near.
+ */
+export async function fetchOsrmNearest({ lat, lon }, { profile = 'driving' } = {}) {
+  let snapped;
+  try {
+    snapped = await snapToRoad({ lat, lon }, { profile, radius: null });
+  } catch {
+    return null;
+  }
+  if (!snapped) return null;
+  // Heading: route 250 m away and read the first leg's direction.
+  let heading = 0;
+  try {
+    const away = { lat: snapped.lat + 0.0022, lon: snapped.lon + 0.004 };
+    const geometry = await fetchOsrmGeometry({ a: snapped, b: away, profile });
+    const c = geometry.coordinates;
+    if (c.length >= 2) {
+      const mPerLon = 111320 * Math.cos((snapped.lat * Math.PI) / 180);
+      const dx = (c[1].lon - c[0].lon) * mPerLon;
+      const dz = -(c[1].lat - c[0].lat) * 110950;
+      heading = Math.atan2(dx, dz);
+    }
+  } catch {
+    // No heading is fine; the road network corrects it once it has loaded.
+  }
+  return { lat: snapped.lat, lon: snapped.lon, name: snapped.name, snapped: snapped.distance, heading };
+}
+
+/**
+ * Fetch the raw road geometry from OSRM. The result is in WGS84 lat/lon, so it
+ * can be projected onto the current terrain — or used to generate a brand new
+ * one anywhere in Norway. `radiuses` limits how far each end may snap
+ * (default: SNAP_RADIUS for both; null entries are unlimited).
+ */
+export async function fetchOsrmGeometry({ a, b, profile = 'driving', radiuses = [SNAP_RADIUS, SNAP_RADIUS] }) {
   const base = OSRM_ENDPOINTS[profile] || OSRM_ENDPOINTS.driving;
-  const url = `${base}/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=false`;
+  const url = osrmRouteUrl(base, [a, b], radiuses);
   const data = await cache.fetch(url, async () => {
     let response;
     const controller = new AbortController();
@@ -628,6 +668,9 @@ export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
     if (!response.ok) throw new Error(`OSRM did not answer (HTTP ${response.status}).`);
     return response.json();
   }, { kind: 'osrm' });
+  if (data.code === 'NoSegment') {
+    throw new Error(`No ${profile} road within ${SNAP_RADIUS / 1000} km of a picked point. Move the pin nearer a mapped road/trail, or route by off-road.`);
+  }
   if (data.code !== 'Ok' || !data.routes?.length) {
     throw new Error(data.message || 'OSRM found no route between those coordinates.');
   }
@@ -647,11 +690,10 @@ export async function fetchOsrmGeometry({ a, b, profile = 'driving' }) {
       `OSRM snapped both points to the same road or trail (${Math.round(routeData.distance)} m route for a ${Math.round(straight)} m gap).${snapText} Pick points on a mapped road/trail, or route by off-road.`,
     );
   }
-  // A public road two kilometres outside the tile is not a rally stage. Foot
-  // trails are more forgiving: their nearest mapped node can be several
-  // hundred metres from the point you tapped.
-  const snapLimit = profile === 'driving' ? 400 : 750;
-  if ((snappedA != null && snappedA > snapLimit) || (snappedB != null && snappedB > snapLimit)) {
+  // The pins are snapped to the nearest road within SNAP_RADIUS before the
+  // request, and the request itself carries that radius; this only catches
+  // an unlimited end (a segment joint) that wandered off.
+  if ((snappedA != null && snappedA > SNAP_RADIUS) || (snappedB != null && snappedB > SNAP_RADIUS)) {
     throw new Error(
       `OSRM snapped a point ${Math.round(Math.max(snappedA ?? 0, snappedB ?? 0))} m away from where you picked, too far to make a fair stage.${snapText} Pick points nearer to a mapped road/trail, or route by off-road.`,
     );
@@ -713,7 +755,10 @@ export async function fetchOsrmGeometrySegmented({
   const t0 = performance.now();
   for (let i = 0; i < hops; i++) {
     onProgress?.(i / hops, `OSRM segment ${i + 1} of ${hops}…`);
-    const geometry = await fetchOsrmGeometry({ a: anchors[i], b: anchors[i + 1], profile });
+    // Only the two real ends are held to the snap radius; the joints along
+    // the straight line between them may lie anywhere and snap to any road.
+    const radiuses = [i === 0 ? SNAP_RADIUS : null, i === hops - 1 ? SNAP_RADIUS : null];
+    const geometry = await fetchOsrmGeometry({ a: anchors[i], b: anchors[i + 1], profile, radiuses });
     const startAt = coordinates.length ? 1 : 0; // skip the duplicated joint
     for (let k = startAt; k < geometry.coordinates.length; k++) {
       coordinates.push(geometry.coordinates[k]);

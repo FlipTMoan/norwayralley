@@ -8,6 +8,7 @@ import {
   fetchOsrmGeometry,
   fetchOsrmGeometrySegmented,
   fetchOsrmNearest,
+  snapToRoad,
   buildRouteIndex,
   makeRoute,
   buildOsrmRoute,
@@ -1871,6 +1872,7 @@ const mapPicker = createMapPicker({
   onLoad: (described) => applyDescribedRoute(described, { from: 'saved' }),
   onShare: () => currentShareUrl(),
   onSharePosition: () => currentPositionUrl(),
+  onSnap: (point, profile) => snapToRoad(point, { profile }),
   onFreeDrive: async ({ a }) => {
     try {
       await enterFreeDrive(a);
@@ -1898,13 +1900,15 @@ const mapPicker = createMapPicker({
         + `(${geometry.distance.toFixed(0)} m, ${geometry.coordinates.length} points`
         + `${geometry.segmented ? `, ${geometry.segmented.hops} segments` : ''})`,
       );
-      const { result, generated } = await applyRouteGeometry(geometry);
-      const snap = result.snapped?.a != null
-        ? ` · snap ${Math.round(result.snapped.a)} m / ${Math.round(result.snapped.b)} m`
+      const { generated } = await applyRouteGeometry(geometry);
+      // The geometry carries the OSRM figures for both the baked and the
+      // streamed world (the streamed result has no distance of its own).
+      const snap = geometry.snapped?.a != null && geometry.snapped?.b != null
+        ? ` · snap ${Math.round(geometry.snapped.a)} m / ${Math.round(geometry.snapped.b)} m`
         : '';
       return {
         ok: true,
-        message: `OSRM: ${(result.distance / 1000).toFixed(2)} km, ${Math.round(result.duration / 60)} min${snap}.`
+        message: `OSRM: ${(geometry.distance / 1000).toFixed(2)} km, ${Math.round(geometry.duration / 60)} min${snap}.`
           + (generated ? ' Streamed world ready.' : ''),
       };
     } catch (error) {

@@ -1,6 +1,20 @@
 # Changes
 
-_Updated 2026-11-15._
+_Updated 2026-11-16._
+
+## 2026-11-16
+
+### Changed — start and finish pins snap to the nearest road within 1 km
+- Picking, dragging or typing A or B on the route map asks OSRM `/nearest`
+  for the closest road or trail of the chosen profile within 1000 m, moves
+  the pin onto it and says how far it moved and onto which road; the
+  profile select re-snaps both pins (off-road keeps the raw picks). No road
+  within 1 km leaves the pin where it was with a warning. The route request
+  carries the same 1 km radius for its two ends (joints of a segmented
+  route stay unlimited), so OSRM's `NoSegment` becomes a clear message, and
+  the old 400 m / 750 m snap limits are gone. `tests/osrm.test.mjs`.
+- Fixed: the status after GENERATE ROUTE on a streamed world read
+  "OSRM: NaN km, NaN min"; it now reports the OSRM distance and time.
 
 ## 2026-11-15
 

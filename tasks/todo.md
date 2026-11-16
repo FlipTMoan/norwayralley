@@ -132,3 +132,12 @@ Research agent is checking which services are CORS-callable from a static site.
 - [x] Car-centred minimap with click-to-route; NVDB Vegdekke surfaces; surface-aware handling; bicycle steering.
 - [x] Handbrake drift (locked rears, inertial velocity), demo tile gets OSM houses/water + NVDB signs.
 - [ ] Open: Overpass public mirrors are the weak link (rate limits / outages); consider a self-hosted or cached tile source if it keeps failing.
+
+## Robust start/finish snapping (2026-11-16)
+- [x] `stage.js`: `snapToRoad(point, { profile, radius: 1000 })` via OSRM `/nearest`; route requests send `radiuses=` for the ends; one 1000 m limit for every profile; clear "no road within 1 km" message.
+- [x] `map.js`: snap A and B when placed, dragged or typed, and again when the profile changes; move the pin, say how far it moved and onto which road; keep the raw pick for off-road.
+- [x] `main.js`: wire `onSnap`.
+- [x] Tests for the URL builder and the nearest-response parsing.
+- [x] Docs: README routing tips, index.html status/help text, CHANGES, ARCHITECTURE.
+- [x] Browser check on the 2D map.
+- Review: verified in the browser — hill pick above Jørpeland snapped 455 m, town pick 92 m onto Stålverksvegen, plateau pick with driving warns "no driving road within 1 km", foot finds the trail 80 m away, GENERATE builds a 2.68 km stage with `radiuses=` accepted by router.project-osrm.org. Also fixed the "OSRM: NaN km" status after a streamed route (it read the streamed result's missing distance instead of the geometry's).

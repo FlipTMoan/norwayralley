@@ -57,7 +57,7 @@ function markerIcon(label, color) {
   });
 }
 
-export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null, onShare = null, onSharePosition = null }) {
+export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSave = null, onLoad = null, onShare = null, onSharePosition = null, onSnap = null }) {
   const root = document.getElementById('mapPicker');
   const mapEl = document.getElementById('mapCanvas');
   const statusEl = document.getElementById('mapStatus');
@@ -78,6 +78,9 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
   let map = null;
   let boundsRect = null;
   let markers = [];
+  let pins = { a: null, b: null };     // the A and B markers
+  let raw = { a: null, b: null };      // where A and B were picked, before snapping
+  let snapSeq = { a: 0, b: 0 };        // drops a snap answer that arrives after the pin moved again
   let stageLine = null;
   let carMarker = null;
   let points = { a: null, b: null };
@@ -124,11 +127,16 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
   function clearMarkers() {
     for (const m of markers) m.remove();
     markers = [];
+    pins = { a: null, b: null };
+    raw = { a: null, b: null };
     points = { a: null, b: null };
     updateButtons();
   }
 
+  const profile = () => profileEl?.value || 'driving';
+
   function place(point, kind) {
+    raw[kind] = point;
     points[kind] = point;
     const marker = L.marker([point.lat, point.lon], {
       icon: markerIcon(kind.toUpperCase(), kind === 'a' ? '#8fe6a3' : '#f0ce58'),
@@ -136,12 +144,57 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
     }).addTo(map);
     marker.on('dragend', () => {
       const ll = marker.getLatLng();
-      points[kind] = { lat: ll.lat, lon: ll.lng };
+      raw[kind] = { lat: ll.lat, lon: ll.lng };
+      points[kind] = raw[kind];
       setStatus(`${kind.toUpperCase()} moved.`);
+      snapPin(kind);
     });
     markers.push(marker);
+    pins[kind] = marker;
     updateButtons();
+    snapPin(kind);
   }
+
+  /**
+   * Put the pin on the nearest road of the chosen profile within 1 km of
+   * where it was picked (OSRM `/nearest`), and say how far it moved. Off-road
+   * keeps the raw pick; so does a pin with no road near it, with a warning,
+   * and a pin OSRM could not be asked about.
+   */
+  async function snapPin(kind) {
+    const pin = pins[kind];
+    const pick = raw[kind];
+    if (!pin || !pick) return;
+    const seq = ++snapSeq[kind];
+    const label = kind === 'a' ? 'Start' : 'Finish';
+    const next = kind === 'a' && !points.b
+      ? ' Click the finish point, or press FREE DRIVE HERE.'
+      : points.a && points.b ? ' Press GENERATE ROUTE to build that world.' : '';
+    if (profile() === 'offroad' || !onSnap) {
+      points[kind] = pick;
+      pin.setLatLng([pick.lat, pick.lon]);
+      return;
+    }
+    try {
+      const road = await onSnap(pick, profile());
+      if (seq !== snapSeq[kind] || pins[kind] !== pin) return; // picked again meanwhile
+      if (!road) {
+        points[kind] = pick;
+        pin.setLatLng([pick.lat, pick.lon]);
+        setStatus(`${label}: no ${profile()} road within 1 km. Move the pin nearer a mapped road or trail, or route by off-road.`, 'err');
+        return;
+      }
+      points[kind] = { lat: road.lat, lon: road.lon };
+      pin.setLatLng([road.lat, road.lon]);
+      setStatus(`${label} snapped ${Math.round(road.distance)} m onto ${road.name || 'the nearest road'}.${next}`, 'ok');
+    } catch (error) {
+      if (seq !== snapSeq[kind] || pins[kind] !== pin) return;
+      points[kind] = pick;
+      setStatus(`${label} set where you picked; ${error.message}`);
+    }
+  }
+  // A new profile has different roads: snap both pins again (or un-snap them for off-road).
+  profileEl?.addEventListener('change', () => { snapPin('a'); snapPin('b'); });
 
   function ensureMap() {
     if (map) return map;
@@ -197,11 +250,11 @@ export function createMapPicker({ getTerrain, onRoute, onFreeDrive = null, onSav
     }
     if (!points.a || (points.a && points.b)) {
       clearMarkers();
-      place({ lat, lon }, 'a');
       setStatus('Start set. Click the finish point for a stage, or press FREE DRIVE HERE.');
+      place({ lat, lon }, 'a');
     } else {
-      place({ lat, lon }, 'b');
       setStatus('Both points set. Press GENERATE ROUTE to build that world.');
+      place({ lat, lon }, 'b');
     }
     updateButtons();
   }
