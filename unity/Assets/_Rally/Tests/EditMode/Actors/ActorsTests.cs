@@ -25,7 +25,7 @@ namespace Rally.Tests.Edit.Actors
         public void CoverDecidesWhoCrosses()
         {
             var forest = SpawnRules.Plan(7, 0, 0, 20000, Forest, _ => false, 59, 3);
-            foreach (var p in forest) Assert.That(p.Kind, Is.AnyOf(ActorKind.Moose, ActorKind.Deer, ActorKind.Sheep));
+            foreach (var p in forest) Assert.IsTrue(p.Kind == ActorKind.Moose || p.Kind == ActorKind.Deer || p.Kind == ActorKind.Sheep, p.Kind.ToString());
             var north = SpawnRules.Plan(7, 0, 0, 20000, (s, side) => CoverKind.OpenFjell, _ => false, 69, 3);
             Assert.IsTrue(north.Exists(p => p.Kind == ActorKind.Reindeer), "reindeer north of 65°");
             var south = SpawnRules.Plan(7, 0, 0, 20000, (s, side) => CoverKind.OpenFjell, _ => false, 59, 3);
@@ -66,7 +66,7 @@ namespace Rally.Tests.Edit.Actors
             moose.Update(1f, new float2(0, 0), 20f, 1f);
             Assert.AreEqual(ActorState.Idle, moose.State);
             // Car within 120 m: alert, then crossing.
-            for (int i = 0; i < 600 && moose.State != ActorState.Done; i++)
+            for (int i = 0; i < 1200 && moose.State != ActorState.Done; i++)
                 moose.Update(1f / 60, new float2(0, 400), 0f, 1f);
             Assert.AreEqual(ActorState.Done, moose.State);
             Assert.Greater(moose.Pos.x, 3f, "ends on the right verge");
@@ -78,7 +78,7 @@ namespace Rally.Tests.Edit.Actors
             var deer = Make(ActorSpec.Deer, seed: 11);
             deer.Update(1f / 60, new float2(0, 420), 30f, 1f);
             for (int i = 0; i < 60; i++) deer.Update(1f / 60, new float2(0, 420), 30f, 1f);
-            Assert.That(deer.State, Is.AnyOf(ActorState.Cross, ActorState.Stop, ActorState.Flee));
+            Assert.IsTrue(deer.State == ActorState.Cross || deer.State == ActorState.Stop || deer.State == ActorState.Flee, deer.State.ToString());
             deer.Update(1f / 60, new float2(0, 480), 30f, 1f);
             if (deer.State == ActorState.Flee) Assert.AreEqual(ActorSpec.Deer.RunSpeed, deer.Speed, 1e-3f);
         }

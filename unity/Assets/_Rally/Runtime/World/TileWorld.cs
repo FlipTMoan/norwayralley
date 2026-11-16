@@ -66,7 +66,7 @@ namespace Rally.World
 
         public Stats GetStats()
         {
-            Scheduler.Count(out int c, out int f, out int p);
+            Scheduler.CountTiles(out int c, out int f, out int p);
             long n = TileScheduler.Samples * (long)TileScheduler.Samples * sizeof(float) * 2;
             return new Stats { CoarseLoaded = c, FineLoaded = f, Pending = p, Bytes = n * Tiles.Count };
         }

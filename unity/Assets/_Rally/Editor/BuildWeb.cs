@@ -58,8 +58,6 @@ namespace Rally.Editor
             PlayerSettings.WebGL.initialMemorySize = 256;
             PlayerSettings.WebGL.maximumMemorySize = 2048;
             PlayerSettings.WebGL.memoryGrowthMode = WebGLMemoryGrowthMode.Geometric;
-            PlayerSettings.WebGL.memoryGeometricGrowthStep = 0.2f;
-            PlayerSettings.WebGL.memoryGeometricGrowthCap = 96;
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.WebGL, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new[] { GraphicsDeviceType.WebGPU, GraphicsDeviceType.OpenGLES3 });
             PlayerSettings.colorSpace = ColorSpace.Linear;

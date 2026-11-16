@@ -52,7 +52,7 @@ namespace Rally.Actors
                 case ActorState.Cross:
                     Speed = Spec.WalkSpeed * Plan.SpeedFactor;
                     // Panic when the car is nearly on top of it: run the rest of the way.
-                    if (dist < 25f && carSpeed > 5f) { State = ActorState.Flee; break; }
+                    if (dist < 25f && carSpeed > 5f) { State = ActorState.Flee; Speed = Spec.RunSpeed * Plan.SpeedFactor; break; }
                     if (MoveTowards(end, Speed, dt)) State = ActorState.Done;
                     break;
                 case ActorState.Flee:

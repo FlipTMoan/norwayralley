@@ -106,7 +106,7 @@ namespace Rally.World
         }
 
         /// <summary>streamStats() of the JS: ready tiles per kind and how many are still queued or loading.</summary>
-        public void Count(out int coarseReady, out int fineReady, out int pending)
+        public void CountTiles(out int coarseReady, out int fineReady, out int pending)
         {
             coarseReady = fineReady = pending = 0;
             foreach (var e in tiles.Values)

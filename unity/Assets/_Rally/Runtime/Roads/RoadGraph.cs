@@ -98,7 +98,7 @@ namespace Rally.Roads
         static long BucketOf(double2 p) => Key((int)math.floor(p.x / Cell), (int)math.floor(p.y / Cell));
         /// <summary>Node identity: the coordinate to the centimetre, so ways that share an OSM node share the key.</summary>
         public static long NodeKey(Utm33 p) => ((long)math.round(p.E * 100) << 32) ^ (uint)(long)math.round(p.N * 100);
-        static long LinkKey(long from, long to) => (from * 0x9E3779B97F4A7C15L) ^ to;
+        static long LinkKey(long from, long to) => unchecked((long)((ulong)from * 0x9E3779B97F4A7C15UL)) ^ to;
 
         /// <summary>RoadWalk's road class: 0 motorway/trunk … 4 minor roads, 5 tracks.</summary>
         public static byte ClassOf(string kind)

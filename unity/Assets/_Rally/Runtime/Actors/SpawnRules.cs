@@ -40,13 +40,14 @@ namespace Rally.Actors
             var rng = new RallyRandom(seed).Fork((ulong)(sector + 1));
             float lengthKm = (sectorEnd - sectorStart) / 1000f;
             int count = (int)math.round(lengthKm * density * rng.Range(0.7f, 1.3f));
-            float minGap = 150f;
-            float lastS = sectorStart - minGap;
+            const float minGap = 150f;
             int attempts = 0;
             while (plans.Count < count && attempts++ < count * 8)
             {
                 float s = rng.Range(sectorStart + 100f, sectorEnd - 50f);
-                if (math.abs(s - lastS) < minGap) continue;
+                bool crowded = false;
+                for (int i = 0; i < plans.Count && !crowded; i++) crowded = math.abs(plans[i].S - s) < minGap;
+                if (crowded) continue;
                 float side = rng.NextFloat() < 0.5f ? 1f : -1f;
                 var cover = coverAt(s, side);
                 var kind = Pick(cover, paved(s), latitudeDeg, ref rng);
@@ -57,7 +58,6 @@ namespace Rally.Actors
                     Offset = cover == CoverKind.Forest ? rng.Range(6f, 14f) : rng.Range(3f, 8f),
                     SpeedFactor = rng.Range(0.8f, 1.2f),
                 });
-                lastS = s;
             }
             plans.Sort((a, b) => a.S.CompareTo(b.S));
             return plans;
