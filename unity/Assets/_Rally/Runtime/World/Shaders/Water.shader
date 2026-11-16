@@ -3,6 +3,7 @@
 // planar reflection texture when _Planar = 1 and a presentation camera fills _PlanarTex), foam where the
 // water is shallower than _FoamDepth and under the car's wake (_WakeTex from WaterWake), flow along the
 // ribbon for rivers (_Flow = 1 scrolls along UV.v), a long swell for the sea (_SwellAmp > 0).
+// Target 3.5: nothing here needs more, and 4.5 would mean GLES 3.1, which WebGL 2 does not have.
 Shader "Rally/Water"
 {
     Properties
@@ -36,7 +37,7 @@ Shader "Rally/Water"
             Name "Water"
             Tags { "LightMode" = "UniversalForward" }
             HLSLPROGRAM
-            #pragma target 4.5
+            #pragma target 3.5
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE

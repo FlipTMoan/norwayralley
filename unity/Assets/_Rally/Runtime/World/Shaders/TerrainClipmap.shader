@@ -4,6 +4,7 @@
 // stretching on cliff faces), snow by height above the snow line, main light + shadows + ambient SH,
 // URP fog plus a height fog. Pixels where no tile is loaded are clipped (nothing instead of a wrong
 // flat plane; the sea plane sits under everything anyway).
+// Target 3.5 everywhere (texture arrays + texel fetches, no SSBOs), so the one SubShader also runs on GLES 3.0 / WebGL 2.
 Shader "Rally/TerrainClipmap"
 {
     Properties
@@ -57,7 +58,7 @@ Shader "Rally/TerrainClipmap"
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
             HLSLPROGRAM
-            #pragma target 4.5
+            #pragma target 3.5
             #pragma vertex Vert
             #pragma fragment Frag
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
@@ -141,7 +142,7 @@ Shader "Rally/TerrainClipmap"
             Tags { "LightMode" = "ShadowCaster" }
             ZWrite On ZTest LEqual ColorMask 0 Cull Off
             HLSLPROGRAM
-            #pragma target 4.5
+            #pragma target 3.5
             #pragma vertex ShadowVert
             #pragma fragment ShadowFrag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
@@ -164,7 +165,7 @@ Shader "Rally/TerrainClipmap"
             Tags { "LightMode" = "DepthOnly" }
             ZWrite On ColorMask R
             HLSLPROGRAM
-            #pragma target 4.5
+            #pragma target 3.5
             #pragma vertex DepthVert
             #pragma fragment DepthFrag
             Varyings DepthVert(Attributes v)
@@ -185,7 +186,7 @@ Shader "Rally/TerrainClipmap"
             Tags { "LightMode" = "DepthNormals" }
             ZWrite On
             HLSLPROGRAM
-            #pragma target 4.5
+            #pragma target 3.5
             #pragma vertex DepthVert
             #pragma fragment DepthNormalsFrag
             Varyings DepthVert(Attributes v)

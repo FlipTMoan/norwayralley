@@ -26,8 +26,11 @@ Shader "Rally/CRT"
             float _Scanlines, _Dither, _Curvature, _Vignette;
             float4 _InternalSize;
 
-            // 4x4 Bayer matrix, the same thresholds retro.js uses for its dithering.
-            static const float BAYER[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+            // 4x4 Bayer matrix {0 8 2 10 / 12 4 14 6 / 3 11 1 9 / 15 7 13 5}, the thresholds retro.js uses, as the
+            // 2x2 recursion M4 = 4·M2(p & 1) + M2(p >> 1) instead of a const array: a dynamically indexed const
+            // array is what some WebGL GLSL compilers (ANGLE) reject, and that shows up as "shader not supported".
+            float Bayer2(int2 p) { return float(2 * p.x + 3 * p.y - 4 * p.x * p.y); }   // {0 2 / 3 1}
+            float Bayer4(int2 p) { return 4 * Bayer2(p & 1) + Bayer2(p >> 1); }
 
             float4 Frag(Varyings i) : SV_Target
             {
@@ -44,7 +47,7 @@ Shader "Rally/CRT"
                 float3 col = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_PointClamp, snapped).rgb;
 
                 // Ordered dither to a 5-bit-per-channel palette.
-                float threshold = (BAYER[(int)(fmod(px.x, 4)) + 4 * (int)(fmod(px.y, 4))] + 0.5) / 16.0;
+                float threshold = (Bayer4((int2)fmod(px, 4)) + 0.5) / 16.0;
                 col = lerp(col, floor(col * 31 + threshold) / 31, _Dither);
 
                 // Scanlines: every other internal row darker.

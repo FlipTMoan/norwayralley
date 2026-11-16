@@ -40,18 +40,18 @@ namespace Rally.World
         // CPU path
         NativeArray<TreeInstance> cpuInstances;
         NativeArray<int> cpuCounts, jobCount;
-        NativeArray<Matrix4x4> matrices;
-        static readonly int OffsetId = Shader.PropertyToID("_InstanceOffset"), BillboardId = Shader.PropertyToID("_Billboard");
+        NativeArray<Matrix4x4> matrices;   // Buckets × MaxVisible, binned once per frame
+        readonly int[] bucketCounts = new int[Buckets];
+        static readonly int OffsetId = Shader.PropertyToID("_InstanceOffset"), BillboardId = Shader.PropertyToID("_Billboard"), SnowLineId = Shader.PropertyToID("_TreeSnowLine");
 
         public VegetationRenderer(VegetationSetSO set, ComputeShader scatterShader, TileAtlas coarseAtlas, TreeIndex treeIndex)
         {
             this.set = set; cs = scatterShader; atlas = coarseAtlas; index = treeIndex;
             slots = atlas.Slices;
             bySlot = new TerrainTile[slots];
-            gpu = SystemInfo.supportsComputeShaders && cs != null;
+            gpu = GpuCaps.Compute && cs != null;
             originsCpu = new NativeArray<float4>(slots, Allocator.Persistent);
             zero = new NativeArray<uint>(1, Allocator.Persistent);
-            tileOrigins = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots, 16);
             for (int b = 0; b < Buckets; b++)
             {
                 props[b] = new MaterialPropertyBlock();
@@ -62,11 +62,13 @@ namespace Rally.World
                 if (src == null) continue;
                 materials[b] = new Material(src);   // a copy: the keyword must not be baked into the asset
                 materials[b].SetFloat(BillboardId, billboard ? 1 : 0);
+                materials[b].enableInstancing = true;   // the fallback draws with RenderMeshInstanced
                 if (gpu) materials[b].EnableKeyword("_RALLY_INDIRECT"); else materials[b].DisableKeyword("_RALLY_INDIRECT");
             }
             if (gpu)
             {
                 kScatter = cs.FindKernel("ScatterTile"); kClear = cs.FindKernel("ClearCounts"); kCull = cs.FindKernel("Cull"); kArgs = cs.FindKernel("WriteArgs");
+                tileOrigins = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots, 16);
                 instances = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots * Capacity, TreeInstance.Stride);
                 counts = new GraphicsBuffer(GraphicsBuffer.Target.Structured, slots, 4);
                 visible = new GraphicsBuffer(GraphicsBuffer.Target.Structured, Buckets * MaxVisible, TreeInstance.Stride);
@@ -90,7 +92,7 @@ namespace Rally.World
                 cpuInstances = new NativeArray<TreeInstance>(slots * Capacity, Allocator.Persistent);
                 cpuCounts = new NativeArray<int>(slots, Allocator.Persistent);
                 jobCount = new NativeArray<int>(1, Allocator.Persistent);
-                matrices = new NativeArray<Matrix4x4>(MaxVisible, Allocator.Persistent);
+                matrices = new NativeArray<Matrix4x4>(Buckets * MaxVisible, Allocator.Persistent);
             }
         }
 
@@ -202,43 +204,49 @@ namespace Rally.World
             }
             else
             {
+                // One pass over every instance: LOD + frustum, binned per (species, LOD) bucket, then one
+                // instanced draw per bucket. Tint and snow come from the shader (position hash, _TreeSnowLine).
                 var camPos = (float3)cam.transform.position;
+                float snowLine = 0, nearest = float.MaxValue;
+                System.Array.Clear(bucketCounts, 0, Buckets);
+                for (int s = 0; s < slots; s++)
+                {
+                    var tile = bySlot[s];
+                    if (tile == null) continue;
+                    float2 o = originsCpu[s].xy;
+                    float dTile = math.distance(o, camPos.xz);
+                    if (dTile < nearest) { nearest = dTile; snowLine = tile.SnowLine; }
+                    int baseIdx = s * Capacity;
+                    for (int k = 0; k < cpuCounts[s]; k++)
+                    {
+                        var t = cpuInstances[baseIdx + k];
+                        var world = new float3(t.Pos.x + o.x, t.Pos.y, t.Pos.z + o.y);
+                        float d = math.distance(world, camPos);
+                        if (d > DrawDistance) continue;
+                        int lod = d < set.LodDistances.x ? 0 : d < set.LodDistances.y ? 1 : d < set.LodDistances.z ? 2 : 3;
+                        int b = (int)t.Species * VegetationSetSO.Lods + lod;
+                        if (bucketCounts[b] >= MaxVisible) continue;
+                        if (!GeometryUtility.TestPlanesAABB(planes, new Bounds(world + new float3(0, 6 * t.Scale, 0), new Vector3(12, 16, 12) * t.Scale))) continue;
+                        matrices[b * MaxVisible + bucketCounts[b]++] = Matrix4x4.TRS(world, Quaternion.Euler(0, math.degrees(t.Yaw), 0), Vector3.one * t.Scale);
+                    }
+                }
+                Shader.SetGlobalFloat(SnowLineId, snowLine);
                 for (int b = 0; b < Buckets; b++)
                 {
                     var mesh = MeshFor(b);
-                    if (mesh == null || materials[b] == null) continue;
-                    uint species = (uint)(b / VegetationSetSO.Lods);
-                    int lodWanted = b % VegetationSetSO.Lods;
-                    int n = 0;
-                    for (int s = 0; s < slots && n < MaxVisible; s++)
-                    {
-                        if (bySlot[s] == null) continue;
-                        int baseIdx = s * Capacity;
-                        float2 o = originsCpu[s].xy;
-                        for (int k = 0; k < cpuCounts[s] && n < MaxVisible; k++)
-                        {
-                            var t = cpuInstances[baseIdx + k];
-                            if (t.Species != species) continue;
-                            var world = new float3(t.Pos.x + o.x, t.Pos.y, t.Pos.z + o.y);
-                            float d = math.distance(world, camPos);
-                            int lod = d < set.LodDistances.x ? 0 : d < set.LodDistances.y ? 1 : d < set.LodDistances.z ? 2 : 3;
-                            if (lod != lodWanted || d > DrawDistance) continue;
-                            if (!GeometryUtility.TestPlanesAABB(planes, new Bounds(world + new float3(0, 6 * t.Scale, 0), new Vector3(12, 16, 12) * t.Scale))) continue;
-                            matrices[n++] = Matrix4x4.TRS(world, Quaternion.Euler(0, math.degrees(t.Yaw), 0), Vector3.one * t.Scale);
-                        }
-                    }
-                    if (n == 0) continue;
+                    int n = bucketCounts[b];
+                    if (n == 0 || mesh == null || materials[b] == null) continue;
                     rp.material = materials[b];
                     rp.matProps = props[b];
-                    rp.shadowCastingMode = lodWanted <= 1 || set.FarShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
-                    Graphics.RenderMeshInstanced(rp, mesh, 0, matrices, n);
+                    rp.shadowCastingMode = b % VegetationSetSO.Lods <= 1 || set.FarShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                    Graphics.RenderMeshInstanced(rp, mesh, 0, matrices.GetSubArray(b * MaxVisible, n), n);
                 }
             }
         }
 
         public void Dispose()
         {
-            originsCpu.Dispose(); zero.Dispose(); tileOrigins.Dispose();
+            originsCpu.Dispose(); zero.Dispose(); tileOrigins?.Dispose();
             instances?.Dispose(); counts?.Dispose(); visible?.Dispose(); drawCounts?.Dispose(); args?.Dispose();
             if (cpuInstances.IsCreated) { cpuInstances.Dispose(); cpuCounts.Dispose(); jobCount.Dispose(); matrices.Dispose(); }
             foreach (var m in materials) if (m != null) RallyObjects.Destroy(m);

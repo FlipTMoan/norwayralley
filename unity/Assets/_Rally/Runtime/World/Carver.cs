@@ -1,4 +1,5 @@
 using System;
+using Rally.Core;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
@@ -23,7 +24,7 @@ namespace Rally.World
         /// <summary>Compute when the platform has it (WebGPU, desktop), else the Burst job (WebGL 2).</summary>
         public static ICarver Create(ComputeShader carveShader)
         {
-            if (SystemInfo.supportsComputeShaders && carveShader != null) return new ComputeCarver(carveShader);
+            if (GpuCaps.Compute && carveShader != null) return new ComputeCarver(carveShader);
             return new CpuCarver();
         }
     }

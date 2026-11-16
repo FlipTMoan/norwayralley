@@ -4,6 +4,19 @@ _Updated 2026-11-16._
 
 ## 2026-11-16
 
+### Unity: WebGL 2 (no compute) path actually runs
+- Chrome on WebGL 2 failed to boot (`GraphicsBuffer … requires compute shader support` from the clipmap
+  `TileTable`) and showed `Rally/TerrainClipmap`, `Rally/Tree`, `Rally/Water` as unsupported
+  (`#pragma target 4.5` is GLES 3.1 to the GLES3 backend; StructuredBuffer reads).
+- `Rally.Core.GpuCaps.Compute` (+ `ForceNoCompute` for tests) is now the one gate for every buffer and
+  dispatch; the tile tables are small RFloat textures on both paths; `Rally/Tree` and `Rally/CarBody` got a
+  target-3.5 SubShader (instancing / no dents), `TerrainClipmap` and `Water` are target 3.5; the CPU tree
+  draw bins once per frame per (species, LOD) bucket; `Rally/CRT` computes its 4×4 Bayer threshold in
+  closed form (no dynamically indexed const array, which WebGL GLSL compilers may reject).
+- `SceneSmokeTests.DrivesOnTheNoComputeFallbackPath` drives the scene through the fallback C#;
+  `Rally → Build Web (WebGL 2 only, diagnostic)` compile-checks the GLES 3.0 subshaders; README notes how to
+  tell WebGPU from WebGL 2 in the browser.
+
 ### Unity: bootstrap scene built by code, PlayMode smoke test
 - `unity/Assets/_Rally/Editor/SceneBuilder.cs` (`Rally → Build Bootstrap Scene`,
   `-executeMethod Rally.Editor.SceneBuilder.Build`) does what SCENE.md asked a

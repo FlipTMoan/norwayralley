@@ -2,7 +2,8 @@
 // drawn ground. World XZ (Unity, FloatingOrigin-relative) -> height, by way of the tile tables:
 //
 //   _FineWindow / _CoarseWindow = (originX, originZ, tileSize, dim)   a dim x dim window of tile cells
-//   _FineSlices / _CoarseSlices  = StructuredBuffer<int>, slice of the tile at (i, j) or -1
+//   _FineSlices / _CoarseSlices  = dim x dim RFloat Texture2D, texel (i, j) = slice of the tile there or -1
+//                                  (a texel fetch, not a StructuredBuffer: GLES 3.0 / WebGL 2 has no SSBOs)
 //   _HeightsFine / _HeightsCoarse = Texture2DArray RFloat, texel (col, row) = HeightGrid[row * N + col]
 //   _AtlasParams = (N, coarseCell, fineCell, splatRes)
 //
@@ -16,8 +17,8 @@ TEXTURE2D_ARRAY(_HeightsCoarse); SAMPLER(sampler_HeightsCoarse);
 TEXTURE2D_ARRAY(_MaskCoarse);    SAMPLER(sampler_MaskCoarse);
 TEXTURE2D_ARRAY(_SplatAtlas);    SAMPLER(sampler_SplatAtlas);
 TEXTURE2D_ARRAY(_CoverAtlas);    SAMPLER(sampler_CoverAtlas);
-StructuredBuffer<int> _FineSlices;
-StructuredBuffer<int> _CoarseSlices;
+TEXTURE2D(_FineSlices);
+TEXTURE2D(_CoarseSlices);
 float4 _FineWindow, _CoarseWindow, _AtlasParams;
 
 // Slice of the tile under a world XZ in a table window, and the position inside that tile.
@@ -28,7 +29,7 @@ int CoarseTile(float2 wxz, out float2 local)
     int dim = (int)_CoarseWindow.w;
     local = rel - (float2)ij * _CoarseWindow.z;
     if (any(ij < 0) || any(ij >= dim)) return -1;
-    return _CoarseSlices[ij.y * dim + ij.x];
+    return (int)LOAD_TEXTURE2D_LOD(_CoarseSlices, ij, 0).r;
 }
 
 int FineTile(float2 wxz, out float2 local)
@@ -38,7 +39,7 @@ int FineTile(float2 wxz, out float2 local)
     int dim = (int)_FineWindow.w;
     local = rel - (float2)ij * _FineWindow.z;
     if (any(ij < 0) || any(ij >= dim)) return -1;
-    return _FineSlices[ij.y * dim + ij.x];
+    return (int)LOAD_TEXTURE2D_LOD(_FineSlices, ij, 0).r;
 }
 
 float2 TileUV(float2 local, float cell) { return (local / cell + 0.5) / _AtlasParams.x; }

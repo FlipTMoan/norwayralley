@@ -1,3 +1,4 @@
+using Rally.Core;
 using Unity.Mathematics;
 using UnityEngine;
 
@@ -57,7 +58,7 @@ namespace Rally.Vehicle
             if (Body != null)
             {
                 body = Body.material; // instance: the dents and the mask are this car's
-                gpuDents = SystemInfo.supportsComputeShaders && body.HasProperty(ImpactCountId);
+                gpuDents = GpuCaps.Compute && body.HasProperty(ImpactCountId);
                 if (gpuDents)
                 {
                     impactBuffer = new ComputeBuffer(MaxImpacts, 32);

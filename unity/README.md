@@ -80,6 +80,14 @@ The Leaflet map tiles, PeerJS and the geodata services (Kartverket WCS, NIBIO SR
 NVDB, OSRM) are fetched live and cached in IndexedDB (`rally-cache`, the same database the JS game
 uses, 10 GB LRU). In the editor the same cache lives under `Application.persistentDataPath/rally-cache`.
 
+### WebGPU or WebGL 2?
+
+The build lists WebGPU first and falls back to WebGL 2 (GLES 3.0: no compute, Burst carve + CPU scatter, see
+`README-world.md`). Unity's console line `Renderer: WebKit WebGL / OpenGL ES 3.0` means WebGL 2 was picked; the
+quick check is `navigator.gpu` in the DevTools console (`undefined` = no WebGPU in this browser). Chrome on Linux
+ships WebGPU behind a flag in many versions: `chrome://flags/#enable-unsafe-webgpu` (and a recent Chrome; Vulkan
+on the GPU helps), then reload. Nothing in the build changes the browser's choice.
+
 ## Play with friends (rooms over WebRTC)
 
 A room is a 4-letter code on the public PeerJS signalling server (`nrr-CODE`), exactly as the JS

@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-16. Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-16 (WebGL 2 path). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -60,6 +60,23 @@ when a tile's ways arrive, then `TileWorld.RecarveWithin(bounds)`; `RibbonMesh.B
   1.5 m feather as their blend (`RoadProfile.ShoulderFor`).
 - Lake trigger colliders are convex hulls (Unity requires convex trigger meshes); the car confirms with `WaterAt`.
 - URP 17 has no height-fog Volume override; height fog is a terrain-shader uniform set from WorldStyle.
-- WebGL 2 caveat to verify: the clipmap tile tables (`_CoarseSlices`, `_FineSlices`) are StructuredBuffers read in the vertex
-  shader; GLES 3.0 has no SSBOs, so the WebGL 2 build needs them as a small integer texture instead (the C# `TileTable` is the
-  only place that would change).
+
+## WebGL 2 (no compute) path
+
+Chrome without WebGPU runs the build on WebGL 2 = GLES 3.0: no compute shaders, no SSBOs (StructuredBuffer), no
+`#pragma target 4.5` (that is GLES 3.1 to Unity's GLES3 backend, so such a SubShader is "not supported on this GPU").
+`Rally.Core.GpuCaps.Compute` is the one switch; every buffer and dispatch is gated on it (2026-11-16):
+
+| | WebGPU / desktop (`GpuCaps.Compute`) | WebGL 2 fallback |
+| --- | --- | --- |
+| Tile tables `_CoarseSlices` / `_FineSlices` | dim × dim RFloat `Texture2D`, `LOAD_TEXTURE2D_LOD` in the vertex shader (both paths; `TileTable`) | same |
+| Height / mask atlas | random-write RenderTexture arrays, `Carve.compute`, `AsyncGPUReadback` into the `HeightGrid` | plain `Texture2DArray`s; `CpuCarver` runs the Burst `CarveJob` on the grid and `TerrainTile.UploadHeights` re-uploads the slice |
+| Trees | `Scatter.compute` → instance buffer, GPU cull, `RenderMeshIndirect` (`_RALLY_INDIRECT`) | `ScatterJob` (Burst) → `RenderMeshInstanced` per (species, LOD) bucket from CPU-culled matrices; tint = position hash, snow from `_TreeSnowLine` |
+| Car dents | `_Impacts` StructuredBuffer in `Rally/CarBody` | `CarDamageVisual` rewrites the mesh vertices |
+| Shaders | `Rally/Tree`, `Rally/CarBody`: first SubShader, target 4.5 (`exclude_renderers gles3`) | second SubShader, target 3.5; `Rally/TerrainClipmap`, `Rally/Water` are target 3.5; `Rally/CRT` (default target) now derives its Bayer threshold arithmetically instead of indexing a const array, which some WebGL GLSL compilers reject with the same "not supported" message |
+
+Checks: `SceneSmokeTests.DrivesOnTheNoComputeFallbackPath` sets `GpuCaps.ForceNoCompute` and drives the scene through the
+fallback C# (the editor GPU still compiles the high-target shaders); `Rally → Build Web (WebGL 2 only, diagnostic)`
+(`-executeMethod Rally.Editor.BuildWeb.BuildWebGL2Only`, output `Build/WebGL2`) builds with OpenGLES3 as the only API so the
+log lists any shader that fails for GLES 3.0. Known cost of the fallback: `Texture2DArray.Apply` re-sends the whole array when
+`SystemInfo.copyTextureSupport` is `None`; the carve and scatter run on the main thread (Burst, one tile per frame).

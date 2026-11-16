@@ -15,10 +15,13 @@ namespace Rally.Editor
     /// a 512 MB geometric-growth heap for the tile and scatter buffers, and the Rally template with
     /// the Leaflet map and PeerJS. CI calls <see cref="Build"/> through game-ci's <c>buildMethod</c>;
     /// in the editor use the menu item. Output: <c>unity/Build/Web</c>.
+    /// <see cref="BuildWebGL2Only"/> is the diagnostic variant: OpenGLES3 as the only API into <c>Build/WebGL2</c>,
+    /// so the build log lists every shader that does not compile for GLES 3.0 (what Chrome uses when WebGPU is off).
     /// </summary>
     public static class BuildWeb
     {
         public const string OutputDir = "Build/Web";
+        static readonly GraphicsDeviceType[] WebApis = { GraphicsDeviceType.WebGPU, GraphicsDeviceType.OpenGLES3 };
 
         [MenuItem("Rally/Build Web (Brotli, WebGPU)")]
         public static void BuildFromMenu()
@@ -27,21 +30,33 @@ namespace Rally.Editor
             if (report.summary.result != BuildResult.Succeeded) throw new Exception($"Web build failed: {report.summary.result}");
         }
 
-        public static BuildReport Build()
+        [MenuItem("Rally/Build Web (WebGL 2 only, diagnostic)")]
+        public static void BuildWebGL2Only()
+        {
+            BuildReport report;
+            try { report = Build("Build/WebGL2", new[] { GraphicsDeviceType.OpenGLES3 }); }
+            finally { PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, WebApis); AssetDatabase.SaveAssets(); }   // leave the project as the normal build wants it
+            if (report.summary.result != BuildResult.Succeeded) throw new Exception($"WebGL 2 build failed: {report.summary.result}");
+        }
+
+        public static BuildReport Build() => Build(OutputDir, WebApis);
+
+        static BuildReport Build(string outputDir, GraphicsDeviceType[] apis)
         {
             ApplyPlayerSettings();
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, apis);
             var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
             if (scenes.Length == 0) throw new Exception("No scenes are enabled in Build Settings.");
-            Directory.CreateDirectory(OutputDir);
+            Directory.CreateDirectory(outputDir);
             var options = new BuildPlayerOptions
             {
                 scenes = scenes,
-                locationPathName = OutputDir,
+                locationPathName = outputDir,
                 target = BuildTarget.WebGL,
                 options = BuildOptions.None,
             };
             var report = BuildPipeline.BuildPlayer(options);
-            Debug.Log($"Web build: {report.summary.result}, {report.summary.totalSize / 1048576} MB in {report.summary.totalTime.TotalSeconds:F0} s → {OutputDir}");
+            Debug.Log($"Web build: {report.summary.result}, {report.summary.totalSize / 1048576} MB in {report.summary.totalTime.TotalSeconds:F0} s → {outputDir}");
             return report;
         }
 
@@ -59,7 +74,7 @@ namespace Rally.Editor
             PlayerSettings.WebGL.maximumMemorySize = 2048;
             PlayerSettings.WebGL.memoryGrowthMode = WebGLMemoryGrowthMode.Geometric;
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.WebGL, false);
-            PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new[] { GraphicsDeviceType.WebGPU, GraphicsDeviceType.OpenGLES3 });
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, WebApis);
             PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.SetScriptingBackend(NamedBuildTarget.WebGL, ScriptingImplementation.IL2CPP);
             PlayerSettings.SetIl2CppCompilerConfiguration(NamedBuildTarget.WebGL, Il2CppCompilerConfiguration.Release);

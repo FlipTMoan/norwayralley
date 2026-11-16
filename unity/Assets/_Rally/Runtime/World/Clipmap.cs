@@ -12,21 +12,23 @@ namespace Rally.World
     /// of tile cells around the camera, each entry the slice index of the tile there or −1. Rebuilt when
     /// tiles come and go or the window moves (never per frame). Window origin is in Unity world metres
     /// (FloatingOrigin-relative), so the shader does plain float maths.
+    /// The table is a dim × dim RFloat texture read with a texel fetch, not a StructuredBuffer: GLES 3.0
+    /// (WebGL 2) has no SSBOs, and one path that works everywhere beats two.
     /// </summary>
     public sealed class TileTable : System.IDisposable
     {
         public readonly int Dim;
         public readonly float SizeM;
-        public readonly GraphicsBuffer Buffer;
-        NativeArray<int> entries;
+        public readonly Texture2D Texture;
+        NativeArray<float> entries;
         public int I0, J0;             // tile index of the window's south-west cell
         public Vector4 Window;         // (originX, originZ, tileSize, dim) for the shader
 
         public TileTable(int dim, float sizeM)
         {
             Dim = dim; SizeM = sizeM;
-            entries = new NativeArray<int>(dim * dim, Allocator.Persistent);
-            Buffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, dim * dim, sizeof(int));
+            entries = new NativeArray<float>(dim * dim, Allocator.Persistent);
+            Texture = new Texture2D(dim, dim, TextureFormat.RFloat, false, true) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp, name = "TileTable" };
         }
 
         /// <summary>Centre the window on a tile index and fill it from the live tiles (slice per key).</summary>
@@ -42,12 +44,13 @@ namespace Rally.World
                 if (i < 0 || j < 0 || i >= Dim || j >= Dim) continue;
                 entries[j * Dim + i] = kv.Value.Slice;
             }
-            Buffer.SetData(entries);
+            Texture.SetPixelData(entries, 0);
+            Texture.Apply(false, false);
             var o = FloatingOrigin.ToWorldXZ(new Utm33((double)I0 * SizeM, (double)J0 * SizeM));
             Window = new Vector4(o.x, o.y, SizeM, Dim);
         }
 
-        public void Dispose() { entries.Dispose(); Buffer.Dispose(); }
+        public void Dispose() { entries.Dispose(); RallyObjects.Destroy(Texture); }
     }
 
     /// <summary>
@@ -169,8 +172,8 @@ namespace Rally.World
             Shader.SetGlobalTexture("_MaskCoarse", coarseAtlas.Mask);
             Shader.SetGlobalTexture("_SplatAtlas", coarseAtlas.Splat);
             Shader.SetGlobalTexture("_CoverAtlas", coarseAtlas.Cover);
-            Shader.SetGlobalBuffer("_CoarseSlices", Coarse.Buffer);
-            Shader.SetGlobalBuffer("_FineSlices", Fine.Buffer);
+            Shader.SetGlobalTexture("_CoarseSlices", Coarse.Texture);
+            Shader.SetGlobalTexture("_FineSlices", Fine.Texture);
             Shader.SetGlobalVector("_AtlasParams", new Vector4(coarseAtlas.N, TileScheduler.CoarseCell, TileScheduler.FineCell, coarseAtlas.SplatRes));
         }
 

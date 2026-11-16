@@ -74,7 +74,7 @@ namespace Rally.World
         public TileWorld(ComputeShader carveShader, WorldStyleSO style)
         {
             Style = style;
-            bool compute = SystemInfo.supportsComputeShaders && carveShader != null;
+            bool compute = GpuCaps.Compute && carveShader != null;
             CoarseAtlas = new TileAtlas(TileScheduler.Samples, CoarseSlices, SplatRes, compute);
             FineAtlas = new TileAtlas(TileScheduler.Samples, FineSlices, 0, compute);
             carver = Carvers.Create(carveShader);
