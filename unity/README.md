@@ -10,7 +10,7 @@ The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` 
 
 1. Download Unity Hub for Linux: <https://unity.com/download> (AppImage or the `unityhub` apt/yum
    repository), sign in, and activate a Personal licence.
-2. In the Hub go to **Installs → Install Editor → Archive**, choose **6000.6.0f1** (the version in
+2. In the Hub go to **Installs → Install Editor → Archive**, choose **6000.6.9f1** (the version in
    `ProjectSettings/ProjectVersion.txt`) and tick the **Web Build Support** module.
    WebGPU needs no extra module; it is a graphics API choice in Player Settings.
 3. **Projects → Add → Add project from disk** and pick this `unity/` folder. The first open restores

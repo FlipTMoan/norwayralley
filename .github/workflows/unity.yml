@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UNITY_VERSION: 6000.6.0f1   # keep in sync with unity/ProjectSettings/ProjectVersion.txt
+  UNITY_VERSION: 6000.6.9f1   # keep in sync with unity/ProjectSettings/ProjectVersion.txt
 
 jobs:
   # Without a Unity licence secret the jobs below cannot run; skip them quietly instead of failing
