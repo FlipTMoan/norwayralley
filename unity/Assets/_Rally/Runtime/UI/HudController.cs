@@ -13,7 +13,13 @@ namespace Rally.UI
     public sealed class HudController : MonoBehaviour
     {
         Label speed, gear, clock, penalty, noteKind, noteDist, surface, status, distLeft;
-        VisualElement rpmBar, arrow, damageBar, turnBox;
+        VisualElement rpmBar, arrow, damageBar, turnBox, startScreen, friends;
+        Label startInfo, roomStatus;
+        TextField roomCode;
+
+        /// <summary>Start-screen buttons (index.html: START ENGINE, HOST A ROOM, JOIN). GameController subscribes.</summary>
+        public event System.Action StartClicked, HostClicked;
+        public event System.Action<string> JoinClicked;
         public bool Visible { set => root.style.display = value ? DisplayStyle.Flex : DisplayStyle.None; }
         VisualElement root;
 
@@ -24,7 +30,23 @@ namespace Rally.UI
             penalty = root.Q<Label>("penalty"); noteKind = root.Q<Label>("noteKind"); noteDist = root.Q<Label>("noteDist");
             surface = root.Q<Label>("surface"); status = root.Q<Label>("status"); distLeft = root.Q<Label>("distLeft");
             rpmBar = root.Q("rpmBar"); arrow = root.Q("arrow"); damageBar = root.Q("damageBar"); turnBox = root.Q("turnBox");
+            startScreen = root.Q("startScreen"); friends = root.Q("friends");
+            startInfo = root.Q<Label>("startInfo"); roomStatus = root.Q<Label>("roomStatus"); roomCode = root.Q<TextField>("roomCode");
+            root.Q<Button>("startButton")?.RegisterCallback<ClickEvent>(_ => StartClicked?.Invoke());
+            root.Q<Button>("hostButton")?.RegisterCallback<ClickEvent>(_ => HostClicked?.Invoke());
+            root.Q<Button>("joinButton")?.RegisterCallback<ClickEvent>(_ => JoinClicked?.Invoke(roomCode != null ? roomCode.value : ""));
         }
+
+        /// <summary>Show or hide the start screen; `info` is the loading/stage line under the title.</summary>
+        public void ShowStartScreen(bool visible, string info = null)
+        {
+            if (startScreen == null) return;
+            startScreen.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            if (info != null && startInfo != null) startInfo.text = info;
+        }
+
+        /// <summary>Room code / join status shown in the friends panel (also mirrored in the HUD status line).</summary>
+        public void ShowRoomStatus(string text) { if (roomStatus != null) roomStatus.text = text ?? ""; }
 
         public void Show(in HudFrame f)
         {

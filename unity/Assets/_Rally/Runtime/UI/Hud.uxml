@@ -22,5 +22,21 @@
       <ui:VisualElement class="damage"><ui:VisualElement name="damageBar" class="damageBar" /></ui:VisualElement>
     </ui:VisualElement>
     <ui:Label name="status" text="" class="status" />
+    <ui:VisualElement name="startScreen" class="startScreen">
+      <ui:Label text="RETRO NORWAY RALLY" class="title" />
+      <ui:Label name="startInfo" text="" class="startInfo" />
+      <ui:Button name="startButton" text="START ENGINE" class="bigButton" />
+      <ui:VisualElement name="friends" class="friends">
+        <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
+        <ui:Button name="hostButton" text="HOST A ROOM" class="smallButton" />
+        <ui:VisualElement class="row">
+          <ui:TextField name="roomCode" max-length="6" class="roomCode" />
+          <ui:Button name="joinButton" text="JOIN" class="smallButton" />
+        </ui:VisualElement>
+        <ui:Label name="roomStatus" text="" class="roomStatus" />
+        <ui:Label text="Phones cannot link over Bluetooth from a web page; rooms go through the internet (4-letter code)." class="hint" />
+      </ui:VisualElement>
+      <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain © Kartverket (CC BY 4.0) · SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · Statens vegvesen (NLOD) · geoBoundaries (CC BY 4.0)" class="credits" />
+    </ui:VisualElement>
   </ui:VisualElement>
 </ui:UXML>

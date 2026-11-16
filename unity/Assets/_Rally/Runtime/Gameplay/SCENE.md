@@ -49,4 +49,4 @@ under a `World` object by `TileWorld`; nothing of it is in the scene. The terrai
   NIBIO / OSRM through the file cache in `Application.persistentDataPath/rally-cache`). Enter starts the engine; WASD / arrows,
   Shift handbrake, Space jump, Q/E manual gears.
 - Web: `Rally → Build Web`; the page's `?drive=` / `?route=` / `?seed=` query is read by `BrowserDom.UrlParams()`.
-- Friends: call `GameController.HostRoom()` / `JoinRoom(code)` from a UI button (a friends panel is not part of the HUD yet).
+- Friends: the start screen in `Hud.uxml` has HOST A ROOM / JOIN (`hostButton`, `joinButton`, `roomCode`, `roomStatus`); `HudController` raises `HostClicked`/`JoinClicked`, which `GameController` subscribes to in Start. `startButton` starts the engine; the whole `startScreen` hides when the phase leaves Intro.

@@ -126,6 +126,13 @@ namespace Rally.Gameplay
 
         async void Start()
         {
+            if (Hud != null)
+            {
+                Hud.StartClicked += StartEngine;
+                Hud.HostClicked += HostRoom;
+                Hud.JoinClicked += JoinRoom;
+            }
+            flow.PhaseChanged += p => Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading);
             try { await Boot(); }
             catch (OperationCanceledException) { }
             catch (Exception e) { RallyLog.Error("boot failed: " + e); status = "LOAD FAILED: " + e.Message; }
@@ -698,6 +705,7 @@ namespace Rally.Gameplay
                 NewSession(true);
                 string code = await session.Host();
                 Say($"ROOM {code}", 10f);
+                Hud?.ShowRoomStatus($"Room {code}: friends press JOIN with this code");
             }
             catch (Exception e) { Say(e.Message, 6f); }
         }
@@ -717,7 +725,7 @@ namespace Rally.Gameplay
         {
             session?.Close();
             session = new Session(null, kindName);
-            session.Status += m => Say(m, 5f);
+            session.Status += m => { Say(m, 5f); Hud?.ShowRoomStatus(m); };
             session.Error += m => Say(m, 6f);
             session.SlotAssigned += OnSlot;
             session.Route += (r, from) => Say("The host picked a new stage: open their link", 8f);   // stage hand-over is not ported (see docs/integration-review.md)
