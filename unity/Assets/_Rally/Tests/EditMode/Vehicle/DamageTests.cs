@@ -49,20 +49,22 @@ namespace Rally.Tests.Edit.Vehicle
             Assert.IsFalse(d.Wrecked);
         }
 
-        static (float top, float accel3s) Drive(float engineDamage)
+        static (float top, float at8s) Drive(float engineDamage)
         {
             var car = new TestCar(Worlds.FlatRoad());
             car.S.Damage.Engine = engineDamage;
             var input = TestCar.Input(1f);
-            float top = 0f, at3 = 0f;
+            float top = 0f, at8 = 0f;
             for (int i = 0; i < 60 * 25; i++)
             {
                 car.Update(1f / 60f, input);
                 top = math.max(top, car.S.SpeedKmh);
-                if (i == 60 * 3) at3 = car.S.VF;
+                // Off the line both cars are tyre-limited (μ·DriveLoad·g ≈ 6.6 m/s² on asphalt); the weaker
+                // engine only shows once power is the limit, above ~18 m/s for a 60 % damaged Porsche.
+                if (i == 60 * 8) at8 = car.S.VF;
                 if (car.S.Progress > 0.9f) break;
             }
-            return (top, at3);
+            return (top, at8);
         }
 
         [Test]
@@ -71,7 +73,7 @@ namespace Rally.Tests.Edit.Vehicle
             var healthy = Drive(0f);
             var sick = Drive(0.6f);
             Assert.Less(sick.top, healthy.top * 0.8f, $"top {sick.top:F0} vs {healthy.top:F0} km/h");
-            Assert.Less(sick.accel3s, healthy.accel3s, $"speed after 3 s {sick.accel3s:F1} vs {healthy.accel3s:F1} m/s");
+            Assert.Less(sick.at8s, healthy.at8s, $"speed after 8 s {sick.at8s:F1} vs {healthy.at8s:F1} m/s");
         }
 
         [Test]

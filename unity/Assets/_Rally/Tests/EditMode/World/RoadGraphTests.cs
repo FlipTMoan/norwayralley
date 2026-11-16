@@ -49,14 +49,14 @@ namespace Rally.Tests.World
         [Test]
         public void SurfaceAndLanesFromTags()
         {
-            var g = Graph(Way(1, "track", 1000, 0, 500), Way(2, "primary", 2000, 0, 500, "gravel"), Way(3, "service", 3000, 0, 500, "asphalt"));
+            var g = Graph(Way(1, "track", 1000, 0, 500), Way(2, "primary", 2000, 0, 500, "gravel"), Way(3, "service", 1500, 0, 500, "asphalt")); // all inside the 2048 m coarse tile: ways outside the padded tile are skipped, as in roads.js
             Assert.IsTrue(g.Nearest(new Utm33(1000, 100), 10, out var track));
             Assert.AreEqual(Surface.Gravel, track.Surface, "untagged tracks are gravel");
             Assert.AreEqual(RoadProfile.One.Half, track.Half, "tracks are single-lane");
             Assert.IsTrue(g.Nearest(new Utm33(2000, 100), 10, out var primary));
             Assert.AreEqual(Surface.Gravel, primary.Surface, "surface tag wins over class");
             Assert.AreEqual(RoadProfile.Two.Half, primary.Half);
-            Assert.IsTrue(g.Nearest(new Utm33(3000, 100), 10, out var service));
+            Assert.IsTrue(g.Nearest(new Utm33(1500, 100), 10, out var service));
             Assert.AreEqual(Surface.Asphalt, service.Surface);
             Assert.AreEqual(RoadProfile.One.Half, service.Half);
             var footway = new RoadWay { Id = 9 }; footway.Tags["highway"] = "footway";

@@ -31,7 +31,7 @@ namespace Rally.Geo
 
         public int IndexOf(Utm33 p)
         {
-            int c = (int)((p.E - Bounds.MinE) / CellE), r = (int)((p.N - Bounds.MinN) / CellN);
+            int c = (int)System.Math.Floor((p.E - Bounds.MinE) / CellE), r = (int)System.Math.Floor((p.N - Bounds.MinN) / CellN);
             if (c < 0 || r < 0 || c >= Width || r >= Height) return -1;
             return r * Width + c;
         }

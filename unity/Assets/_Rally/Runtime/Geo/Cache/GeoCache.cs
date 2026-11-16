@@ -101,7 +101,9 @@ namespace Rally.Geo
 
         Task Evict()
         {
-            if (evicting != null) return evicting;
+            // With a synchronous backend EvictNow completes (and its finally runs) before the assignment
+            // below, so a finished task must not count as "in progress" (cache.js relies on .finally being async).
+            if (evicting != null && !evicting.IsCompleted) return evicting;
             evicting = EvictNow();
             return evicting;
         }

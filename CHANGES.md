@@ -24,6 +24,11 @@ _Updated 2026-11-16._
   Pages serves it under `/unity/`.
 - Seven CC BY car models under `unity/Assets/_Rally/Art/Cars/` with licence
   files; research in `unity/docs/car-models.md`.
+- First compile with Unity 6000.6.9f1: five small fixes, then the EditMode
+  suite passes 117 of 117 (ported physics, pace notes, routing, GeoTIFF,
+  cache, net, actors, gameplay, world). Found by the tests: engine damage
+  now really caps top speed and drive force, the cache evicted nothing after
+  its first pass, a west-edge land-cover lookup read the wrong cell.
 
 ### Changed — start and finish pins snap to the nearest road within 1 km
 - Picking, dragging or typing A or B on the route map asks OSRM `/nearest`

@@ -23,12 +23,13 @@ for unity online that fits the format."
 - [x] Car models: research free Unity-ready models → `unity/docs/car-models.md`.
 - [x] Docs: README, ARCHITECTURE, CHANGES, unity/README.
 
-- [ ] Integration review (cross-layer signatures, asmdef graph) + GameController + SCENE.md.
+- [x] Integration review (cross-layer signatures, asmdef graph) + GameController + SCENE.md.
 - [ ] User (2026-11-16): DTM tiles preload and render while driving — velocity-led
       ring ahead of the car (LEAD 2800 / LOAD 4400 / KEEP 5300 m as in stream.js),
       next RoadWalk sector prefetched in endless mode, terrain visible as soon as
       heights land, never a blocking frame, coarse → fine handover without a jump.
-- [ ] User: open in Unity 6000.6, fix compile errors, create the bootstrap scene, run EditMode tests.
+- [x] Compile under Unity 6000.6.9f1 (headless) and get the EditMode suite green: 117/117.
+- [ ] User: create the bootstrap scene per SCENE.md in the editor; first Play; first web build.
 
 Not possible here: Unity is not installed on this machine, so nothing in
 `unity/` has been compiled. First open in the editor will surface API

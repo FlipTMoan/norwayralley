@@ -204,8 +204,9 @@ namespace Rally.Vehicle
 
             // Torque at the wheels, minus a clutch cut while shifting.
             bool shifting = s.ShiftTimer > 0.12f;
-            float torque = EngineTorque(spec, s.Rpm) * powerInput * (shifting ? 0.15f : 1f) * (s.Grounded ? 1f : 0.35f) * (s.Limiter ? 0f : 1f) * health;
-            float driveForce = math.min((torque * ratio) / spec.WheelRadius, spec.Power / math.max(wheelSpeed, 3f)) * (reversing ? -1f : 1f);
+            float torque = EngineTorque(spec, s.Rpm) * powerInput * (shifting ? 0.15f : 1f) * (s.Grounded ? 1f : 0.35f) * (s.Limiter ? 0f : 1f);
+            // Damage: drive force × (1 − 0.6·Engine), the power limit included, so a sick engine is weak at speed too.
+            float driveForce = math.min((torque * ratio) / spec.WheelRadius, spec.Power / math.max(wheelSpeed, 3f)) * health * (reversing ? -1f : 1f);
             float engineBrake = powerInput == 0f && math.abs(s.VF) > 1f
                 ? -(Sign(s.VF) * (28f + s.Rpm * 0.012f) * math.abs(ratio) * 0.16f)
                 : 0f;
@@ -353,7 +354,7 @@ namespace Rally.Vehicle
                 // Off the road the ground takes the power: no drive past 50 km/h (car.js:1031).
                 if (!s.OnRoad && math.abs(vF) >= OffroadMaxSpeed && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
                 // Damage: a sick engine runs out of breath early.
-                float damageCap = DamageSpeedCapHealthy * (1f - 0.85f * s.Damage.Engine);
+                float damageCap = DamageSpeedCapHealthy * (1f - s.Damage.Engine);
                 if (math.abs(vF) >= damageCap && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
                 vF += driveAccel * h;
                 if (drivetrain.Brake > 0f)
