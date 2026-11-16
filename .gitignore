@@ -1,2 +1,7 @@
 node_modules/
 dist/
+
+# Downloaded archives: unpack them, commit the unpacked model files only
+unity/Assets/_Rally/Art/**/*.zip
+unity/Assets/_Rally/Art/**/*.rar
+unity/Assets/_Rally/Art/**/*.7z

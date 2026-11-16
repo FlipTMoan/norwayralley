@@ -1,0 +1,6 @@
+Low Poly 1980 Porsche 911 Turbo by 3DShinobi (Blender source; export to FBX/glTF for Unity)
+Licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Source: https://sketchfab.com/3d-models/low-poly-1980-porsche-911-turbo-a33e84dd9b3849519cb91b3a5ae0cf01
+
+Attribution line for CREDITS.md and the start screen:
+Low Poly 1980 Porsche 911 Turbo by 3DShinobi, CC BY 4.0
