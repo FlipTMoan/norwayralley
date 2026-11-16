@@ -6,9 +6,17 @@ anywhere in Norway straight from the national height model. Low-poly
 PS1-style visuals, drift-heavy arcade physics, generated rally stages, and
 real-road routing through OSRM from a map you open by clicking the minimap.
 
+## Repository layout
+
+- `legacy-js/` — the live Three.js game (this README describes it). All
+  `npm` commands below run inside that folder.
+- `unity/` — the Unity 6 / WebAssembly rewrite in progress (GPU terrain,
+  URP, WebGPU-first). See `unity/README.md` and `tasks/plan_20261116_unity.md`.
+
 ## Run it
 
 ```bash
+cd legacy-js
 npm install
 npm run dev
 ```
@@ -387,8 +395,8 @@ SR16 (a sparse default forest is used), no houses, or no signs.
 ## Deploying to GitHub Pages
 
 The site is published at <https://fliptmoan.github.io/norwayralley/> by
-`.github/workflows/pages.yml`: every push to `main` runs `npm ci && npm run build`
-and deploys `dist/`. `base` in `vite.config.js` is relative (`./`), so the
+`.github/workflows/pages.yml`: every push to `main` runs `npm ci && npm test &&
+npm run build` inside `legacy-js/` and deploys `legacy-js/dist/`. `base` in `vite.config.js` is relative (`./`), so the
 same build also runs from a PC at any path; code that fetches runtime files
 (terrain scenes) must build URLs from `import.meta.env.BASE_URL` rather than
 a leading `/`.

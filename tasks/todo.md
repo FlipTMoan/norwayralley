@@ -1,3 +1,34 @@
+# Unity + WebAssembly rewrite, phase 0 (2026-11-16)
+
+User: "Do full gpu based implementation, make sure to keep old js
+implementation in an own folder. Try to find some good carmodels readymade
+for unity online that fits the format."
+
+- [x] Move the JS game to `legacy-js/`; Pages workflow builds, tests and
+      deploys from there (site URL unchanged).
+- [x] `unity/` skeleton: Core assembly (EPSG:25833 coords, floating origin,
+      HeightGrid, IGround, seeded RNG, log), manifest, conventions.
+- [ ] Rally.Geo: source interfaces, Kartverket/Overpass/SR16/NVDB/OSRM
+      clients, IndexedDB cache bridge, circuit breakers, fakes, tests.
+- [ ] Rally.World + Rally.Roads: tile scheduler, GPU clipmap terrain,
+      compute carve (+ Burst fallback), scatter/indirect vegetation, water,
+      extruded OSM buildings, road graph, grader, ribbon, TileWorld : IGround.
+- [ ] Rally.Track + Rally.Vehicle: StageRoute, pace notes, faithful CarSim
+      port with the JS tests ported.
+- [ ] Rally.Actors: spawn rules + crossing FSM (animals, pedestrians).
+- [ ] Rally.Gameplay / UI / Presentation / Net: game flow, HUD, cameras,
+      CRT feature, PeerJS room.
+- [ ] Web template, BuildWeb editor script, unity.yml CI, Pages serves the
+      build under `/unity/`.
+- [ ] Car models: research free Unity-ready models → `unity/docs/car-models.md`.
+- [ ] Docs: README, ARCHITECTURE, CHANGES, unity/README.
+
+Not possible here: Unity is not installed on this machine, so nothing in
+`unity/` has been compiled. First open in the editor will surface API
+mismatches; see the review section when it exists.
+
+---
+
 # Plan 2026-11-13 — car physics, Porsche 911 model, map-driven world
 
 Requested (user, 2026-11-13):

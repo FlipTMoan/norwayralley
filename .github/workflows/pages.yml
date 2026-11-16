@@ -23,11 +23,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: legacy-js/package-lock.json
       - run: npm ci
+        working-directory: legacy-js
+      - run: npm test
+        working-directory: legacy-js
       - run: npm run build
+        working-directory: legacy-js
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: legacy-js/dist
 
   deploy:
     needs: build

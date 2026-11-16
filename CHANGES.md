@@ -4,6 +4,14 @@ _Updated 2026-11-16._
 
 ## 2026-11-16
 
+### Repository: JS game moved to `legacy-js/`, Unity rewrite started
+- The Three.js game (sources, tests, `public/`, Vite config, `package.json`)
+  now lives in `legacy-js/`; the Pages workflow builds from there, so the
+  live site is unchanged. The old planning documents moved with it.
+- `unity/` holds the Unity 6 / WebAssembly rewrite (URP, WebGPU-first,
+  GPU clipmap terrain, compute-shader carving, indirect-drawn vegetation).
+  Plan in `tasks/plan_20261116_unity.md`.
+
 ### Changed — start and finish pins snap to the nearest road within 1 km
 - Picking, dragging or typing A or B on the route map asks OSRM `/nearest`
   for the closest road or trail of the chosen profile within 1000 m, moves

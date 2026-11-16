@@ -2,7 +2,9 @@
 
 _Updated 2026-11-16._
 
-Retro Norway Rally is a static, browser-only Three.js game. There is no
+Retro Norway Rally is a static, browser-only Three.js game, kept in
+`legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
+(plan: `tasks/plan_20261116_unity.md`, layout: `unity/CONVENTIONS.md`). There is no
 backend: terrain, map features and road signs are fetched straight from
 public Norwegian geodata services and OpenStreetMap, then turned into
 low-poly geometry on the fly.
@@ -119,6 +121,6 @@ flowchart TD
 
 ## Build and deploy
 
-Vite with `base: '/norwayralley/'`; `npm test` runs Node tests under
-`tests/` (browser globals stubbed); GitHub Actions builds and deploys `dist/`
-to Pages on every push to `main`.
+Vite with a relative `base`; `npm test` runs Node tests under
+`legacy-js/tests/` (browser globals stubbed); GitHub Actions runs the tests,
+builds and deploys `legacy-js/dist/` to Pages on every push to `main`.
