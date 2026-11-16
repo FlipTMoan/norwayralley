@@ -28,7 +28,7 @@ jobs:
       - id: check
         env:
           LIC: ${{ secrets.UNITY_LICENSE }}
-        run: echo "ok=$([ -n \"$LIC\" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        run: if [ -n "$LIC" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; fi
 
   test:
     name: EditMode tests
