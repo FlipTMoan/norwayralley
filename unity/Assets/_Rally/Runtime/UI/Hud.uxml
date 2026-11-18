@@ -38,5 +38,21 @@
       </ui:VisualElement>
       <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain © Kartverket (CC BY 4.0) · SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · Statens vegvesen (NLOD) · geoBoundaries (CC BY 4.0)" class="credits" />
     </ui:VisualElement>
+    <ui:Button name="logButton" text="LOG" class="logButton" />
+    <ui:VisualElement name="logWindow" class="logWindow">
+      <ui:VisualElement class="logBar">
+        <ui:Label text="LOG" class="logTitle" />
+        <ui:Button name="logAll" text="ALL" class="logChip on" />
+        <ui:Button name="logTiles" text="TILES" class="logChip" />
+        <ui:Button name="logOverlays" text="OVERLAYS" class="logChip" />
+        <ui:Button name="logCache" text="CACHE" class="logChip" />
+        <ui:Button name="logWarn" text="WARN" class="logChip" />
+        <ui:VisualElement class="logSpacer" />
+        <ui:Button name="logFollow" text="FOLLOW" class="logChip on" />
+        <ui:Button name="logCopy" text="COPY" class="logChip" />
+        <ui:Button name="logClose" text="X" class="logChip" />
+      </ui:VisualElement>
+      <ui:ListView name="logList" class="logList" />
+    </ui:VisualElement>
   </ui:VisualElement>
 </ui:UXML>

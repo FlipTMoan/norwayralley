@@ -35,3 +35,20 @@
 .roomStatus { font-size: 11px; color: rgb(255, 255, 255); margin-top: 6px; }
 .hint { font-size: 9px; color: rgb(200, 200, 200); margin-top: 8px; white-space: normal; -unity-text-align: middle-center; }
 .credits { position: absolute; bottom: 10px; font-size: 8px; color: rgb(200, 200, 200); white-space: normal; -unity-text-align: middle-center; padding: 0 24px; }
+
+/* In-game log window (LogWindow.cs): F2 or the LOG button. Drawn after the start screen so it stays on top. */
+.logButton { position: absolute; top: 12px; left: 230px; font-size: 10px; padding: 4px 10px; background-color: rgba(0, 0, 0, 0.55); color: rgb(255, 196, 64); border-width: 1px; border-color: rgb(255, 196, 64); border-radius: 4px; }
+.logButton.on { background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); }
+.logWindow { position: absolute; left: 12px; top: 52px; width: 66%; max-width: 980px; height: 52%; background-color: rgba(8, 10, 14, 0.88); border-width: 1px; border-color: rgba(255, 196, 64, 0.6); border-radius: 6px; padding: 6px; }
+.logBar { flex-direction: row; align-items: center; margin-bottom: 4px; flex-shrink: 0; }
+.logTitle { font-size: 11px; color: rgb(255, 196, 64); margin-right: 10px; }
+.logSpacer { flex-grow: 1; }
+.logChip { font-size: 9px; padding: 3px 8px; margin: 0 2px; background-color: rgba(255, 255, 255, 0.08); color: rgb(220, 220, 220); border-width: 0; border-radius: 3px; }
+.logChip.on { background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); }
+.logList { flex-grow: 1; }
+.logLine { font-size: 10px; height: 15px; padding: 0 4px; color: rgb(205, 210, 215); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -unity-text-align: middle-left; }
+.logLine.tile { color: rgb(120, 200, 255); }
+.logLine.overlay { color: rgb(150, 230, 150); }
+.logLine.cache { color: rgb(170, 170, 190); }
+.logLine.warn { color: rgb(255, 196, 64); }
+.logLine.err { color: rgb(255, 90, 70); }

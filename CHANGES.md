@@ -42,6 +42,10 @@ _Updated 2026-11-16._
   GPU clipmap terrain, compute-shader carving, indirect-drawn vegetation).
   Plan in `tasks/plan_20261116_unity.md`.
 
+### Unity web build: scrolling log window
+- F2 or the LOG button opens a scrolling window (last 3000 lines, colour-coded, filters ALL / TILES / OVERLAYS / CACHE / WARN, FOLLOW, COPY). It is open while the world loads and closes at the countdown unless the player toggled it.
+- New log events with timings and sizes: tile requests and ready, DEM time, loaded/pending counts; per tile the OSM road, building, land-use, waterway and power-line counts, the SR16 forest raster, trees placed and the overlay-applied line; cache hits and misses by kind. Everything is also written to the browser console with a `[rally]` prefix.
+
 ### Unity rewrite: all layers written (not yet compiled)
 - Core (coordinates, floating origin, height grid), Geo (Kartverket,
   Overpass, SR16, NVDB, OSRM, IndexedDB cache shared with the JS game),

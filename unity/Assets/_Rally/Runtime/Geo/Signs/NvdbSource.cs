@@ -49,7 +49,7 @@ namespace Rally.Geo
             }
             catch (Exception e)
             {
-                RallyLog.Warn($"road signs unavailable: {e.Message}");
+                RallyLog.Warn($"overlay: road signs unavailable: {e.Message}");
                 return SignSet.Empty;
             }
         }

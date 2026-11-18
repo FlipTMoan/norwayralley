@@ -134,7 +134,7 @@ namespace Rally.Gameplay
                 Hud.HostClicked += HostRoom;
                 Hud.JoinClicked += JoinRoom;
             }
-            flow.PhaseChanged += p => Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading);
+            flow.PhaseChanged += p => { Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading); if (p == Phase.Countdown) Hud?.GetComponent<Rally.UI.LogWindow>()?.AutoHide(); };
             try { await Boot(); }
             catch (OperationCanceledException) { }
             catch (Exception e) { RallyLog.Error("boot failed: " + e); status = "LOAD FAILED: " + e.Message; }
@@ -227,6 +227,8 @@ namespace Rally.Gameplay
         async void OnTileNeeded(TileKey key)
         {
             var ct = cts.Token;
+            var tileWatch = System.Diagnostics.Stopwatch.StartNew();
+            RallyLog.Info($"tile: {key} requested ({key.CellM:0.#} m cells)");
             try
             {
                 var grid = await dem.Fetch(key.Bounds, key.CellM, ct);
@@ -236,6 +238,7 @@ namespace Rally.Gameplay
                     throw new Exception($"DEM {key}: {(grid == null ? "no data" : grid.N + " samples")}");
                 }
                 double latitude = Proj.ToLatLon(key.Origin).Lat;
+                long demMs = tileWatch.ElapsedMilliseconds;
                 results.Enqueue(new TileResult
                 {
                     Key = key,
@@ -245,6 +248,8 @@ namespace Rally.Gameplay
                         if (key.Kind == TileKind.Fine && HoldFineTile(key)) return false;
                         world.OnTileData(key, grid.Heights, null, null, latitude);
                         grid.Dispose();
+                        var st = world.GetStats();
+                        RallyLog.Info($"tile: {key} ground ready, DEM in {demMs} ms, shown {tileWatch.ElapsedMilliseconds} ms after the request (loaded {st.CoarseLoaded} coarse + {st.FineLoaded} fine, {st.Pending} pending)");
                         return true;
                     },
                 });
@@ -276,9 +281,17 @@ namespace Rally.Gameplay
             var featureTask = featureSource.FetchFeatures(key.Bounds, ct);
             var coverTask = landcoverSource.FetchCover(key.Bounds, ct);
             RoadGraphData roadData = null; Features features = null; CoverRaster cover = null;
-            try { roadData = await roadTask; } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"roads {key}: {e.Message}"); }
-            try { features = await featureTask; } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"features {key}: {e.Message}"); }
-            try { cover = await coverTask; } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"landcover {key}: {e.Message}"); }
+            var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
+            RallyLog.Info($"overlay: {key} asking OSM roads + features and NIBIO SR16 forest");
+            try { roadData = await roadTask; RallyLog.Info($"overlay: {key} roads {roadData?.Ways.Count ?? 0} ways after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} roads failed: {e.Message}"); }
+            try
+            {
+                features = await featureTask;
+                if (features != null) RallyLog.Info($"overlay: {key} map features: {features.Buildings.Count} buildings, {features.Areas.Count} land-use areas, {features.Waterways.Count} waterways, {features.PowerLines.Count} power lines after {overlayWatch.ElapsedMilliseconds} ms");
+                else RallyLog.Info($"overlay: {key} map features: none after {overlayWatch.ElapsedMilliseconds} ms");
+            }
+            catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} features failed: {e.Message}"); }
+            try { cover = await coverTask; RallyLog.Info(cover != null ? $"overlay: {key} SR16 forest raster {cover.Width}×{cover.Height} cells (16 m) after {overlayWatch.ElapsedMilliseconds} ms" : $"overlay: {key} SR16 forest: none after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} SR16 failed: {e.Message}"); }
             results.Enqueue(new TileResult
             {
                 Key = key,
@@ -294,11 +307,13 @@ namespace Rally.Gameplay
                         BuildRibbon(key, lines);
                     }
                     if (features != null || cover != null) world.OnTileFeatures(key, cover, features);
+                    RallyLog.Info($"overlay: {key} applied: roads {(roadData != null ? "carved + ribbon" : "missing")}, forest {(cover != null ? "tinted + trees" : "missing")}, houses and water {(features != null ? "built" : "missing")}, after {overlayWatch.ElapsedMilliseconds} ms");
                     return true;
                 },
             });
             if (roadData == null && !ct.IsCancellationRequested)
             {
+                RallyLog.Info($"overlay: {key} has no road data, asking again in {CircuitBreaker.RetryMs / 1000} s");
                 await Task.Delay(TimeSpan.FromMilliseconds(CircuitBreaker.RetryMs), ct);
                 if (world != null && world.Tiles.ContainsKey(key)) await FetchFeatures(key, ct);
             }

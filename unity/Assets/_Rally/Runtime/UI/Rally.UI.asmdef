@@ -3,7 +3,9 @@
   "rootNamespace": "Rally.UI",
   "references": [
     "Rally.Core",
-    "Unity.Mathematics"
+    "Unity.Mathematics",
+    "Rally.Geo",
+    "Unity.InputSystem"
   ],
   "autoReferenced": true
 }

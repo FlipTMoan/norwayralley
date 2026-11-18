@@ -137,6 +137,7 @@ namespace Rally.World
                     {
                         if (r.hasError || bySlot[slot] != tile) return;
                         index.AddTile(key, origin, r.GetData<TreeInstance>(), n, set);
+                        Rally.Core.RallyLog.Info($"overlay: {key} {n} trees placed (GPU scatter)");
                     });
                 });
             }
@@ -153,6 +154,7 @@ namespace Rally.World
                 job.Run();
                 cpuCounts[slot] = jobCount[0];
                 index.AddTile(tile.Key, tile.Key.Origin, cpuInstances.GetSubArray(slot * Capacity, Capacity), jobCount[0], set);
+                Rally.Core.RallyLog.Info($"overlay: {tile.Key} {jobCount[0]} trees placed (CPU scatter)");
             }
         }
 

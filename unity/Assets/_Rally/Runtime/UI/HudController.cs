@@ -30,6 +30,7 @@ namespace Rally.UI
             penalty = root.Q<Label>("penalty"); noteKind = root.Q<Label>("noteKind"); noteDist = root.Q<Label>("noteDist");
             surface = root.Q<Label>("surface"); status = root.Q<Label>("status"); distLeft = root.Q<Label>("distLeft");
             rpmBar = root.Q("rpmBar"); arrow = root.Q("arrow"); damageBar = root.Q("damageBar"); turnBox = root.Q("turnBox");
+            if (!TryGetComponent<LogWindow>(out _)) gameObject.AddComponent<LogWindow>();   // the log window ships with the HUD, no scene edit needed
             startScreen = root.Q("startScreen"); friends = root.Q("friends");
             startInfo = root.Q<Label>("startInfo"); roomStatus = root.Q<Label>("roomStatus"); roomCode = root.Q<TextField>("roomCode");
             root.Q<Button>("startButton")?.RegisterCallback<ClickEvent>(_ => StartClicked?.Invoke());

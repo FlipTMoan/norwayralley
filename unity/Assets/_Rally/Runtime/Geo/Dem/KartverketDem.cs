@@ -41,7 +41,7 @@ namespace Rally.Geo
             int width = Math.Max(2, (int)Math.Round((env.MaxLon - env.MinLon) * mPerLon / cellM));
             int height = Math.Max(2, (int)Math.Round((env.MaxLat - env.MinLat) * mPerLat / cellM));
             var url = CoverageUrl(env, width, height);
-            RallyLog.Info($"DEM request {width}×{height}: {url}");
+            RallyLog.Info($"tile: DEM request {width}×{height} from Kartverket WCS");
 
             var bytes = await cache.Fetch(url, async () =>
             {

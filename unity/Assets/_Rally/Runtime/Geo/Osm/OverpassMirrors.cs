@@ -101,7 +101,7 @@ namespace Rally.Geo
                     {
                         string winner = racers[i];
                         cts.Cancel(); // a loser cancelled by the winner is not "down"
-                        if (Preferred != winner) RallyLog.Info($"overpass: using {winner}");
+                        if (Preferred != winner) RallyLog.Info($"overlay: overpass answered first from {winner}");
                         Preferred = winner;
                         Breaker.Reset();
                         return done.Result;
@@ -113,7 +113,7 @@ namespace Rally.Geo
                 }
             }
 
-            RallyLog.Warn($"map features unavailable: {lastError?.Message ?? "no endpoint answered"} — retrying in {CircuitBreaker.OpenMs / 1000} s");
+            RallyLog.Warn($"overlay: map features unavailable: {lastError?.Message ?? "no endpoint answered"} — retrying in {CircuitBreaker.OpenMs / 1000} s");
             Breaker.Trip();
             return null;
         }
@@ -122,7 +122,7 @@ namespace Rally.Geo
         {
             downUntil[endpoint] = now() + PenaltyMs;
             if (Preferred == endpoint) Preferred = null;
-            RallyLog.Info($"overpass mirror failed ({endpoint}): {error?.Message}");
+            RallyLog.Info($"overlay: overpass mirror failed ({endpoint}): {error?.Message}");
         }
 
         public void Reset() { Preferred = null; downUntil.Clear(); Breaker.Reset(); }

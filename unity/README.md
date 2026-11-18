@@ -156,3 +156,11 @@ unity/
   Assets/WebGLTemplates/Rally/        index.html: loader, canvas, Leaflet route map overlay, PeerJS, attribution footer
   ProjectSettings/TagManager.asset    layers 8 Buildings, 9 Trees, 10 Props, 11 Water, 12 Actors, 13 Car; tags Car, Actor
 ```
+
+
+## Log window
+
+Press **F2** (or the LOG button next to the clock) in the game to open the scrolling log: tile requests and
+readiness, OSM road/feature counts, SR16 forest rasters, trees placed and cache hits and misses, with filter chips,
+FOLLOW (stick to the newest line) and COPY (visible lines to the clipboard). The same lines go to the browser
+console with a `[rally]` prefix. Source: `Runtime/UI/LogWindow.cs`, `Runtime/Core/RallyLog.cs`.

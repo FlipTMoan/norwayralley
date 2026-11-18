@@ -67,10 +67,13 @@ namespace Rally.Geo
             {
                 double t = now();
                 if (t - hit.At > TouchEveryMs) { hit.At = t; _ = Touch(hit); }
+                RallyLog.Info($"cache: hit {kind} {hit.Value.Length / 1024} KB");
                 return hit.Value;
             }
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             var value = await loader();
-            if (value == null) return null;
+            if (value == null) { RallyLog.Info($"cache: miss {kind}, the network gave nothing after {watch.ElapsedMilliseconds} ms"); return null; }
+            RallyLog.Info($"cache: miss {kind}, fetched {value.Length / 1024} KB in {watch.ElapsedMilliseconds} ms");
             long size = SizeOf(value, isText);
             try
             {
