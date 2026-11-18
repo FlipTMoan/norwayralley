@@ -1918,7 +1918,7 @@ const mapPicker = createMapPicker({
   },
 });
 
-/** "Local cache: 1.2 GB of 10 GB · 843 entries" on the start screen. */
+/** "Local cache: 1.2 GB of 32 GB · 843 entries" on the start screen (the budget follows the browser quota). */
 async function refreshCacheInfo() {
   const el = $('cacheInfo');
   if (!el) return;
@@ -1932,6 +1932,7 @@ async function refreshCacheInfo() {
 }
 requestPersistence();
 refreshCacheInfo();
+cache.refreshBudget().then(refreshCacheInfo);   // 32 GB at most, 10 % of the quota kept free
 window.addEventListener('focus', refreshCacheInfo);
 $('cacheClear').addEventListener('click', async () => {
   await cache.clear();

@@ -246,7 +246,9 @@ builder still works only inside the loaded world.
   back out of the wall with a thud and loses most of its speed.
 - **Local cache**: every elevation tile, Overpass answer, NVDB sign and
   surface record, SR16 forest image, OSRM route and map tile is kept in the
-  browser's IndexedDB, up to 10 GB with least-recently-used eviction, so a
+  browser's IndexedDB, up to 32 GB (but never more than 90 % of the storage
+  quota the browser grants the site; Chrome often grants about 10 GB until the
+  site is granted persistent storage) with least-recently-used eviction, so a
   place you have driven loads from disk and still works when a service is
   down. The start screen shows the size and has a CLEAR button.
 - **Carved roads**: the route is stamped into the shared height field before

@@ -43,3 +43,23 @@ test('failures are not cached and sizes are measured per type', async () => {
   assert.equal(sizeOf({ a: 1 }), 14);
   assert.equal(sizeOf(null), 0);
 });
+
+test('the budget is 32 GB at most and keeps 10 % of the browser quota free', async () => {
+  const { budgetFor, MAX_BUDGET } = await import('../src/cache.js');
+  const GB = 1024 ** 3;
+  assert.equal(budgetFor(null, 0), MAX_BUDGET, 'unknown room keeps the cap');
+  assert.equal(budgetFor({ quota: 600 * GB, usage: GB }, GB), MAX_BUDGET, 'a big quota is capped at 32 GB');
+  assert.equal(budgetFor({ quota: 20 * GB, usage: 3 * GB }, 2 * GB), 17 * GB, '18 GB usable minus 1 GB of other data');
+  assert.equal(budgetFor({ quota: 5 * GB, usage: 6 * GB }, GB), 0, 'other data alone exceeds 90 %: nothing may be cached');
+});
+
+test('refreshBudget evicts when the quota shrank', async () => {
+  let quota = 10000;
+  const backend = memoryBackend();
+  const c = createCache(backend, { estimate: async () => ({ quota, usage: 4000 }) });
+  for (let i = 0; i < 4; i++) await c.fetch(`k${i}`, async () => new Uint8Array(1000).buffer, { kind: 'dem' });
+  assert.equal(await c.refreshBudget(), 9000, '90 % of 10 000, all data is ours');
+  quota = 3500;
+  assert.equal(await c.refreshBudget(), 3150);
+  assert.equal((await backend.listByAge()).length, 3, 'the oldest entry went to stay under 90 % of the quota');
+});

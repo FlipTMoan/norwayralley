@@ -2,8 +2,8 @@
  * Local cache of everything the game fetches from the geodata services:
  * Kartverket DEM tiles, Overpass answers, NVDB signs and surfaces, SR16
  * forest images, OSRM routes and the map's OSM tiles. Entries live in
- * IndexedDB (ArrayBuffer, Blob or JSON) with a byte budget — 10 GB by
- * default — and the least recently used entries are evicted first. A hit
+ * IndexedDB (ArrayBuffer, Blob or JSON) with a byte budget — at most 32 GB, keeping
+ * 10 % of the browser quota free — and the least recently used entries are evicted first. A hit
  * never touches the network, which is both the speed-up and the resilience:
  * a place driven once keeps working when a service is down.
  *
@@ -14,7 +14,32 @@ import { logger } from './log.js';
 
 const log = logger('cache');
 
-export const DEFAULT_BUDGET = 10 * 1024 ** 3;   // 10 GB
+export const MAX_BUDGET = 32 * 1024 ** 3;       // 32 GB at most (user, 2026-11-18)
+export const DEFAULT_BUDGET = MAX_BUDGET;
+export const KEEP_FREE = 0.10;                    // share of the browser quota never used by the cache
+const RECHECK_MS = 5 * 60 * 1000;                 // measure the room again this often…
+const RECHECK_BYTES = 256 * 1024 ** 2;            // …and after this much was written
+
+/**
+ * The budget for the room the browser reports (navigator.storage.estimate): at most 32 GB, and 10 % of the
+ * origin's quota stays unused, with the origin's other data counting against it. A web page cannot see the
+ * disk itself; Chrome derives the quota from the disk size and free space, so this is the closest a page can
+ * get to "leave 10 % of the disk free". Unknown figures do not limit. Same rule as GeoCache.BudgetFor in Unity.
+ */
+export function budgetFor(estimate, ours) {
+  let b = MAX_BUDGET;
+  if (estimate && estimate.quota > 0 && estimate.usage >= 0) {
+    b = Math.min(b, Math.max(0, Math.floor((1 - KEEP_FREE) * estimate.quota) - Math.max(0, estimate.usage - ours)));
+  }
+  return b;
+}
+
+async function browserEstimate() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.estimate) return await navigator.storage.estimate();
+  } catch { /* unsupported */ }
+  return null;
+}
 const DB_NAME = 'rally-cache';
 const STORE = 'entries';
 const TOUCH_EVERY = 60000;                     // ms between LRU timestamp updates of one entry
@@ -101,10 +126,13 @@ export function memoryBackend() {
 /* ------------------------------------------------------------------ *
  *  The cache                                                           *
  * ------------------------------------------------------------------ */
-export function createCache(backend, { budget = DEFAULT_BUDGET, now = Date.now } = {}) {
+export function createCache(backend, { budget = DEFAULT_BUDGET, now = Date.now, estimate = null } = {}) {
   let bytes = null;          // running total, counted on first use
   let evicting = null;
   let disabled = false;
+  let lastRoomCheck = -Infinity;
+  let writtenSinceCheck = 0;
+  let checkingRoom = null;
   const pending = new Map(); // key → in-flight promise, so parallel asks share one load
 
   async function total() {
@@ -132,9 +160,35 @@ export function createCache(backend, { budget = DEFAULT_BUDGET, now = Date.now }
     return evicting;
   }
 
+  /** Measure the room (estimate()) and set the budget from it; evicts when the room shrank. */
+  async function refreshBudget() {
+    if (!estimate || disabled) return budget;
+    if (checkingRoom) return checkingRoom;
+    checkingRoom = (async () => {
+      lastRoomCheck = now();
+      writtenSinceCheck = 0;
+      try {
+        const e = await estimate();
+        const ours = await total();
+        const next = budgetFor(e, ours);
+        if (next !== budget) {
+          const why = e?.quota > 0 ? `browser quota ${(e.quota / 1024 ** 3).toFixed(1)} GB, ${(e.usage / 1024 ** 3).toFixed(2)} GB used, 10 % kept free` : 'quota unknown';
+          log.info(`budget ${(next / 1024 ** 3).toFixed(1)} GB (${why}; at most 32 GB)`);
+        }
+        budget = next;
+        if (ours > budget) await evict();
+      } catch (error) {
+        log.debug(`could not measure the storage room: ${error.message}`);
+      }
+      return budget;
+    })().finally(() => { checkingRoom = null; });
+    return checkingRoom;
+  }
+
   const cache = {
     get budget() { return budget; },
     setBudget(b) { budget = Math.max(0, b); return evict(); },
+    refreshBudget,
 
     /** The cached value for `key`, or `loader()`'s result after storing it. */
     async fetch(key, loader, { kind = 'data' } = {}) {
@@ -159,7 +213,10 @@ export function createCache(backend, { budget = DEFAULT_BUDGET, now = Date.now }
         try {
           await backend.put({ key, kind, value, size, at: now() });
           bytes = (await total()) + size;
-          if (bytes > budget) evict();
+          writtenSinceCheck += size;
+          // Other data fills the disk too: measure again every few minutes and every 256 MB written.
+          if (estimate && (writtenSinceCheck >= RECHECK_BYTES || now() - lastRoomCheck >= RECHECK_MS)) await refreshBudget();
+          else if (bytes > budget) evict();
         } catch (error) {
           log.debug(`cache write skipped for ${kind}: ${error.message}`);
         }
@@ -187,7 +244,7 @@ export function createCache(backend, { budget = DEFAULT_BUDGET, now = Date.now }
 
 /* The game's cache: IndexedDB when the browser has it, memory otherwise. */
 const hasIdb = typeof indexedDB !== 'undefined';
-export const cache = createCache(hasIdb ? indexedDbBackend() : memoryBackend());
+export const cache = createCache(hasIdb ? indexedDbBackend() : memoryBackend(), { estimate: browserEstimate });
 
 /** Ask the browser to keep the store across storage pressure (best effort). */
 export async function requestPersistence() {
