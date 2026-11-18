@@ -27,7 +27,7 @@ namespace Rally.Geo
 
         /// <summary>location.search without the '?' (empty outside the browser).</summary>
         public static string UrlParams() => RallyUrlParams() ?? "";
-        public static void UrlReplace(string query) => RallyUrlReplace(query ?? "");
+        public static void UrlReplace(string query) => RallyUrlReplace((query ?? "").TrimStart('?'));   // the jslib adds the "?" itself
         public static string LocalGet(string key) => RallyLocalGet(key);
         public static void LocalSet(string key, string value) => RallyLocalSet(key, value ?? "");
         public static void ClipboardWrite(string text) => RallyClipboardWrite(text ?? "");

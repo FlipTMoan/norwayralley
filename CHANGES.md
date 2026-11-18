@@ -42,6 +42,13 @@ _Updated 2026-11-16._
   GPU clipmap terrain, compute-shader carving, indirect-drawn vegetation).
   Plan in `tasks/plan_20261116_unity.md`.
 
+### Unity web build: the controls of the JS game
+- Keys: G gearbox, Q/E switch to manual, R restart, N scout a new endless stage, C camera cycle, M mute (saved), Esc closes the map or returns to the start screen, F10/F3 debug window (position, altitude, heading, speed, gear, surface, water, damage, fps, tiles); three taps on the speed open it on a phone.
+- Start screen: GEARBOX and SLIDING toggles (saved in the browser), PICK A ROUTE ON THE MAP, local cache size with CLEAR, the key list; a help line under the HUD on desktops.
+- The Leaflet route map is wired: pins snap within 1 km, GENERATE ROUTE and FREE DRIVE HERE load the stage, the address bar follows, a friends room follows the new stage.
+- Touch buttons (◀ ▶ BRAKE GAS DRIFT) on phones and narrow screens.
+- Play-mode test presses the keys on a virtual keyboard; all three Play-mode tests and 119 EditMode tests pass.
+
 ### Unity web build: scrolling log window
 - F2 or the LOG button opens a scrolling window (last 3000 lines, colour-coded, filters ALL / TILES / OVERLAYS / CACHE / WARN, FOLLOW, COPY). It is open while the world loads and closes at the countdown unless the player toggled it.
 - New log events with timings and sizes: tile requests and ready, DEM time, loaded/pending counts; per tile the OSM road, building, land-use, waterway and power-line counts, the SR16 forest raster, trees placed and the overlay-applied line; cache hits and misses by kind. Everything is also written to the browser console with a `[rally]` prefix.

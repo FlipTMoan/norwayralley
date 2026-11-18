@@ -133,7 +133,15 @@ namespace Rally.Gameplay
                 Hud.StartClicked += StartEngine;
                 Hud.HostClicked += HostRoom;
                 Hud.JoinClicked += JoinRoom;
+                Hud.GearboxClicked += ToggleGearbox;
+                Hud.SlideClicked += CycleSliding;
+                Hud.MapClicked += OpenMap;
+                Hud.CacheClearClicked += ClearCache;
+                Hud.DebugTapped += () => Hud.DebugVisible = !Hud.DebugVisible;
             }
+            LoadSettings();
+            var mapGo = new GameObject("Map");                     // the name the template's SendMessage targets
+            mapGo.AddComponent<MapEvents>().Handler = OnMapEvent;
             flow.PhaseChanged += p => { Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading); if (p == Phase.Countdown) Hud?.GetComponent<Rally.UI.LogWindow>()?.AutoHide(); };
             try { await Boot(); }
             catch (OperationCanceledException) { }
@@ -506,6 +514,9 @@ namespace Rally.Gameplay
             car.ActorLayers = 1 << RallyLayers.Actors;
             car.Ground = world;
             car.Frozen = true;
+            car.AutoShift = autoShift;
+            car.GripMode = (SlideMode)sliding;
+            car.GearboxChanged += auto => { autoShift = auto; SaveSettings(); Hud?.SetGearbox(auto); Say("GEARBOX: MANUAL — Q/E to shift, G for automatic", 3f); };
             car.SetRoute(route);
             car.OnWaterEnter += p => world.Wake?.Add(new float2(p.x, p.z), 1f);
         }
@@ -596,6 +607,9 @@ namespace Rally.Gameplay
 
         void Update()
         {
+            HandleKeys();
+            if (Hud != null && Hud.DebugVisible && Time.unscaledTime >= nextDebug) { nextDebug = Time.unscaledTime + 0.25f; Hud.SetDebug(DebugText()); }
+            fps = math.lerp(fps, 1f / math.max(1e-4f, Time.unscaledDeltaTime), 0.05f);
             if (world == null) return;
             float dt = Time.deltaTime;
             ApplyOneTileResult();
@@ -694,6 +708,227 @@ namespace Rally.Gameplay
             if (car != null && car.State.WrongWay) return "WRONG WAY";
             if (Time.time < transientUntil) return transient;
             return statsText;
+        }
+
+        #endregion
+
+        #region Controls (main.js:1467 keys, start-screen options, route map, debug window)
+
+        // Saved per browser like the JS (localStorage): gearbox, sliding level, mute.
+        bool autoShift = true, muted, mapOpen;
+        int sliding;
+        float fps = 60f, nextDebug;
+
+        void LoadSettings()
+        {
+            autoShift = BrowserDom.LocalGet("rally.gearbox") != "manual";
+            int.TryParse(BrowserDom.LocalGet("rally.sliding") ?? "0", out sliding);
+            sliding = math.clamp(sliding, 0, GripMode.SlideLevels.Length - 1);
+            muted = BrowserDom.LocalGet("rally.muted") == "1";
+            AudioListener.volume = muted ? 0f : 1f;
+            Hud?.SetGearbox(autoShift);
+            Hud?.SetSliding(sliding, GripMode.SlideLevels[sliding]);
+        }
+
+        void SaveSettings()
+        {
+            BrowserDom.LocalSet("rally.gearbox", autoShift ? "auto" : "manual");
+            BrowserDom.LocalSet("rally.sliding", sliding.ToString());
+            BrowserDom.LocalSet("rally.muted", muted ? "1" : "0");
+        }
+
+        /// <summary>
+        /// The keys of the JS game that are not driving (CarController reads those): G gearbox, R restart, N new stage,
+        /// M mute, Esc map/menu, F10/F3 debug window. Ignored while the room-code field has the keyboard.
+        /// </summary>
+        void HandleKeys()
+        {
+            var kb = Keyboard.current;
+            if (kb == null || (Hud != null && Hud.IsTyping)) return;
+            if (kb.gKey.wasPressedThisFrame) ToggleGearbox();
+            if (kb.mKey.wasPressedThisFrame) ToggleMute();
+            if (kb.f10Key.wasPressedThisFrame || kb.f3Key.wasPressedThisFrame) { if (Hud != null) Hud.DebugVisible = !Hud.DebugVisible; }
+            if (kb.escapeKey.wasPressedThisFrame)
+            {
+                if (mapOpen) CloseMap();
+                else if (car != null && flow.Phase != Phase.Loading && flow.Phase != Phase.Intro) ToMenu();
+            }
+            if (car == null || flow.Phase == Phase.Loading) return;
+            if (kb.rKey.wasPressedThisFrame) { Restart(); Say("RESTART", 1.5f); }
+            if (kb.nKey.wasPressedThisFrame && flow.Phase != Phase.Intro) ScoutNewStage();
+        }
+
+        void ToggleGearbox()
+        {
+            autoShift = !autoShift;
+            if (car != null) car.AutoShift = autoShift;
+            SaveSettings();
+            Hud?.SetGearbox(autoShift);
+            Say(autoShift ? "GEARBOX: AUTOMATIC" : "GEARBOX: MANUAL — Q/E to shift", 2.5f);
+        }
+
+        void CycleSliding()
+        {
+            sliding = (sliding + 1) % GripMode.SlideLevels.Length;
+            if (car != null) car.GripMode = (SlideMode)sliding;
+            SaveSettings();
+            Hud?.SetSliding(sliding, GripMode.SlideLevels[sliding]);
+        }
+
+        void ToggleMute()
+        {
+            muted = !muted;
+            AudioListener.volume = muted ? 0f : 1f;
+            SaveSettings();
+            Say(muted ? "SOUND OFF (M)" : "SOUND ON", 1.5f);
+        }
+
+        /// <summary>main.js returnToMenu: the car back on the start line, the start screen up, the clock reset.</summary>
+        void ToMenu()
+        {
+            car.Repair();
+            car.SetRoute(route);
+            actors?.Clear();
+            flow.ToMenu();
+        }
+
+        /// <summary>main.js scoutNewStage: a fresh endless stage from where the car is, with a new seed.</summary>
+        void ScoutNewStage()
+        {
+            var here = Proj.ToLatLon(FloatingOrigin.ToUtm(car.State.Pos));
+            ulong seed = (ulong)DateTime.UtcNow.Ticks * 0x9E3779B97F4A7C15UL;
+            Say("SCOUTING A NEW STAGE…", 3f);
+            _ = LoadStage(ShareLinks.Endless(seed, here));
+        }
+
+        /// <summary>Load a stage the player picked here (map, scout): address bar updated so the link can be shared, the room follows.</summary>
+        async Task LoadStage(string query)
+        {
+            BrowserDom.UrlReplace(query);
+            try
+            {
+                await LoadFromQuery(query);
+                if (session != null && !session.Closed) session.SendRoute(RoomRoute());
+            }
+            catch (Exception e) { RallyLog.Error("stage load failed: " + e); Say("Could not load that stage: " + e.Message, 6f); }
+        }
+
+        /// <summary>The route map (web template, Leaflet): opens on the current start/finish with the stage line drawn.</summary>
+        void OpenMap()
+        {
+            if (Application.platform != RuntimePlatform.WebGLPlayer) { Say("The route map needs the web build", 3f); RallyLog.Info("map: the Leaflet route map only exists in the web build"); return; }
+            mapOpen = true;
+            var o = new Dictionary<string, object>();
+            var start = car != null ? Proj.ToLatLon(FloatingOrigin.ToUtm(car.State.Pos)) : link.A;
+            o["start"] = new Dictionary<string, object> { { "lat", start.Lat }, { "lon", start.Lon } };
+            if (link.Kind == ShareLinks.Kind.Osrm) o["finish"] = new Dictionary<string, object> { { "lat", link.B.Lat }, { "lon", link.B.Lon } };
+            BrowserDom.MapOpen(Json.Stringify(o));
+            if (stage != null)
+            {
+                var pts = new List<object>();
+                for (int i = 0; i < stage.Samples.Length; i += 8)
+                {
+                    var ll = Proj.ToLatLon(new Utm33(stage.Samples[i].E, stage.Samples[i].N));
+                    pts.Add(new List<object> { Math.Round(ll.Lat, 5), Math.Round(ll.Lon, 5) });
+                }
+                BrowserDom.MapSetRoute(Json.Stringify(pts));
+            }
+        }
+
+        void CloseMap() { mapOpen = false; BrowserDom.MapClose(); }
+
+        /// <summary>Route map events: pins snap to the profile's nearest road within 1 km (stage.js snapToRoad), GENERATE and FREE DRIVE load the stage.</summary>
+        async void OnMapEvent(string json)
+        {
+            var e = Json.ParseObject(json);
+            if (e == null) return;
+            string profileName = e.Str("profile") ?? "driving";
+            try
+            {
+                switch (e.Str("ev"))
+                {
+                    case "pick":
+                    {
+                        int which = (int)e.Num("which", 0);
+                        var p = new LatLon(e.Num("lat"), e.Num("lon"));
+                        string label = which == 0 ? "Start" : "Finish";
+                        if (profileName == "offroad") { BrowserDom.MapStatus($"{label} set where you picked."); break; }
+                        var snap = await router.Nearest(p, Profile(profileName), 1000, cts.Token);
+                        if (snap == null) { BrowserDom.MapStatus($"{label}: no {profileName} road within 1 km. Move the pin nearer a mapped road or trail."); break; }
+                        var sp = snap.Value;
+                        BrowserDom.MapSetPin(which, sp.Point.Lat, sp.Point.Lon);
+                        string road = string.IsNullOrEmpty(sp.Name) ? "the road" : sp.Name;
+                        BrowserDom.MapStatus($"{label} snapped {sp.DistanceM:0} m onto {road}." + (which == 0 ? " Now click the FINISH, or FREE DRIVE HERE." : " GENERATE ROUTE when ready."));
+                        RallyLog.Info($"map: {label} snapped {sp.DistanceM:0} m onto {road}");
+                        break;
+                    }
+                    case "generate":
+                    {
+                        var a = e.Obj("start"); var b = e.Obj("finish");
+                        if (a == null || b == null) break;
+                        if (profileName == "offroad") { BrowserDom.MapStatus("Off-road routing is not in the Unity build yet: pick driving, cycling or foot."); break; }
+                        CloseMap();
+                        await LoadStage(ShareLinks.Osrm(new LatLon(a.Num("lat"), a.Num("lon")), new LatLon(b.Num("lat"), b.Num("lon")), profileName));
+                        break;
+                    }
+                    case "free":
+                    {
+                        var a = e.Obj("start");
+                        if (a == null) break;
+                        CloseMap();
+                        await LoadStage(ShareLinks.Drive(new LatLon(a.Num("lat"), a.Num("lon"))));
+                        break;
+                    }
+                    case "close": mapOpen = false; break;
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { BrowserDom.MapStatus("Routing failed: " + ex.Message); RallyLog.Warn("map: " + ex.Message); }
+        }
+
+        static RouteProfile Profile(string name) => name == "cycling" ? RouteProfile.Cycling : name == "foot" ? RouteProfile.Foot : RouteProfile.Driving;
+
+        async void ClearCache()
+        {
+            if (cache == null) return;
+            await cache.Clear();
+            RallyLog.Info("cache: cleared by the player");
+            await RefreshCacheInfo();
+        }
+
+        async Task RefreshCacheInfo()
+        {
+            if (cache == null || Hud == null) return;
+            try
+            {
+                var st = await cache.Stats();
+                Hud.SetCacheInfo($"Local cache: {st.Entries} items, {st.Bytes / 1048576.0:0.0} MB of {st.Budget / 1073741824.0:0} GB");
+            }
+            catch (Exception e) { Hud.SetCacheInfo("Local cache: " + e.Message); }
+        }
+
+        /// <summary>main.js debug window: where the car is, what it stands on, frame rate and streaming.</summary>
+        string DebugText()
+        {
+            var sb = new System.Text.StringBuilder(512);
+            sb.Append($"RETRO NORWAY RALLY · debug (F10 / F3)\nfps {fps:0}   phase {flow.Phase}\n");
+            if (car != null)
+            {
+                ref var s = ref car.State;
+                var ll = Proj.ToLatLon(FloatingOrigin.ToUtm(s.Pos));
+                float heading = (math.degrees(s.Yaw) % 360f + 360f) % 360f;
+                sb.Append($"lat {ll.Lat:0.00000}  lon {ll.Lon:0.00000}\naltitude {s.Pos.y:0.0} m   heading {heading:0}°\n");
+                sb.Append($"speed {s.SpeedKmh:0} km/h   gear {s.Gear} ({(car.AutoShift ? "auto" : "manual")})   rpm {s.Rpm:0}\n");
+                sb.Append($"sliding {GripMode.SlideLevels[sliding]}   surface {(s.OnRoad ? (s.SurfaceKind == Surface.Asphalt ? "asphalt road" : "gravel road") : "off road")}\n");
+                sb.Append($"water {s.WaterDepth:0.00} m   airborne {(s.Grounded ? "no" : "yes")}   damage {car.Damage * 100f:0}%\n");
+            }
+            if (world != null)
+            {
+                var st = world.GetStats();
+                sb.Append($"tiles {st.CoarseLoaded} coarse + {st.FineLoaded} fine, {st.Pending} pending, {st.Bytes / 1048576} MB heights\n");
+            }
+            sb.Append($"sound {(muted ? "off" : "on")}   stage {link.Kind}");
+            return sb.ToString();
         }
 
         #endregion
@@ -814,6 +1049,7 @@ namespace Rally.Gameplay
             BrowserDom.LoaderHide();
             status = "";
             flow.WorldReady();
+            _ = RefreshCacheInfo();
             if (session != null) car.Frozen = flow.Phase != Phase.Racing;   // a reload mid-room: the phase did not change, so OnPhase did not run
         }
 

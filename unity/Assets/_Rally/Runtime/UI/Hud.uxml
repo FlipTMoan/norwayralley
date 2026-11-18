@@ -26,6 +26,12 @@
       <ui:Label text="RETRO NORWAY RALLY" class="title" />
       <ui:Label name="startInfo" text="" class="startInfo" />
       <ui:Button name="startButton" text="START ENGINE" class="bigButton" />
+      <ui:VisualElement class="row startOptions">
+        <ui:Button name="gearboxBtn" text="GEARBOX: AUTOMATIC" class="toggleButton" />
+        <ui:Button name="slideBtn" text="SLIDING: 0 MINIMAL" class="toggleButton" />
+        <ui:Button name="mapBtn" text="PICK A ROUTE ON THE MAP" class="toggleButton" />
+      </ui:VisualElement>
+      <ui:Label text="WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 or C camera · M mute · F10 debug · F2 log" class="startControls" />
       <ui:VisualElement name="friends" class="friends">
         <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
         <ui:Button name="hostButton" text="HOST A ROOM" class="smallButton" />
@@ -36,8 +42,26 @@
         <ui:Label name="roomStatus" text="" class="roomStatus" />
         <ui:Label text="Phones cannot link over Bluetooth from a web page; rooms go through the internet (4-letter code)." class="hint" />
       </ui:VisualElement>
+      <ui:VisualElement class="row cacheRow">
+        <ui:Label name="cacheInfo" text="Local cache: …" class="cacheInfo" />
+        <ui:Button name="cacheClear" text="CLEAR" class="smallButton" />
+      </ui:VisualElement>
       <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain © Kartverket (CC BY 4.0) · SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · Statens vegvesen (NLOD) · geoBoundaries (CC BY 4.0)" class="credits" />
     </ui:VisualElement>
+    <ui:Label name="debugPanel" text="" class="debugPanel" />
+    <ui:Label name="helpLine" text="WASD drive · SPACE jump · SHIFT drift · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 C camera · F10 debug · F2 log · M mute" class="helpLine" />
+    <ui:VisualElement name="touchControls" class="touchControls">
+      <ui:VisualElement class="touchSide">
+        <ui:Button name="touchLeft" text="◀" class="touchButton" />
+        <ui:Button name="touchRight" text="▶" class="touchButton" />
+      </ui:VisualElement>
+      <ui:VisualElement class="touchSide">
+        <ui:Button name="touchBrake" text="BRAKE" class="touchButton" />
+        <ui:Button name="touchThrottle" text="GAS" class="touchButton" />
+        <ui:Button name="touchDrift" text="DRIFT" class="touchButton" />
+      </ui:VisualElement>
+    </ui:VisualElement>
+    <ui:Button name="mapButton" text="MAP" class="logButton mapButton" />
     <ui:Button name="logButton" text="LOG" class="logButton" />
     <ui:VisualElement name="logWindow" class="logWindow">
       <ui:VisualElement class="logBar">

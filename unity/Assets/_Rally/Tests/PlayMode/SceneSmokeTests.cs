@@ -37,6 +37,7 @@ namespace Rally.Tests.Play
 
         IEnumerator DriveScene()
         {
+            using var watch = new LogWatch();
             SceneManager.LoadScene(ScenePath);
             yield return null;
             var game = Object.FindAnyObjectByType<GameController>();
@@ -63,7 +64,7 @@ namespace Rally.Tests.Play
             float moved = Vector3.Dot(car.transform.position - start, forward);
             Assert.Greater(moved, 5f, $"the car moved {moved:F1} m forward in 5 s at full throttle (speed {car.SpeedKmh:F0} km/h)");
             Assert.IsFalse(car.Wrecked);
-            LogAssert.NoUnexpectedReceived();
+            Assert.IsEmpty(watch.Problems, watch.Summary);
         }
     }
 }

@@ -37,6 +37,8 @@ namespace Rally.Vehicle
         public CarKind Kind = CarKind.Porsche;
         public SlideMode GripMode = SlideMode.Minimal;
         public bool AutoShift = true;
+        /// <summary>Raised when Q/E switched the box to manual (false) so the HUD can say so; G toggles via GameController.</summary>
+        public event Action<bool> GearboxChanged;
         [Tooltip("Countdown / finished: the car sits still (main.js frozen input).")]
         public bool Frozen;
         [Tooltip("Seed of the gravel wander dice, so replays agree.")]
@@ -150,11 +152,11 @@ namespace Rally.Vehicle
         {
             if (Ground == null) return;
             float dt = math.min(0.05f, math.max(0.0001f, Time.deltaTime)); // main.js:2137
+            state.AutoShift = AutoShift;
             var input = Driver != null ? Driver.Drive(state, Route) : ReadInput();
             input.GripMode = Driver != null ? Driver.GripMode : GripMode;
             input.Frozen = Frozen;
             lastInput = input;
-            state.AutoShift = AutoShift;
             int gearBefore = state.Gear;
             CarSim.Step(ref state, Spec, input, Ground, Route, ReadOnlySpan<WallBox>.Empty, dt);
             ResolveCollisions();
@@ -192,6 +194,13 @@ namespace Rally.Vehicle
                 input.ShiftUp |= gp.rightShoulder.wasPressedThisFrame;
                 input.ShiftDown |= gp.leftShoulder.wasPressedThisFrame;
             }
+            if (TouchInput.Throttle) input.Throttle = 1f;
+            if (TouchInput.Brake) input.Brake = 1f;
+            if (TouchInput.Left) input.Steer -= 1f;
+            if (TouchInput.Right) input.Steer += 1f;
+            input.Handbrake |= TouchInput.Handbrake;
+            // main.js:1497/1504: a gear key switches an automatic box to manual, so Q/E always does what it says.
+            if ((input.ShiftUp || input.ShiftDown) && AutoShift) { AutoShift = false; state.AutoShift = false; GearboxChanged?.Invoke(false); }
             // In the Unity frame +x is the car's right, so no negation of the keys (main.js:1575 needed one).
             input.Steer = math.clamp(input.Steer, -1f, 1f);
             input.Jump = jumpHeld && !jumpLatch; // main.js:1580 — one jump per press

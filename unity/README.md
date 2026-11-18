@@ -164,3 +164,31 @@ Press **F2** (or the LOG button next to the clock) in the game to open the scrol
 readiness, OSM road/feature counts, SR16 forest rasters, trees placed and cache hits and misses, with filter chips,
 FOLLOW (stick to the newest line) and COPY (visible lines to the clipboard). The same lines go to the browser
 console with a `[rally]` prefix. Source: `Runtime/UI/LogWindow.cs`, `Runtime/Core/RallyLog.cs`.
+
+
+## Controls (same as the JS game)
+
+| Key | Action |
+|---|---|
+| `W` / `↑` | Throttle |
+| `S` / `↓` | Brake / reverse |
+| `A` `D` / `←` `→` | Steer |
+| `Space` | Jump |
+| `Shift` | Handbrake (drift) |
+| `Q` / `E` | Gear down / up (switches the gearbox to manual) |
+| `G` | Automatic / manual gearbox |
+| `R` | Restart the stage |
+| `N` | Scout a new endless stage from where the car is |
+| `1` / `2` / `3`, `C` | Camera: above / chase / driver's seat, `C` cycles |
+| `M` | Mute |
+| `F10` / `F3` | Debug window (phone: three quick taps on the speed) |
+| `F2` | Log window |
+| `Esc` | Close the route map, or back to the start screen |
+| `Enter` | Start the engine |
+
+Mouse and touch: the **MAP** button (and PICK A ROUTE ON THE MAP on the start screen) opens the Leaflet route
+map in the web build; pins snap to the nearest road of the chosen profile within 1 km, GENERATE ROUTE and
+FREE DRIVE HERE load the stage and update the address bar so it can be shared. The start screen also has
+GEARBOX and SLIDING (0–3) toggles, saved in the browser, and the local cache size with CLEAR. On phones and
+narrow screens ◀ ▶ BRAKE GAS DRIFT buttons appear. Gamepad: triggers throttle/brake, left stick steers,
+B handbrake, A jump, shoulders gears. Off-road routing on the map is not in the Unity build yet.

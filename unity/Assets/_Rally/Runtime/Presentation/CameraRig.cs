@@ -40,6 +40,7 @@ namespace Rally.Presentation
             var kb = Keyboard.current;   // Input System, like CarController (the legacy Input class is off in this project)
             if (kb != null)
             {
+                if (kb.cKey.wasPressedThisFrame) Cycle();                     // main.js:1487 C cycles the three cameras
                 if (kb.digit1Key.wasPressedThisFrame) CurrentMode = Mode.Overhead;
                 if (kb.digit2Key.wasPressedThisFrame) CurrentMode = Mode.Chase;
                 if (kb.digit3Key.wasPressedThisFrame) CurrentMode = Mode.Seat;
@@ -77,6 +78,9 @@ namespace Rally.Presentation
                     break;
             }
         }
+
+        /// <summary>Next camera: overhead → chase → seat → overhead.</summary>
+        public void Cycle() => CurrentMode = CurrentMode == Mode.Seat ? Mode.Overhead : CurrentMode + 1;
 
         /// <summary>Called on FloatingOrigin.Rebased so the damped follow point moves with the world.</summary>
         public void Shift(Vector3 delta) { chasePos -= delta; }
