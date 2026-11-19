@@ -20,7 +20,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 4bd21a6a18d7a3cb3bbe028ae49206f0, type: 2}
   m_DefaultRendererIndex: 0
   m_RequireDepthTexture: 1
-  m_RequireOpaqueTexture: 1
+  m_RequireOpaqueTexture: 0
   m_OpaqueDownsampling: 1
   m_SupportsTerrainHoles: 1
   m_SupportsHDR: 1
@@ -113,9 +113,9 @@ MonoBehaviour:
   m_PrefilterWriteRenderingLayers: 1
   m_PrefilterHDROutput: 1
   m_PrefilterAlphaOutput: 1
-  m_PrefilterSSAODepthNormals: 0
+  m_PrefilterSSAODepthNormals: 1
   m_PrefilterSSAOSourceDepthLow: 1
-  m_PrefilterSSAOSourceDepthMedium: 1
+  m_PrefilterSSAOSourceDepthMedium: 0
   m_PrefilterSSAOSourceDepthHigh: 1
   m_PrefilterSSAOInterleaved: 1
   m_PrefilterSSAOBlueNoise: 0

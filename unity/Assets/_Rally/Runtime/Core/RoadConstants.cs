@@ -29,6 +29,14 @@ namespace Rally.Core
         public const float TwoLaneHalf = 5.25f, TwoLaneCut = 9f;      // 10.5 m + 1.5 m shoulders, 18 m cut-through
         public const float OneLaneHalf = 2.25f, OneLaneCut = 3.75f;   // 4.5 m + 1.5 m shoulders = the whole 7.5 m cut-through
 
+        /// <summary>
+        /// Flat carved ground beyond the ribbon's shoulder, at the carriageway height: the terrain mesh near the camera
+        /// has 2 m triangles (Clipmap level 0), and one that straddled the ribbon edge with a vertex up the cut slope
+        /// rose through the shoulder. With every vertex within this apron at road height the drawn terrain stays under
+        /// the ribbon. Used by the carve (RoadGraph.CollectCarveSegments) and the car's off-ribbon ground (TileWorld.HeightAt).
+        /// </summary>
+        public const float CarveApron = 2f;
+
         /// <summary>Half width of the flat part: carriageway plus shoulder (corridor.js:38 flatHalf).</summary>
         public static float FlatHalf(float half) => half + Shoulder;
 

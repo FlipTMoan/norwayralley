@@ -176,6 +176,9 @@ Shader "Rally/Tree"
             float3 fn = SAMPLE_TEXTURE2D_GRAD(_ImpostorNormal, sampler_ImpostorNormal, i.uv, dx, dy).xyz * 2 - 1;   // x right, y up, z toward the camera
             n = normalize(tw * fn.x + float3(0, fn.y, 0) + nw * fn.z);
             leaf = 1;   // the impostor is mostly crown
+            // Its baked bark is orange on pines; mute warm, non-green texels so a distant stand does not read orange.
+            float warm = saturate((tex.r - tex.g) * 6);
+            tex.rgb = lerp(tex.rgb, dot(tex.rgb, float3(0.3, 0.5, 0.2)) * float3(0.85, 0.8, 0.72), warm * 0.75);
             tex.rgb *= _Color.rgb;
         }
         else if (i.color.b > 0.5)
@@ -191,7 +194,9 @@ Shader "Rally/Tree"
         else
         {
             float3 tn;
-            SampleBark(i.uv, dx, dy, i.color.a, tex.rgb, tn);
+            // Far away the orange upper bark of a pine reads louder than its thin crown: blend toward the grey lower bark.
+            float barkFar = saturate((distance(i.positionWS, _WorldSpaceCameraPos) - 50) / 150);
+            SampleBark(i.uv, dx, dy, i.color.a * (1 - 0.7 * barkFar), tex.rgb, tn);
             tex.a = 1;
             n = normalize(tw * tn.x + bw * tn.y + nw * tn.z) * (front ? 1 : -1);
             leaf = 0;
@@ -217,11 +222,14 @@ Shader "Rally/Tree"
         // Foliage scatters light: wrapped diffuse (the far side of a crown is not black) plus light seen through
         // the leaves when the sun is behind them. Bark: plain Lambert.
         float diffuse = leaf > 0.5 ? saturate(ndl * 0.6 + 0.4) : saturate(ndl);
-        float back = leaf * pow(saturate(dot(V, -light.direction)), 4) * _Translucency * (0.5 + 0.5 * ao);
+        float back = leaf * pow(saturate(dot(V, -light.direction)), 3) * _Translucency * (0.5 + 0.5 * ao);
         float shadow = light.shadowAttenuation;
-        float3 ambient = lerp(_TreeAmbientDown.rgb, _TreeAmbientUp.rgb, n.y * 0.5 + 0.5);
-        float3 color = albedo * (light.color * diffuse * shadow * (0.55 + 0.45 * ao) + ambient * ao)
-                     + _TranslucencyColor.rgb * tex.rgb * light.color * back * shadow * (1 - snow);
+        // A crown shadows itself in the shadow map, but light still scatters through the needles: foliage keeps part
+        // of the sun in its own shadow, and the light seen through a backlit crown is only half blocked by it.
+        float leafShadow = leaf > 0.5 ? lerp(0.3, 1, shadow) : shadow;
+        float3 ambient = lerp(_TreeAmbientDown.rgb, _TreeAmbientUp.rgb, n.y * 0.5 + 0.5) * (1 + 0.6 * leaf);
+        float3 color = albedo * (light.color * diffuse * leafShadow * (0.55 + 0.45 * ao) + ambient * ao)
+                     + _TranslucencyColor.rgb * tex.rgb * light.color * back * lerp(0.5, 1, shadow) * (1 - snow);
         color = MixFog(color, ComputeFogFactor(TransformWorldToHClip(i.positionWS).z));
         return half4(color, 1);
     }

@@ -41,6 +41,20 @@ namespace Rally.Editor
 
         public static BuildReport Build() => Build(OutputDir, WebApis);
 
+        /// <summary>
+        /// Work-in-progress builds go to <c>Build/WebDev</c> (the user plays from Build/Web, which only gets a build that
+        /// booted and drove in Chrome), with the function names embedded so a wasm stack trace is readable.
+        /// </summary>
+        [MenuItem("Rally/Build Web (dev, Build/WebDev, symbols)")]
+        public static void BuildDevFromMenu()
+        {
+            var old = PlayerSettings.WebGL.debugSymbolMode;
+            BuildReport report;
+            try { PlayerSettings.WebGL.debugSymbolMode = WebGLDebugSymbolMode.Embedded; report = Build("Build/WebDev", WebApis); }
+            finally { PlayerSettings.WebGL.debugSymbolMode = old; AssetDatabase.SaveAssets(); }
+            if (report.summary.result != BuildResult.Succeeded) throw new Exception($"Web dev build failed: {report.summary.result}");
+        }
+
         static BuildReport Build(string outputDir, GraphicsDeviceType[] apis)
         {
             ApplyPlayerSettings();
@@ -67,6 +81,9 @@ namespace Rally.Editor
             PlayerSettings.WebGL.decompressionFallback = true;
             PlayerSettings.WebGL.template = "PROJECT:Rally";
             PlayerSettings.WebGL.dataCaching = true;
+            // Content-hashed file names: a browser (python http.server sends no cache headers) can never pair a cached
+            // framework/loader of an older build with a new wasm, the likely cause of a stack overflow on 2026-11-19.
+            PlayerSettings.WebGL.nameFilesAsHashes = true;
             PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
             PlayerSettings.WebGL.linkerTarget = WebGLLinkerTarget.Wasm;
             // Heap: start at 256 MB, grow geometrically up to 2 GB (tiles, scatter and height copies are large).

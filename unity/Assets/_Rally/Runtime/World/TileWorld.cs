@@ -39,6 +39,14 @@ namespace Rally.World
         readonly ICarver carver;
         readonly List<CarveSegment> segs = new List<CarveSegment>(4096);
         NativeArray<CarveSegment> segsNative;
+        /// <summary>
+        /// Coarse tiles whose forest must be scattered again after a carve, one per frame (<see cref="ScatterNext"/>).
+        /// A tile is carved again whenever a neighbour's roads land (RecarveWithin covers the padded box: up to nine
+        /// tiles per answer, each tile 6–9 times while the ring fills), and scattering on every carve put several
+        /// full-tile scatters into one frame. Queued, the repeats collapse into one and the work is spread out.
+        /// </summary>
+        readonly List<TerrainTile> scatterQueue = new List<TerrainTile>();
+        public int ScatterPending => scatterQueue.Count;
         NativeArray<Color32> splatScratch, splat2Scratch, coverScratch;
         readonly List<Utm33> roadPoints = new List<Utm33>(2048);
         GameObject sea;
@@ -115,6 +123,7 @@ namespace Rally.World
             if (view.Root != null) RallyObjects.Destroy(view.Root);
             if (view.Buildings?.Mesh != null) RallyObjects.Destroy(view.Buildings.Mesh);
             Vegetation?.ClearTile(tile);
+            scatterQueue.Remove(tile);
             Tiles.Remove(key);
             tile.Dispose();
             tablesDirty = true;
@@ -140,6 +149,7 @@ namespace Rally.World
             if (sea != null) sea.transform.position = new Vector3(carWorld.x, Water.SeaLevel, carWorld.z);
             Wake?.Update(carWorld.xz, dt);
             TreeColliders?.Update(carWorld);
+            ScatterNext();
             if (camera != null)
             {
                 Clipmap?.Render((float3)camera.transform.position);
@@ -217,6 +227,7 @@ namespace Rally.World
         {
             segs.Clear();
             Roads?.CollectCarveSegments(tile.Key.Bounds, tile.Key.Origin, segs);
+            int roadSegs = segs.Count;
             // Pads come from the coarse tile that owns the house; a fine tile takes them from its coarse parent.
             var coarseKey = tile.Key.Kind == TileKind.Coarse ? tile.Key : TileKey.At(TileKind.Coarse, tile.Key.Origin);
             if (Tiles.TryGetValue(coarseKey, out var coarse) && ((TileView)coarse.UserData).Buildings != null)
@@ -229,11 +240,30 @@ namespace Rally.World
                     segs.Add(p);
                 }
             }
+            // The 8 m coarse grid is drawn with bilinear weights: a texel up to one diagonal cell (11.3 m) from a point on
+            // the ribbon pulls the terrain there. Widen the coarse flat band by that much and sink it by CarveMargin, so a
+            // coarse-only stretch of road (no 1 m tile yet) does not poke through the ribbon either.
+            if (tile.Key.Kind == TileKind.Coarse)
+                for (int i = 0; i < roadSegs; i++)
+                {
+                    var c = segs[i];
+                    c.HalfWidth += tile.Key.CellM * 1.5f; c.Ha -= RoadConstants.CarveMargin; c.Hb -= RoadConstants.CarveMargin;
+                    segs[i] = c;
+                }
             if (segs.Count > segsNative.Length) { segsNative.Dispose(); segsNative = new NativeArray<CarveSegment>(math.ceilpow2(segs.Count), Allocator.Persistent); }
             for (int i = 0; i < segs.Count; i++) segsNative[i] = segs[i];
             tile.Carve(carver, segsNative, segs.Count);
             if (!carver.CpuSynchronous) tile.SyncCpu();
-            if (tile.Key.Kind == TileKind.Coarse && ((TileView)tile.UserData).FeaturesIn) Vegetation?.ScatterTile(tile);
+            if (Vegetation != null && tile.Key.Kind == TileKind.Coarse && ((TileView)tile.UserData).FeaturesIn && !scatterQueue.Contains(tile)) scatterQueue.Add(tile);
+        }
+
+        /// <summary>Scatter the forest of the oldest queued tile (see <see cref="scatterQueue"/>).</summary>
+        public void ScatterNext()
+        {
+            if (scatterQueue.Count == 0) return;
+            var tile = scatterQueue[0];
+            scatterQueue.RemoveAt(0);
+            if (Tiles.TryGetValue(tile.Key, out var live) && live == tile) Vegetation?.ScatterTile(tile);
         }
 
         /// <summary>fine.js recarveWithin: new roads arrived for a tile → every ready tile overlapping the box carves again.</summary>
@@ -294,7 +324,7 @@ namespace Rally.World
             {
                 float ground = BaseHeightAt(p);
                 float d = (float)q.Distance;
-                return RoadProfile.Height(q.RoadY + RoadConstants.RoadLift, ground, d, RoadConstants.FlatHalf(q.Half), RoadProfile.ShoulderFor(q.Half, q.Cut)) + RoadConstants.SurfaceLift(d, q.Half);
+                return RoadProfile.Height(q.RoadY + RoadConstants.RoadLift, ground, d, RoadConstants.FlatHalf(q.Half) + RoadConstants.CarveApron, RoadProfile.ShoulderFor(q.Half, q.Cut)) + RoadConstants.SurfaceLift(d, q.Half);
             }
             return CarvedHeightAt(p);
         }

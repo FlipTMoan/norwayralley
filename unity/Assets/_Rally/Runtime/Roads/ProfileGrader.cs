@@ -114,6 +114,53 @@ namespace Rally.Roads
             return outPts;
         }
 
+        /// <summary>
+        /// The plan line of a network road: Chaikin over the whole way (no corner is kept, so there is no heading jump at
+        /// a junction node either), then each pinned vertex pulled back onto its OSM position with the offset fading out
+        /// over <paramref name="fadeM"/> metres on both sides, so roads still meet exactly where OSM says they meet.
+        /// The ends stay where they are (Chaikin keeps them).
+        /// </summary>
+        public static List<double2> SmoothThrough(IReadOnlyList<double2> points, HashSet<int> pinned, int rounds, double fadeM = 40)
+        {
+            var p = Chaikin(points, null, rounds);
+            if (pinned == null || pinned.Count == 0 || p.Count < 3) return p;
+            var along = new double[p.Count];
+            for (int i = 1; i < p.Count; i++) along[i] = along[i - 1] + math.distance(p[i], p[i - 1]);
+            int from = 0;
+            for (int k = 1; k < points.Count - 1; k++)
+            {
+                if (!pinned.Contains(k)) continue;
+                int best = from; double bestD = double.PositiveInfinity;
+                for (int i = from; i < p.Count; i++) { double d = math.distancesq(p[i], points[k]); if (d < bestD) { bestD = d; best = i; } }
+                var offset = points[k] - p[best];
+                for (int i = 0; i < p.Count; i++)
+                {
+                    double w = 1 - math.abs(along[i] - along[best]) / fadeM;
+                    if (w > 0 && i > 0 && i < p.Count - 1) p[i] += offset * w;
+                }
+                p[best] = points[k];
+                from = best;
+            }
+            return p;
+        }
+
+        /// <summary>Every `step` metres of arc length (the last point kept): even spacing however dense the input is.</summary>
+        public static List<double2> ResampleEven(IReadOnlyList<double2> points, double step)
+        {
+            var o = new List<double2> { points[0] };
+            double carry = 0;   // metres walked since the last emitted point
+            for (int i = 1; i < points.Count; i++)
+            {
+                double2 a = points[i - 1], b = points[i];
+                double len = math.distance(a, b), at = step - carry;
+                while (at <= len) { o.Add(a + (b - a) * (at / len)); at += step; }
+                carry = len - (at - step);
+            }
+            if (carry > step * 0.25) o.Add(points[points.Count - 1]);
+            else o[o.Count - 1] = points[points.Count - 1];
+            return o;
+        }
+
         /// <summary>roads.js resample: every `step` metres, keeping the original vertices.</summary>
         public static List<double2> Resample(IReadOnlyList<double2> points, double step)
         {

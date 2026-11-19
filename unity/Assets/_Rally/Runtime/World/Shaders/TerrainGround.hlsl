@@ -15,6 +15,7 @@
 TEXTURE2D_ARRAY(_HeightsFine);   SAMPLER(sampler_HeightsFine);
 TEXTURE2D_ARRAY(_HeightsCoarse); SAMPLER(sampler_HeightsCoarse);
 TEXTURE2D_ARRAY(_MaskCoarse);    SAMPLER(sampler_MaskCoarse);
+TEXTURE2D_ARRAY(_MaskFine);
 TEXTURE2D_ARRAY(_SplatAtlas);    SAMPLER(sampler_SplatAtlas);
 TEXTURE2D_ARRAY(_SplatAtlas2);
 TEXTURE2D_ARRAY(_CoverAtlas);    SAMPLER(sampler_CoverAtlas);
@@ -68,14 +69,18 @@ float GroundHeight(float2 wxz, out float found)
 
 // Ground layer weights of the coarse tile under a point (LandcoverSplat order: s0 = conifer floor, birch floor,
 // field, rock; s1 = heath, bog, snow, sand; grass = remainder) and the carve mask. The weights are looked up at
-// wxz + splatOffset (the caller jitters them so 16 m texel edges do not show), the mask at wxz itself.
+// wxz + splatOffset (the caller jitters them so 16 m texel edges do not show), the mask at wxz itself: from the 1 m
+// tile where there is one (smooth road edges), else from the 8 m coarse tile.
 void GroundCover(float2 wxz, float2 splatOffset, out float4 s0, out float4 s1, out float mask)
 {
     float2 local;
     s0 = 0; s1 = 0; mask = 0;
     int slice = CoarseTile(wxz, local);
     if (slice < 0) return;
-    mask = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, TileUV(local, _AtlasParams.y), slice, 0).r;
+    float2 fl;
+    int fs = FineTile(wxz, fl);
+    mask = fs >= 0 ? SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskFine, sampler_MaskCoarse, TileUV(fl, _AtlasParams.z), fs, 0).r
+                   : SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, TileUV(local, _AtlasParams.y), slice, 0).r * 0.35;   // coarse: a faint verge tone only (its flat band is widened, TileWorld.Carve)
     float2 jl;
     int js = CoarseTile(wxz + splatOffset, jl);
     if (js < 0) { js = slice; jl = local; }

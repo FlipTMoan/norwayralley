@@ -71,12 +71,50 @@ namespace Rally.Tests.World
             g.CollectCarveSegments(new Bounds25833(0, 0, 2048, 2048), new Utm33(0, 0), segs);
             Assert.Greater(segs.Count, 50, "5 m samples over 500 m");
             Assert.AreEqual(100 + RoadConstants.RoadLift, segs[0].Ha, 1e-5);
-            Assert.AreEqual(RoadConstants.FlatHalf(RoadProfile.One.Half), segs[0].HalfWidth, 1e-6);
+            Assert.AreEqual(RoadConstants.FlatHalf(RoadProfile.One.Half) + RoadConstants.CarveApron, segs[0].HalfWidth, 1e-6, "flat band: carriageway, shoulder and the carve apron");
             Assert.AreEqual(RoadConstants.Feather, segs[0].Shoulder, 1e-6, "single lane: the feather is the blend");
             Assert.AreEqual(1000, segs[0].A.x, 1e-3);
             segs.Clear();
             g.CollectCarveSegments(new Bounds25833(1500, 0, 2048, 2048), new Utm33(1500, 0), segs);
             Assert.AreEqual(0, segs.Count, "a road 500 m west of the box does not reach it");
+        }
+
+        [Test]
+        public void NvdbGravelSplitsAnUntaggedWay_AndRibbonPhysicsAndLinksAgree()
+        {
+            var key = new TileKey(TileKind.Coarse, 0, 0);
+            var way = Way(1, "unclassified", 1000, 0, 1000);   // no surface tag: asphalt by default
+            var data = new RoadGraphData(); data.Ways.Add(way);
+            var nvdb = new List<RoadSurfaceLine> { new RoadSurfaceLine { Kind = Surface.Gravel, Points = { new Utm33(1003, -50), new Utm33(1003, 700) } } };
+            var g = new RoadGraph();
+            var lines = g.SetTile(key, data, _ => 100f, nvdb);
+
+            Assert.AreEqual(2, lines.Count, "one gravel run, one asphalt run");
+            Assert.IsFalse(lines[0].Paved); Assert.IsTrue(lines[1].Paved);
+            var join = lines[0].Samples[lines[0].Samples.Count - 1];
+            Assert.AreEqual(join.P, lines[1].Samples[0].P, "the runs share the boundary sample");
+            Assert.AreEqual(712, join.P.y, 5, "gravel up to 12 m past the end of the NVDB polyline");
+            Assert.AreEqual(join.S, lines[1].Samples[0].S, "S runs on across the cut");
+            Assert.AreEqual(1000, lines[0].Length + lines[1].Length, 1);
+            foreach (var line in lines)
+                for (int k = 0; k + 1 < line.Samples.Count; k++)
+                {
+                    var mid = (line.Samples[k].P + line.Samples[k + 1].P) / 2;
+                    Assert.IsTrue(g.Nearest(new Utm33(mid.x, mid.y), 1, out var hit));
+                    Assert.AreEqual(line.Surface, hit.Surface, $"segment at N {mid.y:0}");
+                }
+            var link = g.LinksFrom(RoadGraph.NodeKey(new Utm33(1000, 0)));
+            Assert.AreEqual(1, link.Count);
+            Assert.IsFalse(link[0].Paved, "the link takes its majority material (gravel)");
+
+            var st = g.SurfaceStatsFor(key);
+            Assert.AreEqual(712, st.GravelM, 6); Assert.AreEqual(288, st.AsphaltM, 6);
+            Assert.AreEqual(st.GravelM, st.NvdbM, 6); Assert.AreEqual(st.AsphaltM, st.DefaultM, 6);
+            Assert.AreEqual(0, st.OsmTagM); Assert.AreEqual(1, st.NvdbLines);
+
+            var plain = g.SetTile(key, data, _ => 100f);
+            Assert.AreEqual(1, plain.Count, "without NVDB the way is one asphalt run, as before");
+            Assert.IsTrue(plain[0].Paved);
         }
 
         [Test]

@@ -36,6 +36,44 @@ _Updated 2026-11-19._
   a 10 m grid, a car through a junction (no air, < 0.25 g over 0.1 s), a car on a deck over a road.
 
 
+### Unity: roads are one surface with the car, gravel and asphalt from NVDB, smoother lines and junctions
+- Root cause of the car cutting through the road: the ribbon mesh sampled the carved height grid when a tile's roads
+  arrived, which is the 8 m coarse grid until the 1 m tiles load; the 1 m terrain then cut through the ribbon in
+  staircase steps and the wheels (graded road profile) sat up to metres off the drawn surface. `RibbonMesh` now takes its
+  heights from the run's own graded profile (exactly what `TileWorld.HeightAt` answers on the road), straight across the
+  carriageway. Measured near the car at 59.6501, 6.34968: |ribbon − wheel ground| mean 0.20 m → 0.002 m, samples off by
+  more than 5 cm 52 % → 1 %, carved terrain above the ribbon 10 % → 0.02 %.
+- The carve keeps the terrain under the ribbon: a 2 m flat apron beyond the shoulder (`RoadConstants.CarveApron`, the
+  clipmap's finest triangle) and, on coarse tiles, a flat band widened by 1.5 cells and sunk by `CarveMargin`.
+  The terrain colours the verge from the 1 m tile's carve mask where there is one (smooth edges).
+- Plan line: Chaikin over the whole way (4 rounds) with junction nodes pulled back onto their OSM position
+  (`ProfileGrader.SmoothThrough`), resampled evenly every 5 m (`ResampleEven`): no corner kinks, also at junction nodes.
+- Junctions: ways are graded major road first; a joining road takes the major road's height on and near its flat band
+  and fades back to its own grade over 25 m; inside the major carriageway only the major ribbon is drawn; the "nearest
+  road" is ranked by distance past each road's flat band. Fixed: junction easing never ran for ways of the tile being
+  loaded (it checked a segment count that is only summed afterwards).
+- Surface from map data: NVDB Vegdekke (type 241, Massetype 1216) per 5 m sample within 12 m, OSM tag / class as the
+  fallback (port of roads.js); runs split where the material changes so ribbon sub-mesh, physics grip and road links
+  agree. One `overlay:` log line per tile with the split and the sources.
+- New `Rally/Road` shader: asphalt with Norwegian markings on two-lane roads (dashed yellow centre, white edges) and
+  worn wheel tracks; gravel lighter, loose, two packed tracks with a stony ridge, no markings.
+- Tests: `RibbonGroundTests` (ribbon = wheel ground, flat across, terrain under it, no kinks, no step at a crossing; on
+  1 m and on coarse-only ground), NVDB surface ports (`RoadSurfaceTests`, RoadGraph split test).
+
+### Unity: frame rate, trees, light and camera feel
+- WebGL 2 tree path: the per-tree loop (LOD, frustum, matrix) moved into a Burst job (`TreeCullJob`); forest scatters
+  after a recarve are queued, one tile per frame (`TileWorld.ScatterNext`) — a tile was re-scattered 6–9 times while
+  its neighbours' roads arrived, several in one frame. URP: opaque texture off (nothing sampled it), SSAO at half
+  resolution from the depth prepass.
+- Trees: crowns keep part of the sun in their own shadow and a backlit crown glows (spruce and pine were black against
+  the sun); distant pine bark and impostors no longer read orange. Ambient is a sky / horizon / ground trilight scaled
+  by daylight instead of a flat dark grey (shadows were near black). Forest floor darker and browner than meadow.
+- Chase camera: speed field of view (+9° at 160 km/h), looks a little ahead along the velocity (into slides), subtle
+  shake by surface (asphalt < gravel < off road) and speed.
+- Debug window (F10/F3) shows frame time average and p95; `?bench` in the URL drives the stage for 60 s with the
+  ScriptedDriver and logs frame times every 10 s (`bench:` lines); `PreviewShots -previewBench / -previewRoadDebug`.
+- Web builds in progress go to `unity/Build/WebDev` (with symbols); `Build/Web` only gets a build checked in Chrome.
+
 ### JS game: bridges where roads cross water
 - Before, every road was carved into the DTM: over a river the road sagged into the valley and the river ribbon was
   lifted onto the carved road. Now `src/bridges.js` finds bridge spans: OSM `bridge=*` ways (`bridge=no|culvert` and

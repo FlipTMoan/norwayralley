@@ -16,6 +16,11 @@ namespace Rally.Presentation
         public float SunIntensityNoon = 2.2f;
         public Color Horizon = new Color(1f, 0.72f, 0.45f);
         public Color Zenith = new Color(1f, 0.97f, 0.9f);
+        [Header("Ambient (trilight, scaled by daylight)")]
+        public Color AmbientSky = new Color(0.50f, 0.60f, 0.78f);
+        public Color AmbientEquator = new Color(0.42f, 0.45f, 0.44f);
+        public Color AmbientGround = new Color(0.24f, 0.22f, 0.17f);
+        float lastDaylight = -1f;
 
         void Update()
         {
@@ -31,6 +36,17 @@ namespace Rally.Presentation
             Sun.intensity = SunIntensityNoon * t;
             Sun.color = Color.Lerp(Horizon, Zenith, Mathf.Clamp01(Mathf.Sin(el) * 2f));
             RenderSettings.ambientIntensity = Mathf.Lerp(0.15f, 1f, t);
+            // Sky from above, the valley around, the ground below: a shadowed slope or the far side of a spruce gets
+            // the blue sky light instead of the old flat 0.2 grey, which left everything out of the sun near black.
+            float day = Mathf.Lerp(0.12f, 1f, t);
+            if (Mathf.Abs(day - lastDaylight) > 0.002f)
+            {
+                lastDaylight = day;
+                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+                RenderSettings.ambientSkyColor = AmbientSky * day;
+                RenderSettings.ambientEquatorColor = AmbientEquator * day;
+                RenderSettings.ambientGroundColor = AmbientGround * day;
+            }
         }
     }
 }

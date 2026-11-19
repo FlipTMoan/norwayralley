@@ -19,6 +19,7 @@ namespace Rally.Geo
         public const string Base = "https://nvdbapiles.atlas.vegvesen.no/vegobjekter/api/v4/vegobjekter";
         public const int TypeSignPlate = 96, TypeSpeedLimit = 105;
         public const int PropSignNumber = 5530, PropFacing = 1894, PropText = 1910, PropKmh = 2021;
+        public const int TypeRoadSurface = 241, PropMassetype = 1216;   // roads.js: Vegdekke, Massetype
         public const int TimeoutMs = 20000;
         public const int MaxPages = 20;
         public static readonly IReadOnlyDictionary<string, string> Headers = new Dictionary<string, string>
@@ -52,6 +53,28 @@ namespace Rally.Geo
                 RallyLog.Warn($"overlay: road signs unavailable: {e.Message}");
                 return SignSet.Empty;
             }
+        }
+
+        /// <summary>
+        /// roads.js <c>fetchRoadSurfaces</c>: the registered road surfaces (241 Vegdekke) in the bounds; objects
+        /// without a Massetype are skipped (the register is patchy on municipal roads). Unreachable NVDB yields an
+        /// empty list, so the roads keep their OSM surface.
+        /// </summary>
+        public async Task<List<RoadSurfaceLine>> FetchSurfaces(Bounds25833 bounds, CancellationToken ct)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeoutMs);
+            var lines = new List<RoadSurfaceLine>();
+            try
+            {
+                foreach (var o in await FetchObjects(TypeRoadSurface, bounds, cts.Token)) { var l = ParseRoadSurface(o); if (l != null) lines.Add(l); }
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested)
+            {
+                RallyLog.Warn($"overlay: road surfaces unavailable: {e.Message}");
+                lines.Clear();
+            }
+            return lines;
         }
 
         async Task<List<Dictionary<string, object>>> FetchObjects(int typeId, Bounds25833 b, CancellationToken ct)
@@ -141,6 +164,26 @@ namespace Rally.Geo
                 Position = geometry.Points[0],
                 Height = geometry.Heights[0],
             };
+        }
+
+        /// <summary>roads.js <c>surfaceKindFromMassetype</c>: NVDB Massetype text → Gravel, or Asphalt for every bound surface; null when absent.</summary>
+        public static Surface? SurfaceFromMassetype(string verdi)
+        {
+            if (string.IsNullOrEmpty(verdi)) return null;
+            var v = verdi.ToLowerInvariant();
+            if (v == "grus" || v.StartsWith("enkel overflatebehandling grus", StringComparison.Ordinal) || v.StartsWith("dobbel overflatebehandling grus", StringComparison.Ordinal)) return Surface.Gravel;
+            if (v.Contains("grus") && !v.Contains("asfalt") && !v.Contains("emulsjon") && !v.Contains("olje")) return Surface.Gravel;
+            return Surface.Asphalt;
+        }
+
+        /// <summary>One Vegdekke object → its surface polyline, or null without a Massetype or a LINESTRING.</summary>
+        public static RoadSurfaceLine ParseRoadSurface(Dictionary<string, object> obj)
+        {
+            var kind = SurfaceFromMassetype(Property(obj, PropMassetype));
+            if (kind == null) return null;
+            var geometry = Wkt.Parse(obj.Obj("geometri")?.Str("wkt"));
+            if (geometry == null || geometry.Type != "LINESTRING" || geometry.Points.Count < 2) return null;
+            return new RoadSurfaceLine { Kind = kind.Value, Points = geometry.Points };
         }
 
         public static SpeedLimitSegment ParseSpeedLimit(Dictionary<string, object> obj)

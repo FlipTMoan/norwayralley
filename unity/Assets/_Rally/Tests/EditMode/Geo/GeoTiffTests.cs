@@ -120,6 +120,36 @@ namespace Rally.Tests.Geo
             Assert.AreEqual(0.5, img.ScaleX, 1e-12); Assert.AreEqual(0.25, img.ScaleY, 1e-12);
         }
 
+        /// <summary>
+        /// Kartverket sends GDAL sparse files for sea and land outside the DTM: unstored tiles have byte count 0
+        /// and read as nodata (they used to fail with "block shorter than its rows", 2026-11-19).
+        /// </summary>
+        [Test]
+        public void SparseTilesReadAsNoData()
+        {
+            int w = 7, h = 5;
+            var samples = Ramp(w, h);
+            var tiff = BuildTiff(w, h, samples, true, 4, false);
+            // Zero the byte count of tile 1 (top right, columns 4..6, rows 0..3) in the IFD's TileByteCounts (325).
+            int ifd = BitConverter.ToInt32(tiff, 4), n = BitConverter.ToUInt16(tiff, ifd);
+            for (int i = 0; i < n; i++)
+            {
+                int at = ifd + 2 + i * 12;
+                if (BitConverter.ToUInt16(tiff, at) != 325) continue;
+                int type = BitConverter.ToUInt16(tiff, at + 2), count = BitConverter.ToInt32(tiff, at + 4), size = type == 3 ? 2 : 4;
+                int values = count * size <= 4 ? at + 8 : BitConverter.ToInt32(tiff, at + 8);
+                for (int k = 0; k < size; k++) tiff[values + size + k] = 0;
+            }
+            var img = GeoTiff.Decode(tiff);
+            for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                float v = img.Samples[y * w + x];
+                if (x >= 4 && y < 4) Assert.IsNaN(v, $"({x},{y}) is in the unstored tile");
+                else Assert.AreEqual(samples[y * w + x], v, $"({x},{y})");
+            }
+        }
+
         [Test]
         public void RejectsWhatItCannotRead()
         {

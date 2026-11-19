@@ -54,7 +54,10 @@ unity-editor -batchmode -projectPath unity -runTests -testPlatform PlayMode -tes
 unity-editor -batchmode -nographics -quit -projectPath unity -executeMethod Rally.Editor.BuildWeb.BuildFromMenu
 ```
 
-Output goes to `unity/Build/Web`. `Assets/_Rally/Editor/BuildWeb.cs` applies the Player Settings
+Output goes to `unity/Build/Web`. Work-in-progress builds go to `unity/Build/WebDev` instead (with the wasm function
+names embedded, so a stack trace is readable): **Rally → Build Web (dev, Build/WebDev, symbols)** or
+`-executeMethod Rally.Editor.BuildWeb.BuildDevFromMenu`. A build takes minutes and writes its files one by one, so
+never build into the folder someone is playing from; copy a checked build over. `Assets/_Rally/Editor/BuildWeb.cs` applies the Player Settings
 before building, so the editor and CI agree. If you want to set them by hand
 (**Edit → Project Settings → Player → Web tab**):
 
@@ -75,6 +78,10 @@ The template loads the Unity files with the decompression fallback, so any stati
 cd unity/Build/Web && python3 -m http.server 8000
 # open http://localhost:8000/
 ```
+
+Frame-rate check: add `bench` to the query (`?seed=beef;59.6501,6.34968&bench`): the car drives the stage for 60 s
+with the ScriptedDriver and the console gets a `bench:` line every 10 s (frame time average / p95, trees drawn). The
+debug window (F10 / F3) shows the same frame-time numbers while you play.
 
 The Leaflet map tiles, PeerJS and the geodata services (Kartverket WCS, NIBIO SR16, Overpass,
 NVDB, OSRM) are fetched live and cached in IndexedDB (`rally-cache`, the same database the JS game

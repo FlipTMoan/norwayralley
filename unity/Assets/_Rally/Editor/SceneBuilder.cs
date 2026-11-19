@@ -52,8 +52,7 @@ namespace Rally.Editor
             CreatePipeline();
             var profile = CreateVolumeProfile();
             var panel = CreatePanelSettings();
-            var tarmac = LitMaterial(SettingsDir + "/RoadTarmac.mat", new Color(0.22f, 0.22f, 0.23f), 0.35f);
-            var gravel = LitMaterial(SettingsDir + "/RoadGravel.mat", new Color(0.55f, 0.5f, 0.42f), 0.1f);
+            var (tarmac, gravel) = RoadMaterials();
             var style = CreateWorldStyle(profile);
             var actorSet = CreateActorSet();
             var car = CreateCarPrefab();
@@ -83,8 +82,10 @@ namespace Rally.Editor
         /// <summary>
         /// URP asset + Universal Renderer: Forward+ (many small lights: headlights, houses), 4 cascades at 200 m (long low-sun
         /// shadows; WorldStyleSO.ApplyShadows rewrites both), HDR for bloom, no MSAA (the CRT feature / render scale own the
-        /// look), depth + opaque textures for the water shader. Features: SSAO (realistic preset) and the CRT presenter,
-        /// disabled = realistic. Assigned to Graphics and to every Quality level so no level falls back to Built-in.
+        /// look), the depth texture for the water shader (no opaque texture: nothing samples it, and the copy is a full-screen
+        /// pass). Features: SSAO (realistic preset; half resolution from the depth prepass, which the trees take part in —
+        /// they have no DepthNormals pass) and the CRT presenter, disabled = realistic. Assigned to Graphics and to every
+        /// Quality level so no level falls back to Built-in.
         /// </summary>
         static UniversalRenderPipelineAsset CreatePipeline()
         {
@@ -105,6 +106,13 @@ namespace Rally.Editor
             }
             ResourceReloader.ReloadAllNullIn(data, UniversalRenderPipelineAsset.packagePath);
             AddRendererFeature<ScreenSpaceAmbientOcclusion>(data, "SSAO", null);
+            foreach (var ssao in data.rendererFeatures.OfType<ScreenSpaceAmbientOcclusion>())
+            {
+                var so = new SerializedObject(ssao);
+                so.FindProperty("m_Settings.Downsample").boolValue = true;
+                so.FindProperty("m_Settings.Source").enumValueIndex = 0;   // Depth
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
             AddRendererFeature<CrtRenderFeature>(data, "CRT", f => { f.settings.Shader = Shader.Find("Rally/CRT"); f.SetActive(false); });
             EditorUtility.SetDirty(data);
 
@@ -117,7 +125,7 @@ namespace Rally.Editor
             asset.supportsHDR = true;
             asset.msaaSampleCount = 1;
             asset.supportsCameraDepthTexture = true;
-            asset.supportsCameraOpaqueTexture = true;
+            asset.supportsCameraOpaqueTexture = false;
             asset.shadowCascadeCount = 4;
             asset.shadowDistance = 200f;
             EditorUtility.SetDirty(asset);
@@ -187,7 +195,7 @@ namespace Rally.Editor
             style.TerrainMaterial = TerrainMaterial();
             style.Vegetation = CreateVegetationSet();
             style.SkyMaterial = ShaderMaterial(SettingsDir + "/Sky.mat", "Rally/Sky", null);
-            // Rally/Water needs the depth and opaque textures (set on the URP asset); if the shader did not compile fall back to a lit tint.
+            // Rally/Water needs the depth texture (set on the URP asset); if the shader did not compile fall back to a lit tint.
             var water = ShaderMaterial(SettingsDir + "/Lake.mat", "Rally/Water", m => { });
             style.LakeMaterial = water ?? LitMaterial(SettingsDir + "/Lake.mat", new Color(0.1f, 0.3f, 0.4f), 0.9f);
             style.RiverMaterial = ShaderMaterial(SettingsDir + "/River.mat", "Rally/Water", m => m.SetFloat("_Flow", 1f)) ?? style.LakeMaterial;
@@ -548,6 +556,33 @@ namespace Rally.Editor
             AssetDatabase.CreateAsset(m, path);
             return m;
         }
+
+        /// <summary>
+        /// The ribbon's two materials on Rally/Road (asphalt with markings, gravel). Existing assets are switched to the
+        /// shader in place, so the scene's references survive (they were URP Lit flat colours before 2026-11-19).
+        /// <c>Unity -batchmode -projectPath unity -executeMethod Rally.Editor.SceneBuilder.UpgradeRoadMaterials -quit</c>
+        /// </summary>
+        public static (Material tarmac, Material gravel) RoadMaterials()
+        {
+            var shader = Shader.Find("Rally/Road");
+            Material Make(string name, float gravel)
+            {
+                string path = SettingsDir + "/" + name + ".mat";
+                var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (shader == null) return m != null ? m : LitMaterial(path, gravel > 0 ? new Color(0.55f, 0.5f, 0.42f) : new Color(0.22f, 0.22f, 0.23f), 0.2f);
+                if (m == null) { m = new Material(shader); AssetDatabase.CreateAsset(m, path); }
+                else m.shader = shader;
+                m.SetFloat("_Gravel", gravel);
+                m.SetColor("_Tint", Color.white);
+                EditorUtility.SetDirty(m);
+                return m;
+            }
+            var r = (Make("RoadTarmac", 0), Make("RoadGravel", 1));
+            AssetDatabase.SaveAssets();
+            return r;
+        }
+
+        public static void UpgradeRoadMaterials() => RoadMaterials();
 
         /// <summary>URP Lit material with a colour and smoothness; an existing asset is kept as is.</summary>
         static Material LitMaterial(string path, Color colour, float smoothness)

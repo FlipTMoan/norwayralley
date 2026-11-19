@@ -170,6 +170,7 @@ namespace Rally.World
             Shader.SetGlobalTexture("_HeightsCoarse", coarseAtlas.Heights);
             Shader.SetGlobalTexture("_HeightsFine", fineAtlas.Heights);
             Shader.SetGlobalTexture("_MaskCoarse", coarseAtlas.Mask);
+            Shader.SetGlobalTexture("_MaskFine", fineAtlas.Mask);
             Shader.SetGlobalTexture("_SplatAtlas", coarseAtlas.Splat);
             Shader.SetGlobalTexture("_SplatAtlas2", coarseAtlas.Splat2);
             Shader.SetGlobalTexture("_CoverAtlas", coarseAtlas.Cover);

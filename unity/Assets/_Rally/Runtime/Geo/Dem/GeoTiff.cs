@@ -23,7 +23,7 @@ namespace Rally.Geo
     /// geotiff.js; what the service actually returns (checked against a live GetCoverage) is a classic
     /// little-endian TIFF, one Float32 sample per pixel, tiled 128×128, uncompressed. This reads that,
     /// plus strips, big-endian, Deflate (8 / 32946, via <see cref="DeflateStream"/> after the zlib header)
-    /// and 16/32-bit integer samples, so a change of server settings does not break the game silently.
+    /// 16/32-bit integer samples and sparse (unstored, all-nodata) tiles, so a change of server settings does not break the game silently.
     /// Anything else (LZW, JPEG, predictors, BigTIFF, multi-band) throws with a clear message.
     /// </summary>
     public static class GeoTiff
@@ -81,8 +81,13 @@ namespace Rally.Geo
                 for (int tx = 0; tx < across; tx++)
                 {
                     int i = ty * across + tx;
-                    var block = Block(r, data, (long)r.Value(offsets, i), (int)r.Value(counts, i), compression, tw * th * bytesPer);
                     int w = Math.Min(tw, img.Width - tx * tw), h = Math.Min(th, img.Height - ty * th);
+                    if (Sparse(r, offsets, counts, i))
+                    {
+                        for (int y = 0; y < h; y++) Array.Fill(img.Samples, float.NaN, (ty * th + y) * img.Width + tx * tw, w);
+                        continue;
+                    }
+                    var block = Block(r, data, (long)r.Value(offsets, i), (int)r.Value(counts, i), compression, tw * th * bytesPer);
                     for (int y = 0; y < h; y++)
                         Row(r, block, y * tw * bytesPer, img.Samples, (ty * th + y) * img.Width + tx * tw, w, format, bits);
                 }
@@ -96,6 +101,7 @@ namespace Rally.Geo
                 for (int s = 0; s < strips; s++)
                 {
                     int rows = Math.Min(rps, img.Height - s * rps);
+                    if (Sparse(r, offsets, counts, s)) { Array.Fill(img.Samples, float.NaN, s * rps * img.Width, rows * img.Width); continue; }
                     var block = Block(r, data, (long)r.Value(offsets, s), (int)r.Value(counts, s), compression, rows * img.Width * bytesPer);
                     for (int y = 0; y < rows; y++)
                         Row(r, block, y * img.Width * bytesPer, img.Samples, (s * rps + y) * img.Width, img.Width, format, bits);
@@ -104,6 +110,12 @@ namespace Rally.Geo
             else throw new FormatException("GeoTIFF: neither strips nor tiles");
             return img;
         }
+
+        /// <summary>
+        /// GDAL sparse files (SPARSE_OK, what Kartverket sends for sea and areas outside the DTM): a tile or strip
+        /// with byte count 0 (or offset 0) is not stored and reads as nodata. NaN, which the resampler treats as sea.
+        /// </summary>
+        static bool Sparse(Reader r, Entry offsets, Entry counts, int i) => r.Value(counts, i) == 0 || r.Value(offsets, i) == 0;
 
         /// <summary>One strip or tile as raw sample bytes, inflated when the file is Deflate-compressed.</summary>
         static ArraySegment<byte> Block(Reader r, byte[] data, long offset, int count, int compression, int expected)

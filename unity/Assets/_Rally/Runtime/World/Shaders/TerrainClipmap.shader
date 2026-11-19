@@ -185,9 +185,16 @@ Shader "Rally/TerrainClipmap"
                 float macro = (m1 * 0.65 + m2 * 0.35) - 0.5;
                 albedo *= 1 + macro * 0.32;
                 albedo.rg *= 1 + float2(0.06, -0.02) * (VNoise(wxz / 470 + 5.0) - 0.5) * 2 * (1 - w[7]);
-                // The carved terrace beside a road is bare earth (corridor.js EARTH), the band under the ribbon darker still.
-                albedo = lerp(albedo, float3(0.34, 0.31, 0.25), saturate(mask * 2) * 0.5);
-                albedo = lerp(albedo, float3(0.30, 0.30, 0.31), saturate((mask - 0.75) * 4));
+                // Forest floor under the canopy reads darker and browner than a meadow, most of all from a distance
+                // where the needle litter texture has averaged out to green.
+                float forest = saturate(w[1] + w[2] * 0.6);
+                albedo *= lerp(1, float3(0.80, 0.80, 0.70), forest * (0.35 + 0.65 * far));
+                // The carved terrace beside a road is worn verge (corridor.js EARTH): grass with earth showing through,
+                // the flat band around the ribbon a gravel shoulder. Kept close in tone to the ground and broken by
+                // noise, because the mask has 8 m texels and a hard, contrasting band showed them as steps.
+                float verge = saturate(mask + (VNoise(wxz / 3.1) - 0.5) * 0.45);
+                albedo = lerp(albedo, albedo * float3(0.82, 0.76, 0.62) + float3(0.05, 0.045, 0.03), smoothstep(0.1, 0.6, verge) * 0.35);
+                albedo = lerp(albedo, float3(0.40, 0.38, 0.33) * (0.9 + 0.2 * nTile), smoothstep(0.65, 1.0, verge) * 0.6);
                 // Tangent-space normals blended like the albedo, applied in world space (terrain is mostly up-facing).
                 n = normalize(n + float3(tn.x, 0, tn.y) * 0.8 * (1 - _RetroFlat) * (1 - far * 0.7));
 

@@ -77,6 +77,7 @@ namespace Rally.Gameplay
         IRoadSource roadSource;
         IFeatureSource featureSource;
         ILandcoverSource landcoverSource;
+        NvdbSource surfaceSource;            // NVDB Vegdekke (gravel / asphalt); null with the fake sources
         IRouter router;
 
         // World
@@ -169,6 +170,7 @@ namespace Rally.Gameplay
         {
             string query = BrowserDom.UrlParams();
             if (string.IsNullOrEmpty(query)) query = EditorQuery;
+            bench = query.Contains("bench");
             await LoadFromQuery(query);
         }
 
@@ -192,6 +194,7 @@ namespace Rally.Gameplay
                 roadSource = osm; featureSource = osm;
                 landcoverSource = new FakeSources.Landcover();
                 router = new FakeSources.Router();
+                surfaceSource = null;
                 return;
             }
             var overpass = new OverpassSource(cache);
@@ -199,6 +202,7 @@ namespace Rally.Gameplay
             roadSource = overpass; featureSource = overpass;
             landcoverSource = new Sr16Source(cache);
             router = new OsrmRouter(cache);
+            surfaceSource = new NvdbSource(cache);
         }
 
         /// <summary>TileWorld + RoadGraph + clipmap + forest + colliders, styled by the WorldStyle asset.</summary>
@@ -297,7 +301,8 @@ namespace Rally.Gameplay
             var roadTask = roadSource.FetchRoads(key.Bounds, ct);
             var featureTask = featureSource.FetchFeatures(key.Bounds, ct);
             var coverTask = landcoverSource.FetchCover(key.Bounds, ct);
-            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null;
+            var surfaceTask = surfaceSource != null ? surfaceSource.FetchSurfaces(RoadGraph.SurfaceQueryBounds(key), ct) : Task.FromResult<List<RoadSurfaceLine>>(null);
+            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null;
             var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
             RallyLog.Info($"overlay: {key} asking OSM roads + features and NIBIO SR16 forest");
             try { roadData = await roadTask; RallyLog.Info($"overlay: {key} roads {roadData?.Ways.Count ?? 0} ways after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} roads failed: {e.Message}"); }
@@ -308,6 +313,7 @@ namespace Rally.Gameplay
                 else RallyLog.Info($"overlay: {key} map features: none after {overlayWatch.ElapsedMilliseconds} ms");
             }
             catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} features failed: {e.Message}"); }
+            try { surfaces = await surfaceTask; } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB road surface failed: {e.Message}"); }
             try { cover = await coverTask; RallyLog.Info(cover != null ? $"overlay: {key} SR16 forest raster {cover.Width}×{cover.Height} cells (16 m) after {overlayWatch.ElapsedMilliseconds} ms" : $"overlay: {key} SR16 forest: none after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} SR16 failed: {e.Message}"); }
             results.Enqueue(new TileResult
             {
@@ -318,7 +324,8 @@ namespace Rally.Gameplay
                     if (!world.Scheduler.IsReady(key)) return false;    // the DTM result is still ahead in the queue
                     if (roadData != null)
                     {
-                        var lines = roads.SetTile(key, roadData, p => world.BaseHeightAt(p));
+                        var lines = roads.SetTile(key, roadData, p => world.BaseHeightAt(p), surfaces);
+                        RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
                         var b = key.Bounds;
                         world.RecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
                         BuildRibbon(key, lines);
@@ -358,7 +365,7 @@ namespace Rally.Gameplay
         void BuildRibbon(TileKey key, List<RoadPolyline> lines)
         {
             if (ribbons.TryGetValue(key, out var old)) { Destroy(old); ribbons.Remove(key); }
-            var mesh = RibbonMesh.Build(lines, key.Origin, world.CarvedHeightAt);
+            var mesh = RibbonMesh.Build(lines, key.Origin);
             if (mesh == null) return;
             var go = new GameObject("Ribbon " + key);
             go.transform.SetParent(world.Root, false);
@@ -614,6 +621,8 @@ namespace Rally.Gameplay
         void Update()
         {
             HandleKeys();
+            frames.Record(Time.unscaledDeltaTime);
+            if (bench) Bench();
             if (Hud != null && Hud.DebugVisible && Time.unscaledTime >= nextDebug) { nextDebug = Time.unscaledTime + 0.25f; Hud.SetDebug(DebugText()); }
             fps = math.lerp(fps, 1f / math.max(1e-4f, Time.unscaledDeltaTime), 0.05f);
             if (world == null) return;
@@ -639,7 +648,16 @@ namespace Rally.Gameplay
             if (stage != null && walk == null && flow.Phase == Phase.Racing && carS >= stage.Length - 6f) flow.Finish();
             if (walk != null) Endless(carS);
             if (session != null && !session.Closed) session.SendState(Packet(ref s));
+            if (Rig != null) Rig.Shake = CameraShake(s.Grounded, s.OnRoad, s.SurfaceKind, s.Speed);
             ShowHud(q);
+        }
+
+        /// <summary>Camera shake (CameraRig.Shake) from what the tyres run on: asphalt barely, gravel some, rough ground most, scaled by speed; none in the air.</summary>
+        public static float CameraShake(bool grounded, bool onRoad, Surface surface, float speed)
+        {
+            if (!grounded) return 0f;
+            float rough = !onRoad ? 1f : surface == Surface.Asphalt ? 0.12f : 0.5f;
+            return rough * math.saturate(speed / 30f);
         }
 
         /// <summary>
@@ -725,6 +743,29 @@ namespace Rally.Gameplay
         bool autoShift = true, muted, mapOpen;
         int sliding;
         float fps = 60f, nextDebug;
+        readonly FrameStats frames = new FrameStats();
+
+        // ?bench: start the engine, let the ScriptedDriver drive 60 s and log the frame times every 10 s (frame-rate checks in the browser).
+        bool bench;
+        float benchNext, benchEnd;
+        readonly FrameStats benchFrames = new FrameStats();
+
+        void Bench()
+        {
+            if (car == null) return;
+            if (flow.Phase == Phase.Intro) { car.Driver = new ScriptedDriver { TargetKmh = 70f }; StartEngine(); return; }
+            if (flow.Phase != Phase.Racing) return;
+            float now = Time.unscaledTime;
+            if (benchEnd == 0f) { benchEnd = now + 60f; benchNext = now + 10f; benchFrames.Clear(); RallyLog.Info("bench: driving 60 s"); }
+            benchFrames.Record(Time.unscaledDeltaTime);
+            if (now < benchNext) return;
+            benchNext = now + 10f;
+            var st = world.GetStats();
+            RallyLog.Info($"bench: avg {benchFrames.AvgMs:0.0} ms  p95 {benchFrames.PercentileMs(0.95f):0.0} ms  fps {1000f / math.max(0.01f, benchFrames.AvgMs):0}  "
+                + $"trees {world.Vegetation?.Drawn ?? 0}  tiles {st.CoarseLoaded}+{st.FineLoaded}  {car.State.SpeedKmh:0} km/h");
+            benchFrames.Clear();
+            if (now >= benchEnd) { bench = false; car.Driver = null; RallyLog.Info("bench: done"); }
+        }
 
         void LoadSettings()
         {
@@ -918,7 +959,7 @@ namespace Rally.Gameplay
         string DebugText()
         {
             var sb = new System.Text.StringBuilder(512);
-            sb.Append($"RETRO NORWAY RALLY · debug (F10 / F3)\nfps {fps:0}   phase {flow.Phase}\n");
+            sb.Append($"RETRO NORWAY RALLY · debug (F10 / F3)\nfps {fps:0}   frame {frames.AvgMs:0.0} ms, p95 {frames.PercentileMs(0.95f):0.0} ms   phase {flow.Phase}\n");
             if (car != null)
             {
                 ref var s = ref car.State;

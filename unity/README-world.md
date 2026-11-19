@@ -25,7 +25,9 @@ Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
    - `PostProfile`: the Volume profile of the scene's global Volume. `WorldStyleSO.Apply()` writes Bloom, ACES
      tonemapping, Vignette and Motion Blur into it. **SSAO** is a Renderer Feature: add "Screen Space Ambient Occlusion" to
      the URP renderer asset. Shadows: `Apply()` sets 4 cascades / 200 m on the active URP asset.
-3. **URP asset**: WebGPU first; keep "Depth Texture" and "Opaque Texture" on for the water; shadow cascades 4.
+3. **URP asset**: WebGPU first; keep "Depth Texture" on for the water ("Opaque Texture" is off since 2026-11-19: nothing
+   samples it); shadow cascades 4. SSAO runs at half resolution from the depth prepass (the trees have a DepthOnly pass
+   but no DepthNormals pass, so a DepthNormals source left them out of the occlusion).
 
 ## Flow at runtime
 
@@ -33,8 +35,25 @@ Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 raises `TileNeeded(key)` for one tile per frame; the driver fetches through Rally.Geo and calls
 `TileWorld.OnTileData(key, dtm, cover, features, latitude)` (or `FetchFailed`). The tile then: uploads its base heights,
 builds the land-cover splat, lakes/rivers/houses, carves roads (`IRoadQuery.CollectCarveSegments`) and house pads,
-reads the carve back into its `HeightGrid` (WebGPU) and scatters trees. Roads: `RoadGraph.SetTile(key, roadGraphData, coarseGround)`
-when a tile's ways arrive, then `TileWorld.RecarveWithin(bounds)`; `RibbonMesh.Build(lines, origin, world.CarvedHeightAt)` for the surface.
+reads the carve back into its `HeightGrid` (WebGPU) and queues its forest scatter (`TileWorld.ScatterNext`, one tile per
+frame, so the repeated recarves of a tile while its neighbours' roads arrive collapse into one scatter). Roads: `RoadGraph.SetTile(key, roadGraphData, coarseGround)`
+when a tile's ways arrive, then `TileWorld.RecarveWithin(bounds)`; `RibbonMesh.Build(lines, origin)` for the surface.
+
+### Roads: one surface for the car, the ribbon and the terrain (2026-11-19)
+- The ribbon's heights are the run's graded profile + `ROAD_LIFT` + `SurfaceLift` — what `TileWorld.HeightAt` answers on
+  the road — so the drawn road and the wheel contact agree to the millimetre, straight across the carriageway. (It used
+  to sample the carved grid when the roads arrived: the 8 m coarse grid, so the later 1 m terrain cut through it.)
+- The carve keeps the terrain under it: the flat band reaches `RoadConstants.CarveApron` (2 m, the finest clipmap
+  triangle) past the shoulder; coarse tiles widen it by 1.5 cells and sink it by `CarveMargin` (bilinear 8 m texels).
+- Plan line: `ProfileGrader.SmoothThrough` (Chaikin ×4 through junction nodes, nodes pulled back onto OSM) then
+  `ResampleEven` every 5 m. Junctions: major roads are graded first; a joining road takes the major road's height within
+  its flat band + `RoadGraph.JunctionFlat` and fades back over `JunctionRamp`; samples on the major carriageway are
+  `Covered` and draw no ribbon. `RoadGraph.Nearest` ranks roads by distance past their flat band.
+- Material: NVDB Vegdekke (type 241) per sample within 12 m, OSM `surface` / class as the fallback (`NvdbSource.FetchSurfaces`,
+  `RoadGraph.SetTile(…, surfaces)`); `Rally/Road` draws asphalt (markings on two-lane roads) or gravel.
+- Known limits: a way graded in an earlier tile keeps its heights (a side road graded before its main road arrives does
+  not conform); OSRM / demo stage lines (`StageRoute`) keep their own Chaikin; at a junction corner on a steep side road
+  the side road's first ribbon quad can sit a few cm–15 cm off the main road's surface; bridges are not modelled.
 
 ## How far ahead tiles and overlays are fetched (2026-11-18)
 

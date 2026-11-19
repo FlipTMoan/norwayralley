@@ -12,6 +12,8 @@ namespace Rally.Roads
         public double2 P;      // EPSG:25833
         public float RoadY;    // graded carriageway height (no lift)
         public float S;        // metres along the run
+        /// <summary>On another road's carriageway (a junction): that road's ribbon is drawn there, this one's is not.</summary>
+        public bool Covered;
     }
 
     /// <summary>A prepared run of one OSM way inside a tile: what the carve, the ribbon and the index consume (roads.js finishRun).</summary>
@@ -45,6 +47,16 @@ namespace Rally.Roads
         public float[] Heights;
     }
 
+    /// <summary>Road metres of one tile (padded, as the ribbon) by material and by where the material came from.</summary>
+    public struct SurfaceStats
+    {
+        public float AsphaltM, GravelM;
+        public float NvdbM, OsmTagM, DefaultM;
+        public int NvdbLines;                   // NVDB Vegdekke polylines passed to SetTile
+        public override string ToString() => FormattableString.Invariant(
+            $"surface {AsphaltM / 1000:0.0} km asphalt, {GravelM / 1000:0.0} km gravel; from NVDB {NvdbM / 1000:0.0} km ({NvdbLines} lines), OSM tag {OsmTagM / 1000:0.0} km, default {DefaultM / 1000:0.0} km");
+    }
+
     /// <summary>A pose for the car: position in EPSG:25833, yaw = atan2(tangent.E, tangent.N) like stage.js.</summary>
     public readonly struct RoadPose
     {
@@ -67,12 +79,22 @@ namespace Rally.Roads
         public const double Cell = 48;          // roads.js RoadNetwork cell
         public const double TilePad = 60;       // roads.js prepareChunkRoads pad
         const int FadeJ = 12;                   // junction easing: ±12 samples = ±60 m
+        /// <summary>Chaikin rounds for the plan line (roads.js uses 2, and kept junction nodes as corners): each round halves the
+        /// turn at every vertex, so four leave a 90° OSM corner as sixteen ~6° steps instead of four ~22° kinks the car and
+        /// the ribbon felt (ProfileGrader.SmoothThrough).</summary>
+        public const int SmoothRounds = 4;
+        /// <summary>Metres beyond another road's flat band over which a joining road keeps that road's height, then the
+        /// length of the smoothstep back to its own grade (EaseOntoJunctions).</summary>
+        public const double JunctionFlat = 6, JunctionRamp = 25;
+        public const double SurfaceMaxDist = RoadSurfaceIndex.DefaultMaxDist;   // roads.js assignSurfaces maxDist
+        public const int MinSurfaceRun = 4;     // samples (20 m): shorter NVDB surface flips are absorbed by their neighbour
+        enum SurfaceSource : byte { Nvdb, OsmTag, Default }
 
         sealed class Seg
         {
             public long Id; public double2 A, B; public float Ya, Yb; public LaneSpec Lanes; public bool Paved;
         }
-        sealed class GradedWay { public List<double2> Points; public double[] Heights; public int Refs; }
+        sealed class GradedWay { public List<double2> Points; public double[] Heights; public bool[] Covered; public int Refs; }
 
         readonly Dictionary<long, List<Seg>> buckets = new Dictionary<long, List<Seg>>();
         readonly Dictionary<TileKey, List<(long bucket, Seg seg)>> byTile = new Dictionary<TileKey, List<(long, Seg)>>();
@@ -83,6 +105,7 @@ namespace Rally.Roads
         readonly Dictionary<long, Utm33> nodes = new Dictionary<long, Utm33>();
         readonly Dictionary<long, (RoadLink fwd, RoadLink back, int refs)> linkRefs = new Dictionary<long, (RoadLink, RoadLink, int)>();
         readonly Dictionary<TileKey, List<long>> linksByTile = new Dictionary<TileKey, List<long>>();
+        readonly Dictionary<TileKey, SurfaceStats> surfaceByTile = new Dictionary<TileKey, SurfaceStats>();
 
         // StageRoute-compatible fields (roads.js RoadNetwork constructor).
         public string Name = "Free drive";
@@ -124,16 +147,31 @@ namespace Rally.Roads
             return tags.TryGetValue("highway", out var k) && (k == "motorway" || k == "trunk");
         }
 
+        /// <summary>The box to ask NVDB for a tile's surfaces: the padded tile plus the match distance, so every ribbon sample sees its polyline.</summary>
+        public static Bounds25833 SurfaceQueryBounds(TileKey key)
+        {
+            var b = key.Bounds; double pad = TilePad + SurfaceMaxDist;
+            return new Bounds25833(b.MinE - pad, b.MinN - pad, b.MaxE + pad, b.MaxN + pad);
+        }
+
+        /// <summary>The material split and its sources for a registered tile (default when unknown), for the overlay log.</summary>
+        public SurfaceStats SurfaceStatsFor(TileKey key) => surfaceByTile.TryGetValue(key, out var st) ? st : default;
+
         /// <summary>
         /// Prepare and register a tile's ways. <paramref name="coarseGround"/> samples the untouched 8 m DTM.
         /// Returns the runs inside the padded tile (for the ribbon mesh); heights for a way already graded by
-        /// another tile are reused, so overlapping copies agree exactly.
+        /// another tile are reused, so overlapping copies agree exactly. <paramref name="surfaces"/> (NVDB Vegdekke,
+        /// optional) sets the material per 5 m sample: the nearest polyline within <see cref="SurfaceMaxDist"/> wins,
+        /// else the OSM tag / road class (<see cref="ProfileGrader.IsPaved"/>). A run is cut where the material changes
+        /// (the pieces share the boundary sample), so each RoadPolyline, its segments and its links have one material.
         /// </summary>
-        public List<RoadPolyline> SetTile(TileKey key, RoadGraphData data, Func<Utm33, float> coarseGround)
+        public List<RoadPolyline> SetTile(TileKey key, RoadGraphData data, Func<Utm33, float> coarseGround, IReadOnlyList<RoadSurfaceLine> surfaces = null)
         {
             RemoveTile(key);
             var lines = new List<RoadPolyline>();
             if (data == null || data.Ways == null) return lines;
+            var surfaceIndex = surfaces != null && surfaces.Count > 0 ? new RoadSurfaceIndex(surfaces) : null;
+            var stats = new SurfaceStats { NvdbLines = surfaces?.Count ?? 0 };
             var b = key.Bounds;
             double minE = b.MinE - TilePad, maxE = b.MaxE + TilePad, minN = b.MinN - TilePad, maxN = b.MaxN + TilePad;
             bool Inside(double2 p) => p.x >= minE && p.x <= maxE && p.y >= minN && p.y <= maxN;
@@ -147,7 +185,9 @@ namespace Rally.Roads
             var owned = new List<(long, Seg)>();
             var ways = new List<long>();
             var tileLinks = new List<long>();
-            foreach (var way in data.Ways)
+            // Major roads first: a way is graded once and later ways ease onto the roads already graded
+            // (EaseOntoJunctions), so at a junction the main road keeps its profile and the side road ramps to it.
+            foreach (var way in System.Linq.Enumerable.OrderBy(data.Ways, w => w.Tags != null && w.Tags.TryGetValue("highway", out var hk) ? ClassOf(hk) : 9))
             {
                 var spec = ProfileGrader.LaneSpecFor(way.Tags);
                 if (spec == null || way.Nodes == null || way.Nodes.Count < 2) continue;
@@ -160,54 +200,103 @@ namespace Rally.Roads
                 {
                     var pinned = new HashSet<int>();
                     for (int i = 0; i < way.Nodes.Count; i++) if (nodeCount[NodeKey(way.Nodes[i])] > 1) pinned.Add(i);
-                    var samples = ProfileGrader.Resample(ProfileGrader.Chaikin(raw, pinned), ProfileGrader.SampleStep);
+                    var samples = ProfileGrader.ResampleEven(ProfileGrader.SmoothThrough(raw, pinned, SmoothRounds), ProfileGrader.SampleStep);
                     var ground = new double[samples.Count];
                     for (int i = 0; i < samples.Count; i++) ground[i] = coarseGround(new Utm33(samples[i].x, samples[i].y));
                     var heights = ProfileGrader.SmoothRoadHeights(ground, ProfileGrader.SampleStep);
-                    EaseOntoJunctions(way.Id, samples, heights);
-                    g = new GradedWay { Points = samples, Heights = heights };
+                    var covered = new bool[samples.Count];
+                    EaseOntoJunctions(way.Id, samples, heights, covered);
+                    g = new GradedWay { Points = samples, Heights = heights, Covered = covered };
                     graded[way.Id] = g;
                 }
                 g.Refs++;
                 ways.Add(way.Id);
-                bool paved = ProfileGrader.IsPaved(way.Tags);
+                bool osmPaved = ProfileGrader.IsPaved(way.Tags);
+                var fallback = way.Tags != null && way.Tags.TryGetValue("surface", out var st) && !string.IsNullOrEmpty(st) ? SurfaceSource.OsmTag : SurfaceSource.Default;
+                var paved = new bool[g.Points.Count];
+                var source = new SurfaceSource[g.Points.Count];
+                for (int i = 0; i < paved.Length; i++)
+                {
+                    var measured = surfaceIndex?.Nearest(g.Points[i], SurfaceMaxDist);
+                    paved[i] = measured.HasValue ? measured.Value == Surface.Asphalt : osmPaved;
+                    source[i] = measured.HasValue ? SurfaceSource.Nvdb : fallback;
+                }
+                AbsorbShortRuns(paved, MinSurfaceRun);
                 string name = way.Tags != null && way.Tags.TryGetValue("name", out var nm) ? nm : null;
                 string kind = way.Tags["highway"];
                 AddLinks(way, g, nodeCount, paved, kind, tileLinks);
-                // Split into runs inside the padded tile; runs shorter than 3 samples are noise.
+                // Split into runs inside the padded tile and at material changes; runs shorter than 3 samples are noise.
                 var run = new List<RoadSample>();
+                var runSource = new List<SurfaceSource>();
+                bool runPaved = false;
                 void Flush()
                 {
                     if (run.Count >= 3)
                     {
-                        var line = new RoadPolyline { Id = way.Id, Name = name, Kind = kind, Lanes = spec.Value, Paved = paved, Samples = run, Length = run[run.Count - 1].S };
+                        var line = new RoadPolyline { Id = way.Id, Name = name, Kind = kind, Lanes = spec.Value, Paved = runPaved, Samples = run, Length = run[run.Count - 1].S - run[0].S };
                         lines.Add(line);
                         for (int k = 0; k + 1 < run.Count; k++)
                         {
-                            var seg = new Seg { Id = way.Id, A = run[k].P, B = run[k + 1].P, Ya = run[k].RoadY, Yb = run[k + 1].RoadY, Lanes = spec.Value, Paved = paved };
+                            var seg = new Seg { Id = way.Id, A = run[k].P, B = run[k + 1].P, Ya = run[k].RoadY, Yb = run[k + 1].RoadY, Lanes = spec.Value, Paved = runPaved };
                             long bk = BucketOf((seg.A + seg.B) / 2);
                             if (!buckets.TryGetValue(bk, out var list)) buckets[bk] = list = new List<Seg>();
                             list.Add(seg);
                             owned.Add((bk, seg));
+                            float m = run[k + 1].S - run[k].S;
+                            if (runPaved) stats.AsphaltM += m; else stats.GravelM += m;
+                            switch (runSource[k + 1])
+                            {
+                                case SurfaceSource.Nvdb: stats.NvdbM += m; break;
+                                case SurfaceSource.OsmTag: stats.OsmTagM += m; break;
+                                default: stats.DefaultM += m; break;
+                            }
                         }
                     }
                     run = new List<RoadSample>();
+                    runSource.Clear();
                 }
                 float s = 0;
                 for (int i = 0; i < g.Points.Count; i++)
                 {
                     var p = g.Points[i];
                     if (!Inside(p)) { Flush(); s = 0; continue; }
+                    if (run.Count == 0) runPaved = paved[i];
+                    else if (paved[i] != runPaved)
+                    {
+                        // Material change: close the run and start the next one at its last sample (S keeps counting, so the UVs run on).
+                        var last = run[run.Count - 1]; var lastSource = runSource[runSource.Count - 1];
+                        Flush();
+                        run.Add(last); runSource.Add(lastSource);
+                        runPaved = paved[i];
+                    }
                     if (run.Count > 0) s += (float)math.distance(p, run[run.Count - 1].P);
-                    run.Add(new RoadSample { P = p, RoadY = (float)g.Heights[i], S = s });
+                    run.Add(new RoadSample { P = p, RoadY = (float)g.Heights[i], S = s, Covered = g.Covered[i] });
+                    runSource.Add(source[i]);
                 }
                 Flush();
             }
             byTile[key] = owned;
             waysByTile[key] = ways;
             linksByTile[key] = tileLinks;
+            surfaceByTile[key] = stats;
             SegmentCount += owned.Count;
             return lines;
+        }
+
+        /// <summary>Runs of one material shorter than <paramref name="min"/> samples take the material before them (or after, at the start).</summary>
+        static void AbsorbShortRuns(bool[] v, int min)
+        {
+            for (int i = 0; i < v.Length;)
+            {
+                int j = i;
+                while (j < v.Length && v[j] == v[i]) j++;
+                if (j - i < min && (i > 0 || j < v.Length))
+                {
+                    bool fill = i > 0 ? v[i - 1] : v[j];
+                    for (int k = i; k < j; k++) v[k] = fill;
+                }
+                i = j;
+            }
         }
 
         /// <summary>
@@ -215,7 +304,7 @@ namespace Rally.Roads
         /// nodes shared with another way; their graded sample is the nearest point, because Chaikin keeps
         /// pinned nodes in place but Resample's arithmetic is not bit-exact.
         /// </summary>
-        void AddLinks(RoadWay way, GradedWay g, Dictionary<long, int> nodeCount, bool paved, string kind, List<long> tileLinks)
+        void AddLinks(RoadWay way, GradedWay g, Dictionary<long, int> nodeCount, bool[] pavedAt, string kind, List<long> tileLinks)
         {
             var cuts = new List<(long node, int index)>();
             int from = 0;
@@ -252,6 +341,9 @@ namespace Rally.Roads
                     }
                 }
                 if (length < 1f) continue;
+                int pavedCount = 0;
+                for (int i = ia; i <= ib; i++) if (pavedAt[i]) pavedCount++;
+                bool paved = pavedCount * 2 >= ib - ia + 1;   // a link carries its majority material
                 var fwd = new RoadLink { Id = way.Id, From = a, To = b, Length = length, Curvature = turn / (length / 100f), Climb = math.abs(hs[hs.Length - 1] - hs[0]) / length, Paved = paved, Barred = barred, RoadClass = cls, Points = pts, Heights = hs };
                 var backPts = new List<double2>(pts); backPts.Reverse();
                 var backHs = (float[])hs.Clone(); System.Array.Reverse(backHs);
@@ -312,9 +404,9 @@ namespace Rally.Roads
         /// T-junctions, crossings) its height is eased onto that road over ±FadeJ samples (60 m), so roads
         /// meet without a step and the carve never has two heights for one spot.
         /// </summary>
-        void EaseOntoJunctions(long wayId, List<double2> samples, double[] heights)
+        void EaseOntoJunctions(long wayId, List<double2> samples, double[] heights, bool[] covered)
         {
-            if (SegmentCount == 0) return;
+            if (buckets.Count == 0) return;   // not SegmentCount: that is only summed when the tile is done, and ways of the same tile must ease onto each other too
             int lastHit = -FadeJ;
             for (int i = 0; i < samples.Count; i++)
             {
@@ -330,6 +422,34 @@ namespace Rally.Roads
                     heights[j] += delta * (1 - math.abs(k) / (double)FadeJ);
                 }
             }
+            // Near another road (its flat band plus JunctionFlat) this way takes that road's height exactly (it is flat
+            // across): the car's ground and the ribbon follow whichever centre line is nearest, so the two must agree
+            // where their surfaces overlap or a junction is a step. Beyond, the way ramps back to its own grade over
+            // JunctionRamp: the offset it took fades out with a smoothstep. Roads are graded major first, so it is the
+            // side road that conforms.
+            var ownBefore = (double[])heights.Clone();
+            var conformed = new bool[samples.Count];
+            var at = new double[samples.Count];
+            bool any = false;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                if (i > 0) at[i] = at[i - 1] + math.distance(samples[i], samples[i - 1]);
+                if (Nearest(new Utm33(samples[i].x, samples[i].y), 30, out var q) && q.Id != wayId && q.Distance <= RoadConstants.FlatHalf(q.Half) + RoadConstants.CarveApron + JunctionFlat)
+                { heights[i] = q.RoadY; conformed[i] = true; any = true; covered[i] = q.Distance <= RoadConstants.FlatHalf(q.Half); }
+            }
+            if (!any) return;
+            var own = (double[])heights.Clone();
+            for (int i = 0; i < samples.Count; i++)
+            {
+                if (conformed[i]) continue;
+                int nearest = -1; double gap = JunctionRamp;
+                for (int j = i - 1; j >= 0 && at[i] - at[j] < gap; j--) if (conformed[j]) { nearest = j; gap = at[i] - at[j]; break; }
+                for (int j = i + 1; j < samples.Count && at[j] - at[i] < gap; j++) if (conformed[j]) { nearest = j; gap = at[j] - at[i]; break; }
+                if (nearest < 0) continue;
+                // The offset the conformed sample took fades out (smoothstep), the way keeps its own grade under it.
+                double t = gap / JunctionRamp; t = t * t * (3 - 2 * t);
+                heights[i] = own[i] + (heights[nearest] - ownBefore[nearest]) * (1 - t);
+            }
         }
 
         public void RemoveTile(TileKey key)
@@ -343,6 +463,7 @@ namespace Rally.Roads
             }
             SegmentCount -= owned.Count;
             byTile.Remove(key);
+            surfaceByTile.Remove(key);
             foreach (var id in waysByTile[key]) if (graded.TryGetValue(id, out var g) && --g.Refs <= 0) graded.Remove(id);
             waysByTile.Remove(key);
             foreach (var lk in linksByTile[key])
@@ -361,7 +482,10 @@ namespace Rally.Roads
         {
             var q = new double2(p.E, p.N);
             int bx = (int)math.floor(q.x / Cell), bz = (int)math.floor(q.y / Cell), r = (int)math.ceil(limit / Cell);
-            Seg best = null; double bestD = double.PositiveInfinity, bestT = 0;
+            // Ranked by the distance past the road's flat band, not to its centre line: where two roads overlap (a
+            // junction) the point belongs to the road whose flat surface it is on, so a wide road's shoulder is not
+            // handed to a narrow side road's falling verge. Away from junctions this is the nearest road as before.
+            Seg best = null; double bestD = double.PositiveInfinity, bestT = 0, bestScore = double.PositiveInfinity;
             for (int dj = -r; dj <= r; dj++)
                 for (int di = -r; di <= r; di++)
                 {
@@ -373,7 +497,9 @@ namespace Rally.Roads
                         double l2 = math.lengthsq(ab); if (l2 == 0) l2 = 1;
                         double t = math.clamp(math.dot(q - seg.A, ab) / l2, 0, 1);
                         double d = math.distance(q, seg.A + ab * t);
-                        if (d < bestD) { bestD = d; best = seg; bestT = t; }
+                        if (d > limit) continue;
+                        double score = d - RoadConstants.FlatHalf(seg.Lanes.Half);
+                        if (score < bestScore) { bestScore = score; bestD = d; best = seg; bestT = t; }
                     }
                 }
             if (best == null || bestD > limit) { hit = default; return false; }
@@ -401,7 +527,7 @@ namespace Rally.Roads
                     if (!buckets.TryGetValue(Key(bx, bz), out var list)) continue;
                     foreach (var seg in list)
                     {
-                        float flat = RoadConstants.FlatHalf(seg.Lanes.Half), shoulder = RoadProfile.ShoulderFor(seg.Lanes.Half, seg.Lanes.Cut), reach = flat + shoulder;
+                        float flat = RoadConstants.FlatHalf(seg.Lanes.Half) + RoadConstants.CarveApron, shoulder = RoadProfile.ShoulderFor(seg.Lanes.Half, seg.Lanes.Cut), reach = flat + shoulder;
                         double2 lo = math.min(seg.A, seg.B) - reach, hi = math.max(seg.A, seg.B) + reach;
                         if (hi.x < bounds.MinE || lo.x > bounds.MaxE || hi.y < bounds.MinN || lo.y > bounds.MaxN) continue;
                         output.Add(new CarveSegment

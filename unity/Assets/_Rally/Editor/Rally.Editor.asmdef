@@ -4,6 +4,7 @@
   "references": [
     "Rally.Core",
     "Rally.World",
+    "Rally.Roads",
     "Rally.Vehicle",
     "Rally.Actors",
     "Rally.Gameplay",

@@ -27,6 +27,8 @@ namespace Rally.World
         public const int MaxVisible = 8192;      // per (species, LOD) bucket per frame
         public const int Buckets = VegetationSetSO.SpeciesCount * VegetationSetSO.Lods;
         public float Density = 1f, Scale = 1f, DrawDistance = 900f;
+        /// <summary>Instances submitted last frame (CPU path; the GPU path culls on the GPU and reports −1).</summary>
+        public int Drawn { get; private set; } = -1;
 
         readonly VegetationSetSO set;
         readonly ComputeShader cs;
@@ -47,8 +49,9 @@ namespace Rally.World
         // CPU path
         NativeArray<TreeInstance> cpuInstances;
         NativeArray<int> cpuCounts, jobCount;
-        NativeArray<Matrix4x4> matrices;   // Buckets × MaxVisible, binned once per frame
-        readonly int[] bucketCounts = new int[Buckets];
+        NativeArray<Matrix4x4> matrices;   // Buckets × MaxVisible, binned once per frame by TreeCullJob
+        NativeArray<int> bucketCounts, cullTiles;
+        NativeArray<float4> cullPlanes, cullLod;
         static readonly int OffsetId = Shader.PropertyToID("_InstanceOffset"), BillboardId = Shader.PropertyToID("_Billboard"), SnowLineId = Shader.PropertyToID("_TreeSnowLine");
 
         public VegetationRenderer(VegetationSetSO set, ComputeShader scatterShader, TileAtlas coarseAtlas, TreeIndex treeIndex)
@@ -101,6 +104,10 @@ namespace Rally.World
                 cpuCounts = new NativeArray<int>(slots, Allocator.Persistent);
                 jobCount = new NativeArray<int>(1, Allocator.Persistent);
                 matrices = new NativeArray<Matrix4x4>(Buckets * MaxVisible, Allocator.Persistent);
+                bucketCounts = new NativeArray<int>(Buckets, Allocator.Persistent);
+                cullTiles = new NativeArray<int>(slots, Allocator.Persistent);
+                cullPlanes = new NativeArray<float4>(6, Allocator.Persistent);
+                cullLod = new NativeArray<float4>(VegetationSetSO.SpeciesCount, Allocator.Persistent);
             }
         }
 
@@ -231,39 +238,36 @@ namespace Rally.World
             }
             else
             {
-                // One pass over every instance: LOD + frustum, binned per (species, LOD) bucket, then one
-                // instanced draw per bucket. Tint and snow come from the shader (position hash, _TreeSnowLine).
+                // Tiles first (whole tile out of range or out of view: skipped), then TreeCullJob over the trees of the
+                // rest: LOD + frustum, binned per (species, LOD) bucket, then one instanced draw per bucket. Tint and
+                // snow come from the shader (position hash, _TreeSnowLine).
                 var camPos = (float3)cam.transform.position;
-                for (int sp = 0; sp < VegetationSetSO.SpeciesCount; sp++) protoLod[sp] = set.LodFor(sp, DrawDistance);
+                for (int sp = 0; sp < VegetationSetSO.SpeciesCount; sp++) { protoLod[sp] = set.LodFor(sp, DrawDistance); cullLod[sp] = protoLod[sp]; }
+                for (int p = 0; p < 6; p++) cullPlanes[p] = new float4((float3)planes[p].normal, planes[p].distance);
                 float snowLine = 0, nearest = float.MaxValue;
-                System.Array.Clear(bucketCounts, 0, Buckets);
+                int tileCount = 0;
                 for (int s = 0; s < slots; s++)
                 {
                     var tile = bySlot[s];
-                    if (tile == null) continue;
+                    if (tile == null || cpuCounts[s] == 0) continue;
                     float2 o = originsCpu[s].xy;
                     float dTile = math.distance(o, camPos.xz);
                     if (dTile < nearest) { nearest = dTile; snowLine = tile.SnowLine; }
-                    // Whole tile out of range or out of view: skip its instances (WebGL 2 runs this loop on the CPU every frame).
                     float size = tile.Key.SizeM;
                     var tb = new Bounds(new Vector3(o.x + size / 2, camPos.y, o.y + size / 2), new Vector3(size, 4000, size));
                     if (math.sqrt(tb.SqrDistance(camPos)) > DrawDistance || !GeometryUtility.TestPlanesAABB(planes, tb)) continue;
-                    int baseIdx = s * Capacity;
-                    for (int k = 0; k < cpuCounts[s]; k++)
-                    {
-                        var t = cpuInstances[baseIdx + k];
-                        var world = new float3(t.Pos.x + o.x, t.Pos.y, t.Pos.z + o.y);
-                        float d = math.distance(world, camPos);
-                        var ld = protoLod[t.Species];
-                        if (d > ld.w) continue;
-                        int lod = d < ld.x ? 0 : d < ld.y ? 1 : d < ld.z ? 2 : 3;
-                        int b = (int)t.Species * VegetationSetSO.Lods + lod;
-                        if (bucketCounts[b] >= MaxVisible) continue;
-                        if (!GeometryUtility.TestPlanesAABB(planes, new Bounds(world + new float3(0, 11 * t.Scale, 0), new Vector3(16, 24, 16) * t.Scale))) continue;
-                        matrices[b * MaxVisible + bucketCounts[b]++] = Matrix4x4.TRS(world, Quaternion.Euler(0, math.degrees(t.Yaw), 0), Vector3.one * t.Scale);
-                    }
+                    cullTiles[tileCount++] = s;
                 }
+                new TreeCullJob
+                {
+                    Capacity = Capacity, MaxVisible = MaxVisible, Lods = VegetationSetSO.Lods, TileCount = tileCount, CamPos = camPos,
+                    Instances = cpuInstances, Counts = cpuCounts, Origins = originsCpu, Tiles = cullTiles, Planes = cullPlanes, ProtoLod = cullLod,
+                    BucketCounts = bucketCounts, Matrices = matrices,
+                }.Run();
                 Shader.SetGlobalFloat(SnowLineId, snowLine);
+                int drawn = 0;
+                for (int b = 0; b < Buckets; b++) drawn += bucketCounts[b];
+                Drawn = drawn;
                 for (int b = 0; b < Buckets; b++)
                 {
                     var mesh = MeshFor(b);
@@ -293,7 +297,7 @@ namespace Rally.World
         {
             originsCpu.Dispose(); zero.Dispose(); tileOrigins?.Dispose();
             instances?.Dispose(); counts?.Dispose(); visible?.Dispose(); drawCounts?.Dispose(); args?.Dispose();
-            if (cpuInstances.IsCreated) { cpuInstances.Dispose(); cpuCounts.Dispose(); jobCount.Dispose(); matrices.Dispose(); }
+            if (cpuInstances.IsCreated) { cpuInstances.Dispose(); cpuCounts.Dispose(); jobCount.Dispose(); matrices.Dispose(); bucketCounts.Dispose(); cullTiles.Dispose(); cullPlanes.Dispose(); cullLod.Dispose(); }
             foreach (var m in materials) if (m != null) RallyObjects.Destroy(m);
         }
     }
