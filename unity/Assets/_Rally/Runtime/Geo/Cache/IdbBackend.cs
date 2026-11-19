@@ -27,6 +27,7 @@ namespace Rally.Geo
         [DllImport("__Internal")] static extern void RallyIdbList(int id, StringCallback cb);
         [DllImport("__Internal")] static extern void RallyIdbFree(IntPtr ptr);
         [DllImport("__Internal")] static extern void RallyStoragePersist();
+        [DllImport("__Internal")] static extern void RallyStorageEstimate(int id, EstimateCallback cb);
 #else
         static void RallyIdbOpen(int id, BoolCallback cb) => cb(id, 0);
         static void RallyIdbGet(int id, string key, GetCallback cb) => cb(id, 0, IntPtr.Zero, 0, 0, null, 0, 0);
@@ -36,11 +37,13 @@ namespace Rally.Geo
         static void RallyIdbList(int id, StringCallback cb) => cb(id, "[]");
         static void RallyIdbFree(IntPtr ptr) { }
         static void RallyStoragePersist() { }
+        static void RallyStorageEstimate(int id, EstimateCallback cb) => cb(id, -1, -1);
 #endif
 
         public delegate void BoolCallback(int id, int ok);
         public delegate void StringCallback(int id, string json);
         /// <summary>found, value pointer + length (malloc'd by JS; freed here), isText, kind, size, at.</summary>
+        public delegate void EstimateCallback(int id, double quota, double usage);
         public delegate void GetCallback(int id, int found, IntPtr value, int length, int isText, string kind, double size, double at);
 
         static readonly Dictionary<int, object> waiting = new Dictionary<int, object>();
@@ -59,6 +62,24 @@ namespace Rally.Geo
 
         [MonoPInvokeCallback(typeof(StringCallback))]
         static void OnString(int id, string json) => Take<string>(id)?.TrySetResult(json);
+
+        [MonoPInvokeCallback(typeof(EstimateCallback))]
+        static void OnEstimate(int id, double quota, double usage)
+        {
+            if (waiting.TryGetValue(id, out var t) && t is TaskCompletionSource<StorageRoom> tcs)
+            {
+                waiting.Remove(id);
+                tcs.TrySetResult(new StorageRoom(-1, -1, quota < 0 ? -1 : (long)quota, usage < 0 ? -1 : (long)usage));
+            }
+        }
+
+        /// <summary>The browser's quota and the origin's usage (navigator.storage.estimate); the disk itself is hidden from web pages.</summary>
+        public Task<StorageRoom> Room()
+        {
+            var tcs = new TaskCompletionSource<StorageRoom>();
+            RallyStorageEstimate(Register(tcs), OnEstimate);
+            return tcs.Task;
+        }
 
         [MonoPInvokeCallback(typeof(GetCallback))]
         static void OnGet(int id, int found, IntPtr value, int length, int isText, string kind, double size, double at)

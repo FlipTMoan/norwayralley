@@ -143,6 +143,18 @@ mergeInto(LibraryManager.library, {
 
   RallyIdbFree: function (ptr) { if (ptr) _free(ptr); },
 
+  /** navigator.storage.estimate(): the origin's quota and usage in bytes; −1 each when the browser cannot tell. */
+  RallyStorageEstimate: function (id, cb) {
+    var done = function (quota, usage) { {{{ makeDynCall('vidd', 'cb') }}}(id, quota, usage); };
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        navigator.storage.estimate().then(function (e) { done(e.quota || -1, e.usage || 0); }, function () { done(-1, -1); });
+        return;
+      }
+    } catch (e) { /* unsupported */ }
+    done(-1, -1);
+  },
+
   /** cache.js requestPersistence: ask the browser to keep the store across storage pressure (best effort). */
   RallyStoragePersist: function () {
     try {

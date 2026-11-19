@@ -3,9 +3,9 @@
 // ScatterTile: one thread per 16 m land-cover cell of a coarse tile (stream.js scatterChunk):
 //   expected trees = crown cover × 4.5 (TREES_PER_CELL) × density scale, n = floor(expected + rand);
 //   each tree jittered inside the cell, dropped where the ground is sea (< 1.5 m), too steep (> 0.62),
-//   on a road / pad (carve mask), on water, fields or built-up land, or above the shrub line.
-//   Species from SR16 (1 spruce → 0, 2 pine → 1, 3 deciduous → 2 birch), with the birch share rising
-//   toward the tree line (mountain birch, prototype 3) and shrubs (4) in the band above it.
+//   on a road / pad (carve mask), or where Prototype() says no (fields, meadows, water, built-up land,
+//   bare rock, above the shrub band). Species from SR16 (1 spruce → 0, 2 pine → 1, 3 deciduous → 2 birch),
+//   bog pines and heath shrubs by class, mountain birch (3) toward the tree line and shrubs (4) above it.
 // Cull: per frame, every stored instance → frustum + distance → LOD bucket (species × 4 LODs), written
 //   with its world position (tile origin added) for RenderMeshIndirect.
 #pragma kernel ScatterTile
@@ -16,6 +16,7 @@
 #define TREES_PER_CELL 4.5
 #define MAX_PER_CELL 8
 #define LOD_BUCKETS 20      // 5 species x 4 LODs
+#define CLASS_STEP 25.0     // LandcoverSplat.ClassStep: cover class x 25 in the B channel
 
 struct TreeInstance          // mirrors Rally.World.TreeInstance (32 bytes)
 {
@@ -27,7 +28,7 @@ struct TreeInstance          // mirrors Rally.World.TreeInstance (32 bytes)
     float snow;              // 0..1 snow on the upper faces
 };
 
-Texture2DArray<float4> _CoverAtlas;     // R species*64, G crown, B class*28
+Texture2DArray<float4> _CoverAtlas;     // R species*64, G crown, B class*25
 Texture2DArray<float> _HeightsCoarse;
 Texture2DArray<float> _MaskCoarse;
 SamplerState sampler_linear_clamp;
@@ -39,7 +40,7 @@ RWStructuredBuffer<uint> _DrawCounts;          // LOD_BUCKETS
 RWStructuredBuffer<uint> _Args;                // LOD_BUCKETS x 5 (IndirectDrawIndexedArgs), [1] = instanceCount
 float4 _FrustumPlanes[6];
 float3 _CameraPos;
-float4 _LodDistances;        // x,y,z switch distances, w draw distance
+float4 _ProtoLod[5];         // per prototype: x,y,z LOD switch distances, w draw distance (VegetationSetSO.LodFor)
 int _Slot, _Capacity, _Slots, _MaxVisible, _Res, _N;
 float _CellM, _CoverCell, _Density, _TreeLine, _SnowLine, _Scale;
 uint _Seed;
@@ -57,6 +58,23 @@ float Rand(uint i, uint j, uint k) { return Hash3(uint3(i, j, k ^ _Seed)) * (1.0
 
 float HeightAt(float2 local) { return _HeightsCoarse.SampleLevel(sampler_linear_clamp, float3((local / _CellM + 0.5) / _N, _Slot), 0); }
 
+// ScatterJob.Prototype, line for line: −1 = no tree here. One exit (and the bog-pine scale computed by the caller):
+// early returns and an out parameter both drew "potentially uninitialized" warnings from the GLSL path.
+int Prototype(uint species, uint cls, float h, float r)
+{
+    bool none = cls == 2 || cls == 3 || cls == 4 || cls == 6 || cls == 7       // field, meadow, water, built-up, bare rock
+             || h > _TreeLine + 150;
+    int proto = species == 2 ? 1 : species == 3 ? 2 : 0;
+    if (cls == 5) proto = 1;                                                     // bog pine
+    else if (cls == 8) proto = r < 0.75 ? 4 : 3;                                 // heath / scrub
+    else if (r < 0.12) proto = proto == 2 ? 0 : 2;                               // mixed stands (stream.js)
+    float birchBias = saturate((h - (_TreeLine - 300)) / 300);
+    if (proto <= 1 && r < birchBias * 0.7) proto = 3;                            // mountain birch near the limit
+    if (proto == 2 && birchBias > 0.5) proto = 3;
+    if (h > _TreeLine) { none = none || r > 0.35; proto = 4; }                   // sparse shrubs above the tree line
+    return none ? -1 : proto;
+}
+
 [numthreads(8, 8, 1)]
 void ScatterTile(uint3 id : SV_DispatchThreadID)
 {
@@ -64,10 +82,9 @@ void ScatterTile(uint3 id : SV_DispatchThreadID)
     float4 cover = _CoverAtlas[uint3(id.xy, _Slot)];
     uint species = (uint)round(cover.r * 255.0 / 64.0);
     float crown = cover.g;
-    uint cls = (uint)round(cover.b * 255.0 / 28.0);
-    if (cls == 4 || cls == 6 || cls == 2) return;             // water, built, field
-    float expected = crown * TREES_PER_CELL * _Density;
-    if (species == 0 && crown <= 0) return;
+    uint cls = (uint)round(cover.b * 255.0 / CLASS_STEP);
+    if (crown <= 0) return;
+    float expected = crown * TREES_PER_CELL * _Density * cover.a;   // cover.a: LandcoverSplat.Budget (tile budget, road corridor)
     uint n = min((uint)floor(expected + Rand(id.x, id.y, 0)), (uint)MAX_PER_CELL);
     for (uint k = 0; k < n; k++)
     {
@@ -79,15 +96,11 @@ void ScatterTile(uint3 id : SV_DispatchThreadID)
         if (length(float2(hx, hz)) / 4.0 > 0.62) continue;        // too steep
         float mask = _MaskCoarse.SampleLevel(sampler_linear_clamp, float3((local / _CellM + 0.5) / _N, _Slot), 0);
         if (mask > 0.25) continue;                                // road band, terrace or building pad
-        if (h > _TreeLine + 150) continue;                        // above the shrub band
-        // Species: SR16 first, birch share rising toward the tree line, shrubs above it.
-        uint proto = species == 2 ? 1 : species == 3 ? 2 : 0;
         float r = Rand(id.x, id.y, 3 + k * 4);
-        float birchBias = saturate((h - (_TreeLine - 300)) / 300);
-        if (r < 0.12) proto = proto == 2 ? 0 : 2;                 // mixed stands (stream.js)
-        if (r < birchBias * 0.7) proto = 3;                       // mountain birch near the limit
-        if (h > _TreeLine) { proto = 4; if (r > 0.35) continue; } // sparse shrubs above the tree line
-        float scale = (0.8 + Rand(id.x, id.y, 4 + k * 4) * 0.5) * (0.75 + crown * 0.35) * _Scale;
+        int proto = Prototype(species, cls, h, r);
+        float scaleMul = cls == 5 ? 0.55 : 1;                                     // stunted bog pines
+        if (proto < 0) continue;
+        float scale = (0.75 + Rand(id.x, id.y, 4 + k * 4) * 0.45) * (0.85 + crown * 0.25) * scaleMul * _Scale;
         uint idx;
         InterlockedAdd(_Counts[_Slot], 1, idx);
         if (idx >= (uint)_Capacity) return;
@@ -95,7 +108,7 @@ void ScatterTile(uint3 id : SV_DispatchThreadID)
         t.pos = float3(local.x, h, local.y);
         t.scale = scale;
         t.yaw = Rand(id.x, id.y, 5 + k * 4) * 6.2831853;
-        t.species = proto;
+        t.species = (uint)proto;
         t.tint = Rand(id.x, id.y, 6 + k * 4);
         t.snow = saturate((h - _SnowLine + 150) / 150);
         _Instances[_Slot * _Capacity + idx] = t;
@@ -113,11 +126,12 @@ void Cull(uint3 id : SV_DispatchThreadID)
     TreeInstance t = _Instances[id.x];
     float3 world = t.pos + float3(_TileOrigins[slot].x, 0, _TileOrigins[slot].y);
     float d = distance(world, _CameraPos);
-    if (d > _LodDistances.w) return;
-    float radius = 8 * t.scale;
+    float4 ld = _ProtoLod[min(t.species, 4u)];
+    if (d > ld.w) return;
+    float radius = 14 * t.scale;                              // a 22 m spruce: sphere around its middle
     [unroll] for (int p = 0; p < 6; p++)
-        if (dot(_FrustumPlanes[p].xyz, world + float3(0, radius, 0)) + _FrustumPlanes[p].w < -radius) return;
-    uint lod = d < _LodDistances.x ? 0 : d < _LodDistances.y ? 1 : d < _LodDistances.z ? 2 : 3;
+        if (dot(_FrustumPlanes[p].xyz, world + float3(0, 10 * t.scale, 0)) + _FrustumPlanes[p].w < -radius) return;
+    uint lod = d < ld.x ? 0 : d < ld.y ? 1 : d < ld.z ? 2 : 3;
     uint bucket = t.species * 4 + lod;
     uint idx;
     InterlockedAdd(_DrawCounts[bucket], 1, idx);

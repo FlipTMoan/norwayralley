@@ -22,7 +22,7 @@ namespace Rally.World
     public sealed class TreeIndex : System.IDisposable
     {
         public const float BucketM = 32f;
-        NativeParallelMultiHashMap<int2, TreeHit> map = new NativeParallelMultiHashMap<int2, TreeHit>(65536, Allocator.Persistent);
+        NativeParallelMultiHashMap<int2, TreeHit> map = new NativeParallelMultiHashMap<int2, TreeHit>(262144, Allocator.Persistent);
         readonly Dictionary<TileKey, List<int2>> keysByTile = new Dictionary<TileKey, List<int2>>();
         readonly HashSet<int2> seen = new HashSet<int2>();
 

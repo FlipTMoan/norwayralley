@@ -57,11 +57,35 @@ namespace Rally.Track
             heading = math.normalizesafe(startHeading, new float2(0, 1));
         }
 
+        /// <summary>
+        /// A walk whose first edge is given (the road beside the start pin, see RoadGraphEdges.StartNear): it goes
+        /// into the first sector as is and the random walk carries on from its far end, heading along it.
+        /// </summary>
+        public RoadWalk(IRoadEdges graph, ulong seed, in RoadEdge first)
+            : this(graph, seed, first.To, (float2)graph.NodePos(first.To).Minus(graph.NodePos(first.From)))
+        {
+            hasFirst = true;
+            this.first = first;
+        }
+
+        bool hasFirst;
+        RoadEdge first;
+
         /// <summary>Appends about one sector of road; false when the walk is stuck (dead end, everything used).</summary>
         public bool ExtendSector()
         {
             LastSector.Clear();
             float added = 0;
+            if (hasFirst)
+            {
+                hasFirst = false;
+                usedEdges.Add(Key(first.From, first.To));
+                usedEdges.Add(Key(first.To, first.From));
+                edges.Add(first);
+                Length += first.Length;
+                LastSector.Add(first);
+                added += first.Length;
+            }
             while (added < SectorLength)
             {
                 if (!Step(out var e)) break;

@@ -280,6 +280,33 @@ namespace Rally.Roads
             return best;
         }
 
+        /// <summary>True once a tile's road answer has been registered (even an empty one): the endless start waits for these.</summary>
+        public bool HasTile(TileKey key) => byTile.ContainsKey(key);
+
+        /// <summary>
+        /// The junction-to-junction link nearest to a point within <paramref name="limit"/> m (barred links skipped),
+        /// with the index of its closest graded sample. An endless stage starts here rather than at the nearest
+        /// junction node: on a long rural road the junctions can be kilometres apart while the road is metres away.
+        /// One pass over every link, so call it once per stage, not per frame.
+        /// </summary>
+        public RoadLink NearestLink(Utm33 p, double limit, out int sample)
+        {
+            RoadLink best = null; sample = 0;
+            double bestD = limit * limit;
+            var q = new double2(p.E, p.N);
+            foreach (var r in linkRefs.Values)
+            {
+                var l = r.fwd;
+                if (l.Barred) continue;
+                for (int i = 0; i < l.Points.Count; i++)
+                {
+                    double d = math.distancesq(l.Points[i], q);
+                    if (d < bestD) { bestD = d; best = l; sample = i; }
+                }
+            }
+            return best;
+        }
+
         /// <summary>
         /// roads.js junction easing: wherever this way meets a road already in the network (its ends,
         /// T-junctions, crossings) its height is eased onto that road over ±FadeJ samples (60 m), so roads

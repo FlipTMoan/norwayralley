@@ -10,6 +10,9 @@ namespace Rally.Geo
         readonly Dictionary<string, CacheEntry> map = new Dictionary<string, CacheEntry>();
 
         public Task<bool> Available() => Task.FromResult(true);
+        /// <summary>What <see cref="Room"/> reports; tests set it to simulate a full disk or a small browser quota.</summary>
+        public StorageRoom StorageRoom = StorageRoom.Unknown;
+        public Task<StorageRoom> Room() => Task.FromResult(StorageRoom);
         public Task<CacheEntry> Get(string key) => Task.FromResult(map.TryGetValue(key, out var e) ? e : null);
         public Task Put(CacheEntry entry) { map[entry.Key] = entry; return Task.CompletedTask; }
         public Task Delete(string key) { map.Remove(key); return Task.CompletedTask; }

@@ -18,7 +18,7 @@ namespace Rally.World
     /// </summary>
     public sealed class TileWorld : IGround, IDisposable
     {
-        public const int CoarseSlices = 64, FineSlices = 32, SplatRes = 128;
+        public const int CoarseSlices = 96, FineSlices = 32, SplatRes = 128;   // 96: view ring to just past the horizon + drop hysteresis (TileScheduler.DropRadius); ~0.7 MB GPU per slice
         public readonly TileScheduler Scheduler = new TileScheduler();
         public readonly Dictionary<TileKey, TerrainTile> Tiles = new Dictionary<TileKey, TerrainTile>();
         public readonly TileAtlas CoarseAtlas, FineAtlas;
@@ -39,7 +39,7 @@ namespace Rally.World
         readonly ICarver carver;
         readonly List<CarveSegment> segs = new List<CarveSegment>(4096);
         NativeArray<CarveSegment> segsNative;
-        NativeArray<Color32> splatScratch, coverScratch;
+        NativeArray<Color32> splatScratch, splat2Scratch, coverScratch;
         readonly List<Utm33> roadPoints = new List<Utm33>(2048);
         GameObject sea;
         Utm33 lastTableFocus;
@@ -82,6 +82,7 @@ namespace Rally.World
             Binding.Bind();
             segsNative = new NativeArray<CarveSegment>(4096, Allocator.Persistent);
             splatScratch = new NativeArray<Color32>(SplatRes * SplatRes, Allocator.Persistent);
+            splat2Scratch = new NativeArray<Color32>(SplatRes * SplatRes, Allocator.Persistent);
             coverScratch = new NativeArray<Color32>(SplatRes * SplatRes, Allocator.Persistent);
             Root = new GameObject("World").transform;
             Scheduler.Created += OnCreated;
@@ -189,8 +190,12 @@ namespace Rally.World
             var key = tile.Key;
             var worldOrigin = FloatingOrigin.ToWorld(key.Origin, 0);
             view.Features = features; view.Cover = cover;
-            LandcoverSplat.Build(cover, features, tile.Grid, tile.Latitude, SplatRes, splatScratch, coverScratch);
+            LandcoverSplat.Build(cover, features, tile.Grid, tile.Latitude, SplatRes, splatScratch, splat2Scratch, coverScratch);
+            float budget = LandcoverSplat.Budget(coverScratch, SplatRes, (i, j) => Roads != null && Roads.Nearest(key.Origin + new double2((i + 0.5) * 64, (j + 0.5) * 64), 260, out _),
+                VegetationRenderer.Capacity, Vegetation != null ? Vegetation.Density : 1f);
+            if (budget < 1f) RallyLog.Info($"overlay: {key} forest thinned to {budget:P0} of the land-cover density (tree budget {VegetationRenderer.Capacity} per tile)");
             CoarseAtlas.UploadSlice(CoarseAtlas.Splat, splatScratch, tile.Slice);
+            CoarseAtlas.UploadSlice(CoarseAtlas.Splat2, splat2Scratch, tile.Slice);
             CoarseAtlas.UploadSlice(CoarseAtlas.Cover, coverScratch, tile.Slice);
             if (!CoarseAtlas.Compute) { if (tile.Cover.IsCreated) tile.Cover.Dispose(); tile.Cover = new NativeArray<Color32>(coverScratch, Allocator.Persistent); }
             view.Water = Water.Build(features, key, p => tile.SampleBase(p));
@@ -326,7 +331,7 @@ namespace Rally.World
             Tiles.Clear();
             Vegetation?.Dispose(); TreeColliders?.Dispose(); PropColliders?.Dispose(); Wake?.Dispose(); Clipmap?.Dispose();
             Trees.Dispose(); Binding.Dispose(); carver.Dispose(); CoarseAtlas.Dispose(); FineAtlas.Dispose();
-            segsNative.Dispose(); splatScratch.Dispose(); coverScratch.Dispose();
+            segsNative.Dispose(); splatScratch.Dispose(); splat2Scratch.Dispose(); coverScratch.Dispose();
             if (Root != null) RallyObjects.Destroy(Root.gameObject);
         }
     }

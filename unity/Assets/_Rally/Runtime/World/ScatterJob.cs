@@ -30,7 +30,7 @@ namespace Rally.World
     [BurstCompile]
     public struct ScatterJob : IJob
     {
-        public const float TreesPerCell = 4.5f;   // stream.js TREES_PER_CELL
+        public const float TreesPerCell = 4.5f;   // stream.js TREES_PER_CELL (also LandcoverSplat.Budget)
         public const int MaxPerCell = 8;
 
         public int Res, N, Capacity;
@@ -65,6 +65,29 @@ namespace Rally.World
             return Mask[r * N + c] / 255f;
         }
 
+        /// <summary>
+        /// The species / skip rules of one tree, shared by both paths (Scatter.compute has the same lines):
+        /// trees only where the cover texture has crown (LandcoverSplat), never on fields, meadows, water, built-up
+        /// land or bare rock; bogs carry stunted pines, heath shrubs and a few mountain birches; mixed stands swap
+        /// 12 % between conifers and birch (stream.js); toward the tree line conifers give way to mountain birch,
+        /// above it only shrubs in a 150 m band. Returns the prototype, or −1 to skip; <paramref name="scaleMul"/> shrinks bog pines.
+        /// </summary>
+        public static int Prototype(uint species, uint cls, float h, float r, float treeLine, out float scaleMul)
+        {
+            scaleMul = 1f;
+            if (cls == 2 || cls == 3 || cls == 4 || cls == 6 || cls == 7) return -1;
+            if (h > treeLine + 150) return -1;
+            int proto = species == 2 ? 1 : species == 3 ? 2 : 0;
+            if (cls == 5) { scaleMul = 0.55f; proto = 1; }                       // bog pine
+            else if (cls == 8) proto = r < 0.75f ? 4 : 3;                         // heath / scrub
+            else if (r < 0.12f) proto = proto == 2 ? 0 : 2;                       // mixed stands
+            float birchBias = math.saturate((h - (treeLine - 300)) / 300);
+            if (proto <= 1 && r < birchBias * 0.7f) proto = 3;                    // conifers give way to mountain birch
+            if (proto == 2 && birchBias > 0.5f) proto = 3;
+            if (h > treeLine) { if (r > 0.35f) return -1; proto = 4; }            // sparse shrubs above the tree line
+            return proto;
+        }
+
         public void Execute()
         {
             int count = 0;
@@ -74,10 +97,9 @@ namespace Rally.World
                     var cover = Cover[j * Res + i];
                     uint species = (uint)math.round(cover.r / 64f);
                     float crown = cover.g / 255f;
-                    uint cls = (uint)math.round(cover.b / 28f);
-                    if (cls == 4 || cls == 6 || cls == 2) continue;
-                    if (species == 0 && crown <= 0) continue;
-                    float expected = crown * TreesPerCell * Density;
+                    uint cls = (uint)math.round(cover.b / (float)LandcoverSplat.ClassStep);
+                    if (crown <= 0) continue;
+                    float expected = crown * TreesPerCell * Density * (cover.a / 255f);   // LandcoverSplat.Budget
                     uint n = math.min((uint)math.floor(expected + Rand((uint)i, (uint)j, 0)), (uint)MaxPerCell);
                     for (uint k = 0; k < n && count < Capacity; k++)
                     {
@@ -88,18 +110,14 @@ namespace Rally.World
                         float hz = HeightAt(local + new float2(0, 2)) - HeightAt(local - new float2(0, 2));
                         if (math.length(new float2(hx, hz)) / 4f > 0.62f) continue;
                         if (MaskAt(local) > 0.25f) continue;
-                        if (h > TreeLine + 150) continue;
-                        uint proto = species == 2 ? 1u : species == 3 ? 2u : 0u;
                         float r = Rand((uint)i, (uint)j, 3 + k * 4);
-                        float birchBias = math.saturate((h - (TreeLine - 300)) / 300);
-                        if (r < 0.12f) proto = proto == 2 ? 0u : 2u;
-                        if (r < birchBias * 0.7f) proto = 3;
-                        if (h > TreeLine) { proto = 4; if (r > 0.35f) continue; }
-                        float scale = (0.8f + Rand((uint)i, (uint)j, 4 + k * 4) * 0.5f) * (0.75f + crown * 0.35f) * Scale;
+                        int proto = Prototype(species, cls, h, r, TreeLine, out float scaleMul);
+                        if (proto < 0) continue;
+                        float scale = (0.75f + Rand((uint)i, (uint)j, 4 + k * 4) * 0.45f) * (0.85f + crown * 0.25f) * scaleMul * Scale;
                         Out[count++] = new TreeInstance
                         {
                             Pos = new float3(local.x, h, local.y), Scale = scale, Yaw = Rand((uint)i, (uint)j, 5 + k * 4) * 6.2831853f,
-                            Species = proto, Tint = Rand((uint)i, (uint)j, 6 + k * 4), Snow = math.saturate((h - SnowLine + 150) / 150),
+                            Species = (uint)proto, Tint = Rand((uint)i, (uint)j, 6 + k * 4), Snow = math.saturate((h - SnowLine + 150) / 150),
                         };
                     }
                 }

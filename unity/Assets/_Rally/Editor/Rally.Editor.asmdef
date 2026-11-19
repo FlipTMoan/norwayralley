@@ -11,6 +11,7 @@
     "Rally.UI",
     "Rally.Net",
     "Unity.Mathematics",
+    "Unity.Collections",
     "Unity.RenderPipelines.Universal.Runtime",
     "Unity.RenderPipelines.Core.Runtime",
     "Unity.RenderPipelines.Universal.Editor",

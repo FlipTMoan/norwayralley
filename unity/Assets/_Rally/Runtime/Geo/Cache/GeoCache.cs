@@ -7,13 +7,23 @@ namespace Rally.Geo
 {
     /// <summary>
     /// Port of cache.js <c>createCache</c>: every geodata answer (DEM tiles, Overpass, NVDB, SR16, OSRM,
-    /// map tiles) is stored under its canonical URL with a byte budget (10 GB) and least-recently-used
+    /// map tiles) is stored under its canonical URL with a byte budget (at most 32 GB, keeping 10 % of the disk free) and least-recently-used
     /// eviction. A hit never touches the network, which is both the speed-up and the resilience: a
     /// place driven once keeps working when a service is down. Parallel asks for one key share one load.
     /// </summary>
     public sealed class GeoCache : IGeoCache
     {
-        public const long DefaultBudget = 10L * 1024 * 1024 * 1024;
+        /// <summary>The most the cache may ever hold (user, 2026-11-18): 32 GB.</summary>
+        public const long MaxBudget = 32L * 1024 * 1024 * 1024;
+        public const long DefaultBudget = MaxBudget;
+        /// <summary>Share of the disk (or of the browser quota) that is never filled by the cache.</summary>
+        public const double KeepFreeFraction = 0.10;
+        /// <summary>How often the room is measured again; also after every <see cref="RecheckBytes"/> written.</summary>
+        public const double RecheckMs = 5 * 60 * 1000;
+        public const long RecheckBytes = 256L * 1024 * 1024;
+        double lastRoomCheck = double.NegativeInfinity;
+        long writtenSinceCheck;
+        bool checkingRoom;
         /// <summary>ms between LRU timestamp updates of one entry, so hot keys do not rewrite the store every call.</summary>
         public const double TouchEveryMs = 60000;
 
@@ -21,6 +31,7 @@ namespace Rally.Geo
         readonly Func<double> now;
         readonly Dictionary<string, Task<byte[]>> pending = new Dictionary<string, Task<byte[]>>();
         long budget;
+        long cap;                  // the most this cache may hold whatever the room: the constructor's budget, or SetBudget
         long bytes = -1;           // running total, counted on first use
         Task evicting;
         bool disabled;
@@ -28,13 +39,55 @@ namespace Rally.Geo
         public GeoCache(ICacheBackend backend, long budget = DefaultBudget, Func<double> nowMs = null)
         {
             this.backend = backend;
-            this.budget = budget;
+            this.budget = cap = budget;
             now = nowMs ?? (() => (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds);
         }
 
         public long Budget => budget;
 
-        public Task SetBudget(long b) { budget = Math.Max(0, b); return Evict(); }
+        public Task SetBudget(long b) { budget = cap = Math.Max(0, b); return Evict(); }
+
+        /// <summary>
+        /// The budget for the room the store reports: at most <see cref="MaxBudget"/>, and never so much that the disk
+        /// drops below 10 % free. With exact disk figures (editor, desktop) that is our bytes + free − 10 % of the
+        /// disk; in a browser only the quota is known, so 10 % of the quota stays unused and other data of the
+        /// origin counts against it. Both limits apply when both are known; unknown figures do not limit.
+        /// </summary>
+        public static long BudgetFor(StorageRoom room, long ours)
+        {
+            long b = MaxBudget;
+            if (room.DiskTotal > 0 && room.DiskFree >= 0)
+                b = Math.Min(b, Math.Max(0, ours + room.DiskFree - (long)(KeepFreeFraction * room.DiskTotal)));
+            if (room.Quota > 0 && room.OriginUsage >= 0)
+                b = Math.Min(b, Math.Max(0, (long)((1 - KeepFreeFraction) * room.Quota) - Math.Max(0, room.OriginUsage - ours)));
+            return b;
+        }
+
+        /// <summary>Measure the room again and set the budget from it; evicts when the disk filled up meanwhile.</summary>
+        public async Task RefreshBudget()
+        {
+            if (checkingRoom || disabled) return;
+            checkingRoom = true;
+            try
+            {
+                lastRoomCheck = now();
+                writtenSinceCheck = 0;
+                var room = await backend.Room();
+                long ours = await Total();
+                long next = Math.Min(cap, BudgetFor(room, ours));
+                if (next != budget)
+                {
+                    string why = room.DiskTotal > 0 ? $"disk {room.DiskFree / 1073741824.0:0.0} GB free of {room.DiskTotal / 1073741824.0:0.0} GB, 10 % kept free"
+                        : room.Quota > 0 ? $"browser quota {room.Quota / 1073741824.0:0.0} GB, {room.OriginUsage / 1073741824.0:0.00} GB used, 10 % kept free"
+                        : "disk size unknown";
+                    RallyLog.Info($"cache: budget {next / 1073741824.0:0.0} GB ({why}; at most {MaxBudget / 1073741824} GB)");
+                }
+                budget = next;
+                if (ours > budget) await Evict();
+            }
+            catch (Exception e) { RallyLog.Info($"cache: could not measure the storage room ({e.Message}); keeping {budget / 1073741824.0:0.0} GB"); }
+            finally { checkingRoom = false; }
+        }
 
         /// <summary>cache.js <c>sizeOf</c>: bytes as stored; text counts two bytes per UTF-16 unit like a JS string.</summary>
         public static long SizeOf(byte[] value, bool isText) => value == null ? 0 : isText ? 2L * System.Text.Encoding.UTF8.GetCharCount(value) : value.Length;
@@ -77,9 +130,13 @@ namespace Rally.Geo
             long size = SizeOf(value, isText);
             try
             {
+                long before = await Total();   // counted before the put, so the new entry is not counted twice
                 await backend.Put(new CacheEntry { Key = key, Kind = kind, Value = value, IsText = isText, Size = size, At = now() });
-                bytes = await Total() + size;
-                if (bytes > budget) _ = Evict();
+                bytes = before + size;
+                writtenSinceCheck += size;
+                // The disk fills with other things too: measure again every few minutes and every 256 MB we write.
+                if (writtenSinceCheck >= RecheckBytes || now() - lastRoomCheck >= RecheckMs) await RefreshBudget();
+                else if (bytes > budget) _ = Evict();
             }
             catch (Exception e)
             {

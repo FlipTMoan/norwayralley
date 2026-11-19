@@ -65,6 +65,33 @@ namespace Rally.World
         public const float FineKeep = 900f;        // fine.js KEEP: dispose tiles farther than this from the car
         public const int FineMaxLive = 24;         // fine.js MAX_LIVE
         public const int FinePerCoarse = 8;        // 2048 / 256
+        /// <summary>Metres past the visible horizon that are still fetched, so a tile is ready before it can be seen (user, 2026-11-18).</summary>
+        public const float HorizonMargin = 300f;
+        /// <summary>Upper bound for the view ring; keeps the live coarse tiles inside the atlas (TileWorld.CoarseSlices).</summary>
+        public const float MaxViewRadius = 7000f;
+
+        /// <summary>
+        /// The ring around the car itself: the visible horizon plus <see cref="HorizonMargin"/>, never less than
+        /// <see cref="LoadRadius"/>. Set by <see cref="SetHorizon"/>; the lead ring (LoadRadius around the led point)
+        /// still runs ahead of a fast car as in stream.js.
+        /// </summary>
+        public float ViewRadius { get; private set; } = LoadRadius;
+
+        /// <summary>
+        /// Ready tiles are dropped beyond this distance from the car. It must exceed both rings, otherwise a tile
+        /// that the lead ring wants (up to LeadDistance + LoadRadius = 7.2 km ahead) is dropped and fetched again
+        /// every frame; stream.js used KEEP 5300 m, which thrashes like that at high speed.
+        /// </summary>
+        public float DropRadius => math.max(ViewRadius, LeadDistance + LoadRadius) + (KeepRadius - LoadRadius);
+
+        /// <summary>Set the visible horizon in metres (fog or far clip, see <see cref="HorizonFor"/>).</summary>
+        public void SetHorizon(float horizonM) => ViewRadius = math.clamp(horizonM + HorizonMargin, LoadRadius, MaxViewRadius);
+
+        /// <summary>
+        /// Where the world disappears: URP exponential-squared fog leaves 2 % of the terrain colour at
+        /// d = √(ln 50) / density ≈ 1.978 / density; without fog it is the camera's far clip.
+        /// </summary>
+        public static float HorizonFor(float fogDensity, float farClip) => fogDensity > 0f ? math.min(farClip, 1.978f / fogDensity) : farClip;
 
         sealed class Entry { public TileKey Key; public TileState State; public double Priority; }
 
@@ -140,6 +167,7 @@ namespace Rally.World
 
         void UpdateCoarse(Utm33 focus, Utm33 led)
         {
+            // Lead ring (stream.js): LoadRadius around the point ahead of a moving car, nearest to it first.
             int r = (int)math.ceil(LoadRadius / CoarseSize);
             var centre = TileKey.At(TileKind.Coarse, led);
             for (int dj = -r; dj <= r; dj++)
@@ -150,6 +178,19 @@ namespace Rally.World
                     double d = key.RectDistance(led);
                     if (d > LoadRadius) continue;
                     Create(key, d + (di == 0 && dj == 0 ? -10 : 0));   // the tile under the led point first
+                }
+            // View ring: everything the camera can see around the car, out to just past the horizon. Queued after
+            // the lead ring at equal distance (+LoadRadius), so the road ahead still comes first.
+            r = (int)math.ceil(ViewRadius / CoarseSize);
+            var home = TileKey.At(TileKind.Coarse, focus);
+            for (int dj = -r; dj <= r; dj++)
+                for (int di = -r; di <= r; di++)
+                {
+                    var key = new TileKey(TileKind.Coarse, home.I + di, home.J + dj);
+                    if (tiles.ContainsKey(key)) continue;
+                    double d = key.RectDistance(focus);
+                    if (d > ViewRadius) continue;
+                    Create(key, LoadRadius + d);
                 }
             prefetchKeys.Clear();
             for (int n = 0; n < prefetch.Count; n++)
@@ -163,7 +204,7 @@ namespace Rally.World
             {
                 if (e.Key.Kind != TileKind.Coarse || prefetchKeys.Contains(e.Key)) continue;
                 double d = e.Key.RectDistance(focus);
-                if (e.State == TileState.Ready ? d > KeepRadius : (e.State == TileState.Queued && d > KeepRadius + CoarseSize)) scratch.Add(e);
+                if (e.State == TileState.Ready ? d > DropRadius : (e.State == TileState.Queued && d > DropRadius + CoarseSize)) scratch.Add(e);
             }
             for (int i = 0; i < scratch.Count; i++) Drop(scratch[i]);
         }

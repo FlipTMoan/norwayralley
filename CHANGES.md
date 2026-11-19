@@ -2,6 +2,31 @@
 
 _Updated 2026-11-16._
 
+## 2026-11-19
+
+### Unity: endless stage (key N) starts on the road
+- Root cause: the stage was chosen as soon as *any* tile's roads were in; at 59.6501, 6.34968 the west neighbour answered
+  first, the nearest junction within 600 m was not loaded, and the game fell back to free drive with the car at the pin
+  (off the road, no pace notes). Now `LoadFromQuery` waits for the roads of every coarse tile within 1 km of the pin
+  (`RoadGraph.HasTile`), and the walk starts on the nearest junction-to-junction link within 1 km (`RoadGraph.NearestLink`,
+  `RoadGraphEdges.StartNear`), entered at its closest point and driven toward the longer end, so the car spawns on that road
+  facing along it. No road within 1 km: free drive with a HUD message and a WARN line.
+- `GameFlow.Reload` clears `FreeDrive` (a stage scouted from free drive could never finish).
+- Fake roads have one way id per chunk (the graph grades a way once per id) and an optional `Wiggle`.
+- Tests: `EndlessStartTests` (EditMode, bendy fake road, junctions 2 km apart: start on the road, along it, with pace notes;
+  PlayMode: key-N style load in the offline scene starts on the road, not free drive).
+
+### Unity: Norwegian trees and ground from the overlays
+- Procedural Norway spruce, Scots pine, birch, mountain birch and shrub (3 LODs + baked impostor, bark/foliage textures),
+  nine procedural ground layers driven by SR16 + OSM land cover, stream.js tree budget with road corridor, per-tile species
+  log line, per-species LOD distances. Details in `unity/README-world.md` → "Trees and ground from the overlays".
+- Fixed: trees were never visible in the Unity build (RenderParams with renderingLayerMask 0 — only their shadows drew).
+
+## 2026-11-18
+
+### JS game: cache up to 32 GB, keeping 10 % of the browser quota free
+- `cache.js` budget is now at most 32 GB (was 10 GB) and is measured with `navigator.storage.estimate()` at start, every 5 minutes and every 256 MB written: 10 % of the quota stays unused, other site data counts against it, the oldest entries go when the room shrinks. A web page cannot see the disk; Chrome derives the quota from it. On this Chrome the site gets a 10 GB quota (no persistent storage), so the start screen shows "of 9.04 GB".
+
 ## 2026-11-16
 
 ### Unity: WebGL 2 (no compute) path actually runs
@@ -41,6 +66,10 @@ _Updated 2026-11-16._
 - `unity/` holds the Unity 6 / WebAssembly rewrite (URP, WebGPU-first,
   GPU clipmap terrain, compute-shader carving, indirect-drawn vegetation).
   Plan in `tasks/plan_20261116_unity.md`.
+
+### Unity: tiles and overlays out to the horizon, cache up to 32 GB with 10 % of the disk kept free
+- A view ring around the car reaches the visible horizon (where the fog closes, ~5.65 km) plus 300 m in every direction, next to the lead ring ahead; overlays follow every coarse tile. The drop distance now exceeds both rings, which stops tiles ahead being dropped and fetched again at speed. The coarse atlas grew from 64 to 96 tiles.
+- The geodata cache holds up to 32 GB, measured against the disk (editor, desktop) or the browser quota (web) at start, every 5 minutes and every 256 MB written, keeping 10 % free and evicting the oldest entries when the room shrinks. The cache line on the start screen shows the current budget.
 
 ### Unity web build: the controls of the JS game
 - Keys: G gearbox, Q/E switch to manual, R restart, N scout a new endless stage, C camera cycle, M mute (saved), Esc closes the map or returns to the start screen, F10/F3 debug window (position, altitude, heading, speed, gear, surface, water, damage, fps, tiles); three taps on the speed open it on a phone.

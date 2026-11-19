@@ -15,7 +15,7 @@ namespace Rally.World
     ///           (Carve.compute writes it, AsyncGPUReadback reads it back), else a plain Texture2DArray
     ///           re-uploaded after the CPU carve
     ///   Mask    carve mask, same shape (1 flat band, 0.5 blend, 0 untouched)
-    ///   Splat   land-cover weights RGBA8 (coarse tiles only): R bog, G pasture, B rock, A snow, forest floor = remainder
+    ///   Splat, Splat2  ground layer weights RGBA8 (coarse tiles only), eight layers in LandcoverSplat order, grass = remainder
     ///   Cover   species / crown / cover class RGBA8 (coarse tiles only), read by Scatter.compute
     /// Slices come from a free list; a tile keeps its slice for life.
     /// </summary>
@@ -27,7 +27,7 @@ namespace Rally.World
         public readonly Texture Heights;
         public readonly Texture Mask;
         public readonly RenderTexture BestD;        // compute scratch
-        public readonly Texture2DArray Splat, Cover; // null for fine tiles
+        public readonly Texture2DArray Splat, Splat2, Cover; // null for fine tiles
         readonly Stack<int> free = new Stack<int>();
         readonly Texture2D stagingF, stagingB, stagingRGBA;   // one slice's worth, so an upload never re-sends the whole array
 
@@ -50,6 +50,7 @@ namespace Rally.World
             if (splatRes > 0)
             {
                 Splat = new Texture2DArray(splatRes, splatRes, slices, TextureFormat.RGBA32, false, true) { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, name = "TileSplat" };
+                Splat2 = new Texture2DArray(splatRes, splatRes, slices, TextureFormat.RGBA32, false, true) { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp, name = "TileSplat2" };
                 Cover = new Texture2DArray(splatRes, splatRes, slices, TextureFormat.RGBA32, false, true) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp, name = "TileCover" };
             }
             for (int i = slices - 1; i >= 0; i--) free.Push(i);
@@ -64,7 +65,7 @@ namespace Rally.World
         /// </summary>
         public void UploadSlice<T>(Texture2DArray target, NativeArray<T> data, int slice) where T : struct
         {
-            var staging = target == Splat || target == Cover ? stagingRGBA : target == Mask ? stagingB : stagingF;
+            var staging = target == Splat || target == Splat2 || target == Cover ? stagingRGBA : target == Mask ? stagingB : stagingF;
             if (SystemInfo.copyTextureSupport != CopyTextureSupport.None && staging != null)
             {
                 staging.SetPixelData(data, 0);
@@ -99,6 +100,7 @@ namespace Rally.World
             RallyObjects.Destroy(Mask);
             if (BestD != null) BestD.Release();
             if (Splat != null) RallyObjects.Destroy(Splat);
+            if (Splat2 != null) RallyObjects.Destroy(Splat2);
             if (Cover != null) RallyObjects.Destroy(Cover);
             RallyObjects.Destroy(stagingF); RallyObjects.Destroy(stagingB); if (stagingRGBA != null) RallyObjects.Destroy(stagingRGBA);
         }

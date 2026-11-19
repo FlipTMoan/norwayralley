@@ -91,6 +91,9 @@ namespace Rally.Gameplay
         StageRoute stage;
         List<Turn> turns;
         RoadWalk walk;
+        int firstSample;              // the endless stage enters its first link here (RoadGraphEdges.StartNear)
+        /// <summary>An endless stage starts on a road at most this far from the pin, else free drive.</summary>
+        const double EndlessStartRadius = 1000;
         RoadGraphEdges edges;
         readonly List<Utm33> stagePoints = new List<Utm33>();
         readonly List<float> sectorEnds = new List<float>();
@@ -103,6 +106,10 @@ namespace Rally.Gameplay
         readonly GameFlow flow = new GameFlow();
         /// <summary>The stage phase (Loading → Intro → Countdown → Racing → Finished), for tests and tools.</summary>
         public Phase Phase => flow.Phase;
+        /// <summary>True when the loaded link drives the road network without a stage line (no pace notes, no finish).</summary>
+        public bool FreeDrive => flow.FreeDrive;
+        /// <summary>Pace notes of the current stage line; −1 in free drive (for tests and tools).</summary>
+        public int PaceNoteCount => turns?.Count ?? -1;
         ActorManager actors;
         readonly Dictionary<CrossingActor, ActorView> actorViews = new Dictionary<CrossingActor, ActorView>();
         Session session;
@@ -171,10 +178,12 @@ namespace Rally.Gameplay
 #if UNITY_WEBGL && !UNITY_EDITOR
             bool fake = false;
             cache = new GeoCache(new IdbBackend());
+            _ = ((GeoCache)cache).RefreshBudget();          // 32 GB at most, 10 % of the disk / quota kept free
             IdbBackend.RequestPersistence();
 #else
             bool fake = UseFakeSources;
             cache = new GeoCache(FileBackend.Default());
+            _ = ((GeoCache)cache).RefreshBudget();
 #endif
             if (fake)
             {
@@ -391,13 +400,20 @@ namespace Rally.Gameplay
                 }
                 case ShareLinks.Kind.Endless:
                 {
+                    // Start on the road beside the pin (the nearest link, not the nearest junction: junctions of a
+                    // rural road can be far apart), so the car spawns on it facing along it.
                     edges = new RoadGraphEdges(roads);
-                    long node = roads.NearestNode(anchor, 600);
-                    if (node == 0) { RallyLog.Warn("endless: no road junction near the start; free drive instead"); goto default; }
-                    walk = new RoadWalk(edges, link.Seed, node, new float2(0, 1));
+                    if (!edges.StartNear(anchor, EndlessStartRadius, out var first, out firstSample))
+                    {
+                        RallyLog.Warn($"endless: no drivable road within {EndlessStartRadius:0} m of the start ({roads.SegmentCount} road segments loaded); free drive instead");
+                        Say("NO ROAD NEAR HERE FOR A STAGE — FREE DRIVE", 6f);
+                        goto default;
+                    }
+                    walk = new RoadWalk(edges, link.Seed, first);
                     stagePoints.Clear();
-                    if (!walk.ExtendSector()) { RallyLog.Warn("endless: the walk could not leave the start; free drive instead"); walk = null; goto default; }
+                    walk.ExtendSector();          // never false: the first link is already in it
                     AppendSector();
+                    RallyLog.Info($"endless: stage starts on way {edges.Link(first)?.Id} {math.length(stagePoints[0].Minus(anchor)):0} m from the pin, first sector {walk.Length / 1000f:0.0} km");
                     BuildStage($"Endless {link.Seed:x}", "endless");
                     sectorEnds.Add(stage.Length);
                     AddSectorPlans(0, 0f, stage.Length);
@@ -431,17 +447,7 @@ namespace Rally.Gameplay
         void AppendSector()
         {
             prefetchPath.Clear();
-            foreach (var e in walk.LastSector)
-            {
-                var l = edges.Link(e);
-                if (l == null) continue;
-                for (int i = stagePoints.Count > 0 ? 1 : 0; i < l.Points.Count; i++)
-                {
-                    var u = new Utm33(l.Points[i].x, l.Points[i].y);
-                    stagePoints.Add(u);
-                    if ((i & 7) == 0) prefetchPath.Add(u);   // every 40 m is plenty for 256 m tiles
-                }
-            }
+            edges.AppendPoints(walk.LastSector, stagePoints, firstSample, prefetchPath);   // every 40 m is plenty for 256 m tiles
             world.Scheduler.SetPrefetchPath(prefetchPath);
         }
 
@@ -617,6 +623,7 @@ namespace Rally.Gameplay
             // the loaded ring ahead of a fast car, exactly stream.js. Before the car exists the start is the focus.
             float3 carPos = car != null ? (float3)car.transform.position : float3.zero;
             double2 velocity = car != null ? (double2)car.State.Vel : double2.zero;
+            if (MainCamera != null) world.Scheduler.SetHorizon(TileScheduler.HorizonFor(RenderSettings.fog ? RenderSettings.fogDensity : 0f, MainCamera.farClipPlane));
             world.Update(carPos, velocity, MainCamera, dt);
             if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
 
@@ -1042,7 +1049,7 @@ namespace Rally.Gameplay
             BrowserDom.LoaderText("Fetching terrain…");
             status = "LOADING TERRAIN";
             await WaitUntil(() => world.IsLoaded(float2.zero));          // the car waits only here (CONVENTIONS / stream.js)
-            await WaitUntil(() => roads.SegmentCount > 0, 20f);          // roads of the start tile (Overpass may be slow or down)
+            await WaitUntil(StartRoadsArrived, 20f);                     // roads of the start tiles (Overpass may be slow or down)
             await CreateRoute();
             SpawnCar();
             WireSystems();
@@ -1051,6 +1058,25 @@ namespace Rally.Gameplay
             flow.WorldReady();
             _ = RefreshCacheInfo();
             if (session != null) car.Frozen = flow.Phase != Phase.Racing;   // a reload mid-room: the phase did not change, so OnPhase did not run
+        }
+
+        /// <summary>
+        /// The route may be chosen once the road answer of every coarse tile within <see cref="EndlessStartRadius"/>
+        /// of the start has been applied. Waiting for "any roads" let a neighbour tile that answered first decide
+        /// the start, and the endless walk then found no road near the pin and fell back to free drive off the road.
+        /// </summary>
+        bool StartRoadsArrived()
+        {
+            double r = EndlessStartRadius;
+            var lo = TileKey.At(TileKind.Coarse, anchor + new double2(-r, -r));
+            var hi = TileKey.At(TileKind.Coarse, anchor + new double2(r, r));
+            for (int j = lo.J; j <= hi.J; j++)
+                for (int i = lo.I; i <= hi.I; i++)
+                {
+                    var key = new TileKey(TileKind.Coarse, i, j);
+                    if (key.RectDistance(anchor) <= r && !roads.HasTile(key)) return false;
+                }
+            return true;
         }
 
         void Teardown()

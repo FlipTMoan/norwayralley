@@ -47,6 +47,28 @@ namespace Rally.Tests.World
         }
 
         [Test]
+        public void TheViewRingReachesJustPastTheFogHorizonAndFitsTheAtlas()
+        {
+            float horizon = TileScheduler.HorizonFor(0.00035f, 12000f);
+            Assert.AreEqual(5651f, horizon, 5f, "exp² fog at 0.00035 leaves 2 % of the colour at ~5.65 km");
+            var s = new TileScheduler();
+            s.SetHorizon(horizon);
+            Assert.AreEqual(horizon + TileScheduler.HorizonMargin, s.ViewRadius, 1e-3f);
+            var focus = new Utm33(1000, 1000);
+            s.Update(focus, new double2(40, 0), null);          // 144 km/h east: lead ring 2.8 km ahead
+            int coarse = 0;
+            foreach (var k in s.Keys)
+                if (k.Kind == TileKind.Coarse) coarse++;
+            for (int a = 0; a < 360; a += 15)                   // every direction around the car is covered to the horizon
+            {
+                var p = focus + new double2(System.Math.Cos(a * System.Math.PI / 180) * horizon, System.Math.Sin(a * System.Math.PI / 180) * horizon);
+                Assert.IsTrue(s.Contains(TileKey.At(TileKind.Coarse, p)), $"no tile at the horizon towards {a}°");
+            }
+            Assert.Less(coarse, TileWorld.CoarseSlices, "the rings must fit the coarse atlas");
+            Assert.Greater(s.DropRadius, TileScheduler.LeadDistance + TileScheduler.LoadRadius, "ready tiles the lead ring wants are not dropped (no thrash)");
+        }
+
+        [Test]
         public void MovingFarDisposesReadyTilesBeyondKeepRadius()
         {
             var s = new TileScheduler();
@@ -57,7 +79,7 @@ namespace Rally.Tests.World
             var far = new Utm33(1000 + 20000, 1000);
             s.Update(far, double2.zero, null);
             Assert.IsTrue(disposed.Contains(new TileKey(TileKind.Coarse, 0, 0)), "the tile left 20 km behind is dropped");
-            foreach (var k in s.Keys) Assert.LessOrEqual(k.RectDistance(far), TileScheduler.KeepRadius + TileScheduler.CoarseSize, k.ToString());
+            foreach (var k in s.Keys) Assert.LessOrEqual(k.RectDistance(far), s.DropRadius + TileScheduler.CoarseSize, k.ToString());
             Assert.IsTrue(s.Contains(TileKey.At(TileKind.Coarse, far)));
         }
 

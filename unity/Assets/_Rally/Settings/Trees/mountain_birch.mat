@@ -14,7 +14,7 @@ Material:
   m_ValidKeywords: []
   m_InvalidKeywords: []
   m_LightmapFlags: 4
-  m_EnableInstancingVariants: 0
+  m_EnableInstancingVariants: 1
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
   stringTagMap: {}
@@ -23,19 +23,45 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
+    - _BarkMap:
+        m_Texture: {fileID: 2800000, guid: e655d5166c89ec2fe9100a6bae9dd51c, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _BarkNormal:
+        m_Texture: {fileID: 2800000, guid: 66f31ed19b757d8a2b01f857d7e33ae5, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _BaseMap:
+        m_Texture: {fileID: 2800000, guid: 867ba5748de7b840b9a0df0fe27cb9b2, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _ImpostorMap:
         m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _ImpostorNormal:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _LeafNormal:
+        m_Texture: {fileID: 2800000, guid: f0d5c9d0e1e69647eb81ac040afc7995, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _Billboard: 0
     - _Cutoff: 0.4
+    - _Flutter: 0.09
     - _TintVariation: 0.15
-    - _Wind: 0.25
+    - _Translucency: 0.6
+    - _TreeHeight: 6
+    - _Wind: 0.12
     - _WindSpeed: 1.2
     m_Colors:
-    - _Color: {r: 0.5, g: 0.6, b: 0.28, a: 1}
+    - _BarkColor: {r: 1, g: 1, b: 1, a: 1}
+    - _Color: {r: 0.9, g: 0.92, b: 0.85, a: 1}
+    - _ImpostorFrames: {r: 4, g: 2, b: 8, a: 0}
     - _SnowColor: {r: 0.92, g: 0.94, b: 0.96999997, a: 1}
+    - _TranslucencyColor: {r: 0.6, g: 0.75, b: 0.25, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

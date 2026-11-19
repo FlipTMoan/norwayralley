@@ -39,6 +39,17 @@ namespace Rally.Geo
 
         public Task<bool> Available() => Task.FromResult(Directory.Exists(root));
 
+        /// <summary>The disk the cache folder lives on: exact total and free bytes (DriveInfo), so 10 % can be kept free.</summary>
+        public Task<StorageRoom> Room()
+        {
+            try
+            {
+                var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(root)));
+                return Task.FromResult(new StorageRoom(drive.TotalSize, drive.AvailableFreeSpace, -1, -1));
+            }
+            catch (Exception) { return Task.FromResult(StorageRoom.Unknown); }
+        }
+
         public Task<CacheEntry> Get(string key)
         {
             var meta = Meta(key);

@@ -18,8 +18,13 @@ namespace Rally.World
     /// </summary>
     public sealed class VegetationRenderer : System.IDisposable
     {
-        public const int Capacity = 2600;        // stream.js TREE_BUDGET: instances per tile
-        public const int MaxVisible = 4096;      // per (species, LOD) bucket per frame
+        /// <summary>
+        /// Instances per 2 km tile. stream.js had TREE_BUDGET 2600, which thins a closed Norwegian forest to ~10 % and
+        /// reads as parkland; 12000 with the same budget rule (LandcoverSplat.Budget: road corridor first) keeps the
+        /// hillsides wooded. The CPU path culls whole tiles first, so only the few tiles in view are looped per frame.
+        /// </summary>
+        public const int Capacity = 12000;
+        public const int MaxVisible = 8192;      // per (species, LOD) bucket per frame
         public const int Buckets = VegetationSetSO.SpeciesCount * VegetationSetSO.Lods;
         public float Density = 1f, Scale = 1f, DrawDistance = 900f;
 
@@ -32,9 +37,11 @@ namespace Rally.World
         readonly TerrainTile[] bySlot;
         readonly GraphicsBuffer instances, counts, tileOrigins, visible, drawCounts, args;
         readonly Material[] materials = new Material[Buckets];
+        readonly Material firstMaterial;
         readonly MaterialPropertyBlock[] props = new MaterialPropertyBlock[Buckets];
         readonly Plane[] planes = new Plane[6];
         readonly Vector4[] planeVecs = new Vector4[6];
+        readonly Vector4[] protoLod = new Vector4[VegetationSetSO.SpeciesCount];
         NativeArray<float4> originsCpu;
         NativeArray<uint> zero;
         // CPU path
@@ -61,6 +68,7 @@ namespace Rally.World
                 var src = billboard ? proto.BillboardMaterial : proto.Material;
                 if (src == null) continue;
                 materials[b] = new Material(src);   // a copy: the keyword must not be baked into the asset
+                if (firstMaterial == null) firstMaterial = materials[b];
                 materials[b].SetFloat(BillboardId, billboard ? 1 : 0);
                 materials[b].enableInstancing = true;   // the fallback draws with RenderMeshInstanced
                 if (gpu) materials[b].EnableKeyword("_RALLY_INDIRECT"); else materials[b].DisableKeyword("_RALLY_INDIRECT");
@@ -137,7 +145,7 @@ namespace Rally.World
                     {
                         if (r.hasError || bySlot[slot] != tile) return;
                         index.AddTile(key, origin, r.GetData<TreeInstance>(), n, set);
-                        Rally.Core.RallyLog.Info($"overlay: {key} {n} trees placed (GPU scatter)");
+                        Rally.Core.RallyLog.Info($"overlay: {key} {n} trees placed ({SpeciesCounts(r.GetData<TreeInstance>(), n)}; GPU scatter)");
                     });
                 });
             }
@@ -154,8 +162,21 @@ namespace Rally.World
                 job.Run();
                 cpuCounts[slot] = jobCount[0];
                 index.AddTile(tile.Key, tile.Key.Origin, cpuInstances.GetSubArray(slot * Capacity, Capacity), jobCount[0], set);
-                Rally.Core.RallyLog.Info($"overlay: {tile.Key} {jobCount[0]} trees placed (CPU scatter)");
+                Rally.Core.RallyLog.Info($"overlay: {tile.Key} {jobCount[0]} trees placed ({SpeciesCounts(cpuInstances.GetSubArray(slot * Capacity, Capacity), jobCount[0])}; CPU scatter)");
             }
+        }
+
+        static readonly string[] SpeciesNames = { "spruce", "pine", "birch", "mountain birch", "shrub" };
+        static readonly int[] speciesCount = new int[VegetationSetSO.SpeciesCount];
+
+        /// <summary>"spruce n, pine n, birch n, mountain birch n, shrub n" for the per-tile overlay log line.</summary>
+        public static string SpeciesCounts(NativeArray<TreeInstance> trees, int n)
+        {
+            System.Array.Clear(speciesCount, 0, speciesCount.Length);
+            for (int i = 0; i < n; i++) { uint s = trees[i].Species; if (s < speciesCount.Length) speciesCount[s]++; }
+            var sb = new System.Text.StringBuilder();
+            for (int s = 0; s < speciesCount.Length; s++) sb.Append(s == 0 ? "" : ", ").Append(SpeciesNames[s]).Append(' ').Append(speciesCount[s]);
+            return sb.ToString();
         }
 
         public void ClearTile(TerrainTile tile)
@@ -170,20 +191,24 @@ namespace Rally.World
         /// <summary>Once per frame after FloatingOrigin.MaybeRebase.</summary>
         public void Render(Camera cam, int layer = 0)
         {
+            SetAmbient();
             for (int s = 0; s < slots; s++)
             {
                 var t = bySlot[s];
                 originsCpu[s] = t == null ? float4.zero : new float4(FloatingOrigin.ToWorldXZ(t.Key.Origin), 0, 0);
             }
             GeometryUtility.CalculateFrustumPlanes(cam, planes);
-            var rp = new RenderParams { layer = layer, receiveShadows = true, worldBounds = new Bounds(cam.transform.position, new Vector3(4000, 2000, 4000)) };
+            // new RenderParams(material), not an object initializer: the default struct has renderingLayerMask 0, which URP's
+            // colour passes filter out — the trees drew only into the shadow map and were invisible.
+            var rp = new RenderParams(firstMaterial) { layer = layer, receiveShadows = true, worldBounds = new Bounds(cam.transform.position, new Vector3(4000, 2000, 4000)) };
             if (gpu)
             {
                 tileOrigins.SetData(originsCpu);
                 for (int p = 0; p < 6; p++) planeVecs[p] = new Vector4(planes[p].normal.x, planes[p].normal.y, planes[p].normal.z, planes[p].distance);
                 cs.SetVectorArray("_FrustumPlanes", planeVecs);
                 cs.SetVector("_CameraPos", cam.transform.position);
-                cs.SetVector("_LodDistances", new Vector4(set.LodDistances.x, set.LodDistances.y, set.LodDistances.z, DrawDistance));
+                for (int sp = 0; sp < VegetationSetSO.SpeciesCount; sp++) protoLod[sp] = set.LodFor(sp, DrawDistance);
+                cs.SetVectorArray("_ProtoLod", protoLod);
                 cs.SetInt("_Capacity", Capacity); cs.SetInt("_Slots", slots); cs.SetInt("_MaxVisible", MaxVisible);
                 cs.SetBuffer(kClear, "_DrawCounts", drawCounts);
                 cs.Dispatch(kClear, 1, 1, 1);
@@ -209,6 +234,7 @@ namespace Rally.World
                 // One pass over every instance: LOD + frustum, binned per (species, LOD) bucket, then one
                 // instanced draw per bucket. Tint and snow come from the shader (position hash, _TreeSnowLine).
                 var camPos = (float3)cam.transform.position;
+                for (int sp = 0; sp < VegetationSetSO.SpeciesCount; sp++) protoLod[sp] = set.LodFor(sp, DrawDistance);
                 float snowLine = 0, nearest = float.MaxValue;
                 System.Array.Clear(bucketCounts, 0, Buckets);
                 for (int s = 0; s < slots; s++)
@@ -218,17 +244,22 @@ namespace Rally.World
                     float2 o = originsCpu[s].xy;
                     float dTile = math.distance(o, camPos.xz);
                     if (dTile < nearest) { nearest = dTile; snowLine = tile.SnowLine; }
+                    // Whole tile out of range or out of view: skip its instances (WebGL 2 runs this loop on the CPU every frame).
+                    float size = tile.Key.SizeM;
+                    var tb = new Bounds(new Vector3(o.x + size / 2, camPos.y, o.y + size / 2), new Vector3(size, 4000, size));
+                    if (math.sqrt(tb.SqrDistance(camPos)) > DrawDistance || !GeometryUtility.TestPlanesAABB(planes, tb)) continue;
                     int baseIdx = s * Capacity;
                     for (int k = 0; k < cpuCounts[s]; k++)
                     {
                         var t = cpuInstances[baseIdx + k];
                         var world = new float3(t.Pos.x + o.x, t.Pos.y, t.Pos.z + o.y);
                         float d = math.distance(world, camPos);
-                        if (d > DrawDistance) continue;
-                        int lod = d < set.LodDistances.x ? 0 : d < set.LodDistances.y ? 1 : d < set.LodDistances.z ? 2 : 3;
+                        var ld = protoLod[t.Species];
+                        if (d > ld.w) continue;
+                        int lod = d < ld.x ? 0 : d < ld.y ? 1 : d < ld.z ? 2 : 3;
                         int b = (int)t.Species * VegetationSetSO.Lods + lod;
                         if (bucketCounts[b] >= MaxVisible) continue;
-                        if (!GeometryUtility.TestPlanesAABB(planes, new Bounds(world + new float3(0, 6 * t.Scale, 0), new Vector3(12, 16, 12) * t.Scale))) continue;
+                        if (!GeometryUtility.TestPlanesAABB(planes, new Bounds(world + new float3(0, 11 * t.Scale, 0), new Vector3(16, 24, 16) * t.Scale))) continue;
                         matrices[b * MaxVisible + bucketCounts[b]++] = Matrix4x4.TRS(world, Quaternion.Euler(0, math.degrees(t.Yaw), 0), Vector3.one * t.Scale);
                     }
                 }
@@ -244,6 +275,18 @@ namespace Rally.World
                     Graphics.RenderMeshInstanced(rp, mesh, 0, matrices.GetSubArray(b * MaxVisible, n), n);
                 }
             }
+        }
+
+        static readonly int AmbientUpId = Shader.PropertyToID("_TreeAmbientUp"), AmbientDownId = Shader.PropertyToID("_TreeAmbientDown");
+        static readonly Vector3[] ambientDirs = { Vector3.up, Vector3.down };
+        readonly Color[] ambientOut = new Color[2];
+
+        /// <summary>Rally/Tree's ambient: the scene's ambient probe evaluated up and down (see the shader for why not SampleSH).</summary>
+        void SetAmbient()
+        {
+            RenderSettings.ambientProbe.Evaluate(ambientDirs, ambientOut);
+            Shader.SetGlobalVector(AmbientUpId, ambientOut[0]);
+            Shader.SetGlobalVector(AmbientDownId, ambientOut[1]);
         }
 
         public void Dispose()

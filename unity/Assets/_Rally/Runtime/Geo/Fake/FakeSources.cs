@@ -35,20 +35,29 @@ namespace Rally.Geo
             }
         }
 
-        /// <summary>A straight east–west residential road through the chunk centre, and one house 20 m north of it.</summary>
+        /// <summary>
+        /// An east–west residential road through the chunk centre (straight, or a sine of <see cref="Wiggle"/> m
+        /// amplitude so a stage on it has bends), and one house 20 m north of it. Each chunk's way has its own id
+        /// (the graph grades a way once per id) and its ends sit on the chunk edges, so neighbouring chunks join
+        /// there: the only junctions are 2 km apart, like a long rural road.
+        /// </summary>
         public sealed class Osm : IRoadSource, IFeatureSource
         {
+            public double Wiggle = 0, WiggleWavelength = 800;
+
+            double RoadN(Bounds25833 b, double e) => (b.MinN + b.MaxN) / 2 + Wiggle * Math.Sin(2 * Math.PI * e / WiggleWavelength);
+
             public Task<RoadGraphData> FetchRoads(Bounds25833 b, CancellationToken ct)
             {
-                double n = (b.MinN + b.MaxN) / 2;
-                var way = new RoadWay { Id = 1, Tags = { { "highway", "residential" }, { "name", "Testvegen" }, { "surface", "asphalt" } } };
-                for (double e = b.MinE; e <= b.MaxE; e += 50) way.Nodes.Add(new Utm33(e, n));
+                long id = 1 + (((long)Math.Floor(b.MinE / b.Width) & 0xffffff) << 24 | ((long)Math.Floor(b.MinN / b.Height) & 0xffffff));
+                var way = new RoadWay { Id = id, Tags = { { "highway", "residential" }, { "name", "Testvegen" }, { "surface", "asphalt" } } };
+                for (double e = b.MinE; e <= b.MaxE; e += 50) way.Nodes.Add(new Utm33(e, RoadN(b, e)));
                 return Task.FromResult(new RoadGraphData { Ways = { way } });
             }
 
             public Task<Features> FetchFeatures(Bounds25833 b, CancellationToken ct)
             {
-                double e0 = (b.MinE + b.MaxE) / 2, n0 = (b.MinN + b.MaxN) / 2 + 20;
+                double e0 = (b.MinE + b.MaxE) / 2, n0 = RoadN(b, e0) + 20;
                 var house = new Building
                 {
                     Id = 2,

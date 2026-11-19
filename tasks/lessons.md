@@ -62,3 +62,11 @@
   rather than expecting it.
 - When reading a component field after `DestroyImmediate` of its GameObject, Unity's `?:` null check reports
   "none": log before destroying.
+
+## 2026-11-19 — trees were invisible for days; only their shadows drew
+- `new RenderParams { ... }` (object initializer on the default struct) leaves `renderingLayerMask = 0`; URP's colour
+  passes filter such draws out while the shadow pass still renders them. Always start from `new RenderParams(material)`.
+- No test looked at a frame, so nobody saw it. For anything visual, render a screenshot (Editor/PreviewShots) and look
+  at it before calling it done; a counter of "instances drawn" proves nothing about pixels.
+- When a draw is "submitted but invisible", bisect against a known-good draw of the same mesh/material at the same spot
+  (params, timing, data source) instead of theorising about shaders.
