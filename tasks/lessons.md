@@ -119,3 +119,14 @@
   ribbon" count went 3 → 166; reverted. Keep before/after survey numbers for every carve change, not only the new metric.
 - Check new collision tests against the old code: the 60 km/h sideways case passed on the old code too; only 100 km/h
   on 0.05 s frames and the thin birch reproduced the pass-through.
+
+## 2026-11-20 — road signs: check sign facts, and the cheap way to rasterise text in Unity
+- The plan said Norwegian warning triangles have a yellow background; they are white with a red border (yellow is the
+  temporary variant). Rule: check design facts (colours, shapes, typefaces) against a source before drawing them, and say
+  in the review where the plan was wrong. The Wikimedia Commons API rate-limits quickly (HTTP 429): fetch one page, not loops.
+- `UnityEngine.TextCore.Text.FontAsset.CreateFontAsset(font, …, GlyphRenderMode.SDFAA, …, AtlasPopulationMode.Dynamic)`
+  gives a CPU-readable Alpha8 SDF atlas at run time (also in batchmode -nographics and in the WebGL player): text can be
+  painted into CPU textures without a GPU readback or an offline glyph tool. Add the usual characters in one
+  `TryAddCharacters` batch.
+- Editor (Mono, debug) timings of CPU painting are ~20× the IL2CPP WebGL ones (60 ms vs 2.6 ms per face); measure in the
+  player before optimising further.

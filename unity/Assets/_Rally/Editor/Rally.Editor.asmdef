@@ -3,6 +3,7 @@
   "rootNamespace": "Rally.Editor",
   "references": [
     "Rally.Core",
+    "Rally.Geo",
     "Rally.World",
     "Rally.Roads",
     "Rally.Vehicle",

@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-19 (road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-19 (road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -178,3 +178,29 @@ fallback C# (the editor GPU still compiles the high-target shaders); `Rally → 
 (`-executeMethod Rally.Editor.BuildWeb.BuildWebGL2Only`, output `Build/WebGL2`) builds with OpenGLES3 as the only API so the
 log lists any shader that fails for GLES 3.0. Known cost of the fallback: `Texture2DArray.Apply` re-sends the whole array when
 `SystemInfo.copyTextureSupport` is `None`; the carve and scatter run on the main thread (Burst, one tile per frame).
+
+### Road signs (2026-11-19)
+- **Data:** `NvdbSource.FetchSigns(tile bounds)` — NVDB v4 type 96 Skiltplate (code e.g. `362.50`, `906V`, `713.H`, text,
+  size, "Ansiktsside", sideposisjon, point) and 105 Fartsgrense (polylines), every page through the GeoCache (`nvdb`).
+  `GameController.FetchFeatures` asks it with the roads; `PlaceSigns` runs when the tile's roads are registered.
+- **Placement (`SignPlacement`):** plates inside the tile, within 25 m of a road (`IRoadQuery.Nearest`); plates on one NVDB
+  point share a post. The post stands `FlatHalf + 0.9 m` from the centre line (in the carve's flat apron), or at the real
+  distance up to 2.5 m further, at the real position along the road. Face direction: the metering direction is the OSM
+  tangent when NVDB's side matches the plate's real side, else its reverse; "Trafikk i metreringsretning" faces against
+  it, "mot" with it, "Parallelt mot/fra veg" across the road; unknown → right-hand rule. Stack order: 2xx, 1xx/3xx, 4xx, 5xx,
+  6xx, 7xx, 9xx, each 8xx plate under the first main sign facing its way. `SpeedChangePlates` adds a 362 for each direction
+  where two speed-limit polylines meet with different limits and no real speed plate stands within 40 m.
+- **Faces (`SignCatalog`, `SignCanvas`, `SignFont`, `SignAtlas`):** designs in millimetres of the real "middels" plates
+  (Liten ⅔, Stor 4⁄3); shapes as signed distances (exact anti-aliasing); text from `Resources/Signs/SignFont.ttf` (DejaVu
+  Sans Condensed Bold, Bitstream Vera licence) via `FontAsset.CreateFontAsset` (dynamic SDF, CPU-readable, works in the
+  player). A face is painted once per design key into a 2048² RGBA32 page (0.32 px/mm, 6 px gutter in the plate's edge
+  colour, mips, 8× aniso) and shared; pages whose faces are all unused are recycled; at most 6 pages.
+- **Mesh (`SignMesh`) and layer (`SignLayer`):** one mesh per tile, built when the car is within 1 km of the tile and its
+  faces are painted (≤ 4 ms of painting per frame, one mesh per frame), destroyed beyond 1.5 km. 8-sided posts (Ø 60 / 80 mm,
+  sunk 0.5 m, dark cap), plates cut to their outline with face, aluminium back (or a second face when two-sided), rim and
+  clamp brackets; lowest plate edge 1.5 m (0.6 m for marker-only posts). Post feet from `TileWorld.HeightAt` (the car's
+  ground). Capsules from `PropColliderPool` for posts within 35 m. Shader `Rally/Sign` (Resources, so the build includes
+  it): face texel or vertex colour, Lambert + SH, retroreflective lobe towards the sun, metal highlight, grime noise,
+  shadow caster and depth passes.
+- **Not drawn:** codes without a design (701/709/711 junction boards, 725 distance boards, 6xx service signs, U722 local
+  signposting, 828 extent arrows …); they are counted as "without a design" in the overlay log.

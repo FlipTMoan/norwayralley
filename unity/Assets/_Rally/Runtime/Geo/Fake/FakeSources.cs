@@ -45,7 +45,7 @@ namespace Rally.Geo
         {
             public double Wiggle = 0, WiggleWavelength = 800;
 
-            double RoadN(Bounds25833 b, double e) => (b.MinN + b.MaxN) / 2 + Wiggle * Math.Sin(2 * Math.PI * e / WiggleWavelength);
+            public double RoadN(Bounds25833 b, double e) => (b.MinN + b.MaxN) / 2 + Wiggle * Math.Sin(2 * Math.PI * e / WiggleWavelength);
 
             public Task<RoadGraphData> FetchRoads(Bounds25833 b, CancellationToken ct)
             {
@@ -74,9 +74,33 @@ namespace Rally.Geo
                 => Task.FromResult(new CoverRaster(Sr16Source.Pixels(b.Width), Sr16Source.Pixels(b.Height), b));
         }
 
+        /// <summary>
+        /// A few real-looking plates beside the <see cref="Osm"/> road of each chunk (6 m off its centre line): a speed
+        /// limit, a bend warning with a distance plate under it, a direction sign with a county-road shield and a
+        /// two-sided end-of-limit, plus a 60 km/h stretch in the speed limits. Empty without <see cref="Road"/>.
+        /// </summary>
         public sealed class Signs : ISignSource
         {
-            public Task<SignSet> FetchSigns(Bounds25833 b, CancellationToken ct) => Task.FromResult(new SignSet());
+            public Osm Road;
+
+            public Task<SignSet> FetchSigns(Bounds25833 b, CancellationToken ct)
+            {
+                var set = new SignSet();
+                if (Road == null) return Task.FromResult(set);
+                long id = 1000 + (((long)Math.Floor(b.MinE / b.Width) & 0xffff) << 16 | ((long)Math.Floor(b.MinN / b.Height) & 0xffff)) * 16;
+                SignPlate Plate(int k, double e, double side, string code, string label, string text = null, SignFacing facing = SignFacing.Unknown)
+                    => new SignPlate { Id = id + k, Number = NvdbSource.SignNumber(code), Code = code, Label = label, Text = text, Facing = facing, Position = new Utm33(e, Road.RoadN(b, e) + side) };
+                set.Plates.Add(Plate(0, b.MinE + 150, -6, "362.60", "Fartsgrense 60 km/t"));
+                set.Plates.Add(Plate(1, b.MinE + 400, -6, "100.2", "Farlig sving til venstre"));
+                set.Plates.Add(Plate(2, b.MinE + 400, -6, "802", "Avstand", "150 m"));
+                set.Plates.Add(Plate(3, b.MinE + 650, 6, "713.H", "Vanlig vegviser, Høyre", "@723.15@$520$Sauda 3@31@"));
+                set.Plates.Add(Plate(4, b.MinE + 900, 6, "146.1", "Elg"));
+                set.Plates.Add(Plate(5, b.MinE + 1150, -6, "364.60", "Slutt på særskilt fartsgrense 60 km/t", null, SignFacing.Both));
+                var limit = new SpeedLimitSegment { Kmh = 60 };
+                for (double e = b.MinE + 150; e <= b.MinE + 1150; e += 50) limit.Points.Add(new Utm33(e, Road.RoadN(b, e)));
+                set.SpeedLimits.Add(limit);
+                return Task.FromResult(set);
+            }
         }
 
         /// <summary>Straight line between the picks at 50 m steps; every point is "on a road".</summary>

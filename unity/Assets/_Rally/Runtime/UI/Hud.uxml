@@ -101,7 +101,7 @@
           <ui:Label text="STAGES" class="helpHead" />
           <ui:Label text="Route stage: pick start and finish on the MAP; the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts. Every stage is a link in the address bar you can share." class="helpText" />
           <ui:Label text="DATA" class="helpHead" />
-          <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
+          <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces and road signs Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
         </ui:ScrollView>
       </ui:VisualElement>
     </ui:VisualElement>

@@ -18,7 +18,7 @@ namespace Rally.Geo
         public const string Attribution = "Inneholder data under norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Statens vegvesen.";
         public const string Base = "https://nvdbapiles.atlas.vegvesen.no/vegobjekter/api/v4/vegobjekter";
         public const int TypeSignPlate = 96, TypeSpeedLimit = 105;
-        public const int PropSignNumber = 5530, PropFacing = 1894, PropText = 1910, PropKmh = 2021;
+        public const int PropSignNumber = 5530, PropFacing = 1894, PropText = 1910, PropKmh = 2021, PropSize = 1970;
         public const int TypeRoadSurface = 241, PropMassetype = 1216;   // roads.js: Vegdekke, Massetype
         public const int TimeoutMs = 20000;
         public const int MaxPages = 20;
@@ -35,6 +35,10 @@ namespace Rally.Geo
             => $"{Base}/{typeId}?kartutsnitt={Http.Fixed(b.MinE, 1)},{Http.Fixed(b.MinN, 1)},{Http.Fixed(b.MaxE, 1)},{Http.Fixed(b.MaxN, 1)}"
              + "&srid=5973&inkluder=geometri,egenskaper,lokasjon&antall=1000";
 
+        /// <summary>
+        /// Every sign plate and speed limit in the bounds, each page through the GeoCache (kind "nvdb", like the road
+        /// surfaces): a second visit reads them from disk / IndexedDB without asking NVDB.
+        /// </summary>
         public async Task<SignSet> FetchSigns(Bounds25833 bounds, CancellationToken ct)
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -48,7 +52,7 @@ namespace Rally.Geo
                 foreach (var o in await limits) { var l = ParseSpeedLimit(o); if (l != null) set.SpeedLimits.Add(l); }
                 return set;
             }
-            catch (Exception e)
+            catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 RallyLog.Warn($"overlay: road signs unavailable: {e.Message}");
                 return SignSet.Empty;
@@ -111,6 +115,16 @@ namespace Rally.Geo
             return verdi.Substring(start, i - start);
         }
 
+        /// <summary>The code token before the label: "906V - Hindermarkering" → "906V"; "713.H - Vanlig vegviser" → "713.H".</summary>
+        public static string CodeOf(string verdi)
+        {
+            if (verdi == null) return null;
+            var t = verdi.Trim();
+            int i = 0;
+            while (i < t.Length && !char.IsWhiteSpace(t[i])) i++;
+            return i > 0 ? t.Substring(0, i) : null;
+        }
+
         /// <summary>The label after the number: strips "362.50 - " / "729 ".</summary>
         public static string LabelOf(string verdi, string number)
         {
@@ -136,14 +150,20 @@ namespace Rally.Geo
             return null;
         }
 
-        static SignFacing Facing(string verdi)
+        public static SignFacing Facing(string verdi)
         {
             var v = (verdi ?? "").ToLowerInvariant();
             if (v.StartsWith("tosidig")) return SignFacing.Both;
+            if (v.StartsWith("parallelt mot")) return SignFacing.TowardRoad;
+            if (v.StartsWith("parallelt fra")) return SignFacing.AwayFromRoad;
             if (v.Contains("trafikk mot")) return SignFacing.Against;
             if (v.Contains("trafikk i")) return SignFacing.With;
             return SignFacing.Unknown;
         }
+
+        /// <summary>Sideposisjon "V" / "VT" (left, beside the road) → Left, "H" / "HT" → Right; middle and unknown → Unknown.</summary>
+        public static RoadSide SideOf(string sidePos)
+            => sidePos == "V" || sidePos == "VT" ? RoadSide.Left : sidePos == "H" || sidePos == "HT" ? RoadSide.Right : RoadSide.Unknown;
 
         public static SignPlate ParseSignPlate(Dictionary<string, object> obj)
         {
@@ -153,14 +173,17 @@ namespace Rally.Geo
             if (number == null || geometry == null || geometry.Type != "POINT") return null;
             var placements = obj.Obj("lokasjon")?.Arr("stedfestinger");
             var sidePos = placements != null && placements.Count > 0 ? (placements[0] as Dictionary<string, object>)?.Str("sideposisjon") : null;
+            var size = (Property(obj, PropSize) ?? "").ToLowerInvariant();
             return new SignPlate
             {
                 Id = obj.Long("id"),
                 Number = number,
+                Code = CodeOf(verdi),
+                Size = size.StartsWith("liten") ? SignSize.Small : size.StartsWith("stor") ? SignSize.Large : SignSize.Medium,
                 Label = LabelOf(verdi, number),
                 Text = Property(obj, PropText),
                 Facing = Facing(Property(obj, PropFacing)),
-                Side = sidePos == "V" ? RoadSide.Left : sidePos == "H" ? RoadSide.Right : RoadSide.Unknown,
+                Side = SideOf(sidePos),
                 Position = geometry.Points[0],
                 Height = geometry.Heights[0],
             };

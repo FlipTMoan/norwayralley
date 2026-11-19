@@ -221,6 +221,7 @@ namespace Rally.Editor
             shots.Enqueue(("03_overview", () => Look(c.xz - hillDir * 250, 120, c.xz + hillDir * 300, 0f)));
             shots.Enqueue(("04_forest_edge", () => Look(c.xz - fwd * 10, 2.5f, c.xz + fwd * 120, 0.15f)));
             RoadShots(c);
+            SignShots(c);
             if (exhaust)
             {
                 // The exhaust at idle (the engine is cold for its first 30 s): from the side at the pipes, and from behind.
@@ -494,6 +495,41 @@ namespace Rally.Editor
         }
 
         /// <summary>Camera at <paramref name="from"/> (height above the ground) looking at a target point (height above its ground).</summary>
+        /// <summary>
+        /// The road signs (World/Signs): the nearest sign faces to the car, each from 6 m in front at eye height and the
+        /// nearest two also from 30 m (the distance they are read at speed). Faces are found in the built sign meshes
+        /// (vertex colour alpha 1), grouped per post.
+        /// </summary>
+        static void SignShots(float3 car)
+        {
+            var groups = new Dictionary<long, (Vector3 sum, Vector3 n, int count)>();
+            foreach (var mf in UnityEngine.Object.FindObjectsByType<MeshFilter>(FindObjectsSortMode.None))
+            {
+                if (!mf.name.StartsWith("Signs") || mf.sharedMesh == null) continue;
+                var m = mf.sharedMesh; var v = m.vertices; var n = m.normals; var col = m.colors;
+                for (int i = 0; i < v.Length; i++)
+                {
+                    if (col[i].a < 0.5f) continue;
+                    var w = mf.transform.TransformPoint(v[i]);
+                    long key = ((long)Mathf.FloorToInt(w.x / 3f) << 32) ^ (uint)Mathf.FloorToInt(w.z / 3f) ^ ((long)Mathf.RoundToInt(Mathf.Atan2(n[i].x, n[i].z) * 2) << 56);
+                    groups.TryGetValue(key, out var g);
+                    groups[key] = (g.sum + w, n[i], g.count + 1);
+                }
+            }
+            var list = new List<(Vector3 p, Vector3 n, float d)>();
+            foreach (var g in groups.Values) { var p = g.sum / g.count; list.Add((p, g.n, math.distance(((float3)p).xz, car.xz))); }
+            list.Sort((a, b) => a.d.CompareTo(b.d));
+            Debug.Log($"PreviewShots: {list.Count} sign faces in the built sign meshes");
+            for (int i = 0; i < math.min(6, list.Count); i++)
+            {
+                var (p, n, _) = list[i];
+                float2 at = ((float3)p).xz, dir = math.normalizesafe(((float3)n).xz);
+                float ground = world.HeightAt(at);
+                shots.Enqueue(($"14_sign_{i}_near", () => Look(at + dir * 6f, 1.4f, at, p.y - ground)));
+                if (i < 2) shots.Enqueue(($"14_sign_{i}_30m", () => Look(at + dir * 30f + new float2(dir.y, -dir.x) * 3f, 1.4f, at, p.y - ground)));
+            }
+        }
+
         static void Look(float2 from, float up, float2 at, float atUp, float atGround = float.NaN)
         {
             ClearLineup();

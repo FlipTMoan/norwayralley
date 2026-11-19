@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-19 (JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-19 (Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -182,7 +182,7 @@ flowchart TB
     GP --> TR[Rally.Track<br/>StageRoute · PaceNotes · RoadWalk]
     VH --> TR
     TR --> RD[Rally.Roads<br/>RoadGraph · ProfileGrader · RibbonMesh]
-    RD --> WD[Rally.World<br/>TileScheduler · TerrainTile · Clipmap · Carve.compute · Scatter.compute · Vegetation · Water · Buildings · TileWorld:IGround]
+    RD --> WD[Rally.World<br/>TileScheduler · TerrainTile · Clipmap · Carve.compute · Scatter.compute · Vegetation · Water · Buildings · TileWorld:IGround · Signs]
     VH --> CORE
     AC --> CORE
     WD --> GEO[Rally.Geo<br/>Kartverket WCS · Overpass · SR16 · NVDB · OSRM · GeoCache · breakers · fakes]
@@ -197,7 +197,7 @@ flowchart TB
 |---|---|
 | Core | EPSG:25833 frame, floating origin (rebases every 2048 m), the `HeightGrid` ground truth, `IGround`, road profile constants, seeded RNG, log. |
 | Geo | Every geodata request with the JS URL formats, the IndexedDB cache **shared with the JS game** (same database), circuit breakers, fakes for tests. |
-| World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, physics colliders (buildings mesh, pooled tree capsules, props, water triggers), procedural sky. |
+| World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, real road signs (NVDB plates placed on the shoulders, Norwegian faces painted into a shared atlas, one mesh per near tile), physics colliders (buildings mesh, pooled tree capsules, sign posts as props, water triggers), procedural sky. |
 | Roads | OSM road graph with NVDB attributes, grading, carve segments, ribbon meshes, `Nearest`. |
 | Track | Stage line (4 m samples, segment-nearest), pace notes (positive = left in Unity's frame), the seeded `RoadWalk` endless-stage generator. |
 | Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. |

@@ -1,6 +1,6 @@
 # Retro Norway Rally — Unity 6 web build
 
-_Updated 2026-11-19 (help screen, collision log lines, exhaust)._
+_Updated 2026-11-19 (real road signs; help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` and is still what
 `npm run build` deploys to GitHub Pages; the Unity build is served next to it at
@@ -152,7 +152,7 @@ unity/
       Dem/                            GeoTiff decoder, KartverketDem (WCS GetCoverage)
       Osm/                            OverpassQuery, OverpassMirrors (race + penalties), OverpassSource (roads + features)
       Landcover/                      Sr16Colours, Sr16Source (NIBIO WMS)
-      Signs/                          Wkt, NvdbSource (NVDB v4 types 96 / 105)
+      Signs/                          Wkt, NvdbSource (NVDB v4 types 96 Skiltplate / 105 Fartsgrense / 241 Vegdekke), RoadSurfaces
       Routing/                        OsrmRouter (route / nearest / segmented, 1 km snap)
       Outline/ + Resources/           NorwayOutline (geoBoundaries ADM0 rings)
       Fake/                           FakeSources for tests and offline editor runs
@@ -164,6 +164,17 @@ unity/
   ProjectSettings/TagManager.asset    layers 8 Buildings, 9 Trees, 10 Props, 11 Water, 12 Actors, 13 Car; tags Car, Actor
 ```
 
+
+## Road signs
+
+Every sign plate in Statens vegvesen's NVDB (Skiltplate, type 96) stands beside the road where it stands in reality,
+facing the traffic it is meant for, drawn after the Norwegian designs (speed limits, warning triangles, yield / stop /
+priority, prohibitions, blue mandatory and information signs, yellow direction signs with road numbers, place and street
+names, chevrons and obstacle markers). The answers are cached with the other geodata, so a second visit needs no NVDB
+request. The car can hit the posts. Code: `Runtime/World/Signs` (catalog, painter, atlas, placement, mesh, layer),
+`Runtime/World/Resources/Signs` (shader, font), fetch in `Geo/Signs/NvdbSource.FetchSigns`; details in
+[README-world.md](README-world.md#road-signs-2026-11-19). Check the designs: menu **Rally → Sign faces sheet** (or
+`-executeMethod Rally.Editor.SignFacesSheet.Run -signSheet out.png`, works headless).
 
 ## Log window
 

@@ -78,11 +78,13 @@ namespace Rally.Gameplay
         IFeatureSource featureSource;
         ILandcoverSource landcoverSource;
         NvdbSource surfaceSource;            // NVDB Vegdekke (gravel / asphalt); null with the fake sources
+        ISignSource signSource;              // NVDB Skiltplate + Fartsgrense (the same NvdbSource), FakeSources.Signs offline
         IRouter router;
 
         // World
         TileWorld world;
         RoadGraph roads;
+        SignLayer signs;
         readonly Dictionary<TileKey, GameObject> ribbons = new Dictionary<TileKey, GameObject>();
         readonly Queue<TileResult> results = new Queue<TileResult>();
         FlatGround naturalGround;            // the uncarved DTM as an IGround, for StageRoute.AssignRoadY
@@ -161,6 +163,8 @@ namespace Rally.Gameplay
             cts.Cancel();
             FloatingOrigin.Rebased -= OnRebased;
             session?.Close();
+            signs?.Dispose();
+            signs = null;
             world?.Dispose();
             world = null;
         }
@@ -195,6 +199,7 @@ namespace Rally.Gameplay
                 landcoverSource = new FakeSources.Landcover();
                 router = new FakeSources.Router();
                 surfaceSource = null;
+                signSource = new FakeSources.Signs { Road = osm };
                 return;
             }
             var overpass = new OverpassSource(cache);
@@ -203,6 +208,7 @@ namespace Rally.Gameplay
             landcoverSource = new Sr16Source(cache);
             router = new OsrmRouter(cache);
             surfaceSource = new NvdbSource(cache);
+            signSource = surfaceSource;
         }
 
         /// <summary>TileWorld + RoadGraph + clipmap + forest + colliders, styled by the WorldStyle asset.</summary>
@@ -218,6 +224,7 @@ namespace Rally.Gameplay
             }
             world.TreeColliders = new TreeColliderPool(world.Trees);
             world.PropColliders = new PropColliderPool();
+            signs = new SignLayer(world.Root, world.PropColliders, p => world.HeightAt(FloatingOrigin.ToWorldXZ(p)));   // the ground the car drives on
             world.Wake = new WaterWake();
             Style?.Apply(world);
             naturalGround = new FlatGround { Height = xz => world.BaseHeightAt(FloatingOrigin.ToUtm(xz)) };
@@ -302,7 +309,8 @@ namespace Rally.Gameplay
             var featureTask = featureSource.FetchFeatures(key.Bounds, ct);
             var coverTask = landcoverSource.FetchCover(key.Bounds, ct);
             var surfaceTask = surfaceSource != null ? surfaceSource.FetchSurfaces(RoadGraph.SurfaceQueryBounds(key), ct) : Task.FromResult<List<RoadSurfaceLine>>(null);
-            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null;
+            var signTask = signSource != null ? signSource.FetchSigns(key.Bounds, ct) : Task.FromResult<SignSet>(null);
+            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null; SignSet signSet = null;
             var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
             RallyLog.Info($"overlay: {key} asking OSM roads + features and NIBIO SR16 forest");
             try { roadData = await roadTask; RallyLog.Info($"overlay: {key} roads {roadData?.Ways.Count ?? 0} ways after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} roads failed: {e.Message}"); }
@@ -314,6 +322,12 @@ namespace Rally.Gameplay
             }
             catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} features failed: {e.Message}"); }
             try { surfaces = await surfaceTask; } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB road surface failed: {e.Message}"); }
+            try
+            {
+                signSet = await signTask;
+                if (signSet != null) RallyLog.Info($"overlay: {key} NVDB signs: {signSet.Plates.Count} plates, {signSet.SpeedLimits.Count} speed limits after {overlayWatch.ElapsedMilliseconds} ms");
+            }
+            catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB signs failed: {e.Message}"); }
             try { cover = await coverTask; RallyLog.Info(cover != null ? $"overlay: {key} SR16 forest raster {cover.Width}×{cover.Height} cells (16 m) after {overlayWatch.ElapsedMilliseconds} ms" : $"overlay: {key} SR16 forest: none after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} SR16 failed: {e.Message}"); }
             results.Enqueue(new TileResult
             {
@@ -329,6 +343,7 @@ namespace Rally.Gameplay
                         var b = key.Bounds;
                         world.RecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
                         BuildRibbon(key, lines);
+                        if (signSet != null) PlaceSigns(key, signSet);
                     }
                     if (features != null || cover != null) world.OnTileFeatures(key, cover, features);
                     RallyLog.Info($"overlay: {key} applied: roads {(roadData != null ? "carved + ribbon" : "missing")}, forest {(cover != null ? "tinted + trees" : "missing")}, houses and water {(features != null ? "built" : "missing")}, after {overlayWatch.ElapsedMilliseconds} ms");
@@ -341,6 +356,18 @@ namespace Rally.Gameplay
                 await Task.Delay(TimeSpan.FromMilliseconds(CircuitBreaker.RetryMs), ct);
                 if (world != null && world.Tiles.ContainsKey(key)) await FetchFeatures(key, ct);
             }
+        }
+
+        /// <summary>The tile's NVDB plates (and made-up 362s where the limit changes without one) onto the shoulders of its roads.</summary>
+        void PlaceSigns(TileKey key, SignSet set)
+        {
+            var plates = new List<SignPlate>(set.Plates);
+            var made = SignPlacement.SpeedChangePlates(set.SpeedLimits, set.Plates, key.Bounds);
+            plates.AddRange(made);
+            var posts = SignPlacement.Place(plates, roads, p => SignCatalog.For(p, SignPlacement.KmhAt(set.SpeedLimits, p.Position)), key.Bounds, out int skipped, out int offRoad);
+            int placed = 0; foreach (var post in posts) placed += post.Plates.Count;
+            signs.SetTile(key, posts);
+            RallyLog.Info($"overlay: {key} signs: {placed} plates on {posts.Count} posts ({made.Count} speed-limit changes without a plate), {skipped} without a design, {offRoad} away from the roads");
         }
 
         /// <summary>At most one tile result per frame (one carve / upload), oldest first; a held fine tile goes to the back.</summary>
@@ -378,7 +405,7 @@ namespace Rally.Gameplay
         void OnTileDisposing(TerrainTile tile)
         {
             if (ribbons.TryGetValue(tile.Key, out var go)) { Destroy(go); ribbons.Remove(tile.Key); }
-            if (tile.Key.Kind == TileKind.Coarse) roads.RemoveTile(tile.Key);
+            if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); }
         }
 
         #endregion
@@ -634,6 +661,7 @@ namespace Rally.Gameplay
             double2 velocity = car != null ? (double2)car.State.Vel : double2.zero;
             if (MainCamera != null) world.Scheduler.SetHorizon(TileScheduler.HorizonFor(RenderSettings.fog ? RenderSettings.fogDensity : 0f, MainCamera.farClipPlane));
             world.Update(carPos, velocity, MainCamera, dt);
+            signs?.Update(FloatingOrigin.ToUtm(carPos), carPos);
             if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
 
             if (flow.Phase == Phase.Intro && Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame) StartEngine();
@@ -1139,6 +1167,7 @@ namespace Rally.Gameplay
             actors = null;
             if (car != null) Destroy(car.gameObject);
             car = null; audio = null;
+            signs?.Dispose(); signs = null;
             world.Dispose();
             world = null; roads = null; stage = null; route = null; walk = null; edges = null; turns = null;
             stagePoints.Clear(); sectorEnds.Clear(); prefetchPath.Clear(); lastSector = 0;

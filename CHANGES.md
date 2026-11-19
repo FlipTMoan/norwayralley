@@ -1,8 +1,40 @@
 # Changes
 
-_Updated 2026-11-19._
+_Updated 2026-11-19 (real road signs in the Unity game)._
 
 ## 2026-11-19
+
+### Unity: real road signs from Statens vegvesen (NVDB)
+- **Every sign plate NVDB knows** (type 96 Skiltplate, with type 105 Fartsgrense) is fetched per 2 km coarse tile next to
+  the road surfaces, through the GeoCache (kind `nvdb`, IndexedDB in the browser): a second visit draws the signs from the
+  cache without asking NVDB (`cache: hit nvdb …` in the F2 log). Overlay log: `NVDB signs: N plates, M speed limits` and
+  `signs: N plates on M posts (…speed-limit changes without a plate, …without a design, …away from the roads)`.
+- **Drawn like the real ones:** a vector painter (`SignCanvas`: every shape a signed distance, exactly anti-aliased at any
+  resolution) paints Norwegian designs (`SignCatalog`): speed limits and their ends and zones, white warning triangles with
+  a red border and black pictograms (bends, gradient, narrowing, bumps, road works, slippery road, tunnel, junctions,
+  roundabout, lights, pedestrian crossing, children, elk / deer, two-way traffic, "!"), yield, STOPP, priority road and its
+  end, no entry, vehicle bans, height / weight limits, no overtaking, no stopping / parking, keep right, roundabout, bus
+  stop, crossing, foot / cycle paths, one-way, chevrons and obstacle markers, yellow direction signs with county-road
+  shields (from NVDB's `@723.15@$520$Sauda 3` text), road numbers, place and street names, distance and text plates.
+  Lettering is DejaVu Sans Condensed Bold rasterised at run time into an SDF atlas (any name, ÆØÅ included). Faces
+  are painted once (0.32 px/mm: a 900 mm triangle is 288 px) into shared 2048² mip-mapped, 8× anisotropic atlas pages and
+  reused by every plate with the same design. Codes without a design (large junction boards, service signs) are skipped,
+  not drawn wrongly.
+- **Placed and facing like the real ones:** plates on one NVDB point share a galvanised post (two posts under wide
+  direction signs), stacked by priority with 8xx plates under their sign, lowest edge at 1.5 m; each plate cut to its real
+  outline with an aluminium back, rim and clamp brackets, standing on the shoulder beyond the road's flat band at the real
+  position along the road. The face direction comes from NVDB's side and "Ansiktsside" relative to the metering direction,
+  recovered against the OSM road; without them the right-hand rule. Two-sided plates show their face on both sides.
+  Where two NVDB speed limits meet without a plate within 40 m, a 362 plate is put up for each direction (signs.js
+  `speedChanges`). Faces are retroreflective (bright with the sun behind the driver), metal has a soft highlight, all with
+  faint grime (`Rally/Sign`).
+- **Cheap:** one mesh per tile, only for tiles within 1 km of the car (dropped beyond 1.5 km), faces painted within a
+  4 ms frame budget; posts within 35 m of the car get capsule colliders (layer Props): the car hits them like a trunk.
+- Tests: `SignTests` (parsing of codes, sizes, facings and sides; direction text; catalog shapes; painted face pixels and
+  Norwegian letters; atlas reuse; face direction rules; shoulder placement, shared posts and plate order; speed changes;
+  mesh orientation; near tiles built, far ones dropped, colliders only near the car; NVDB pages from the GeoCache; the
+  offline fake signs) and PlayMode `SignSceneTests` (the offline scene builds its sign meshes with `Rally/Sign`). `Editor/SignFacesSheet` writes a contact sheet
+  of all faces; `PreviewShots` adds sign close-ups (`14_sign_*`).
 
 ### Unity: hidden water brake on shore roads and streams, trees from any direction, roads meet the ground, real road surfaces, help screen, exhaust
 - **"The car suddenly brakes" — root cause:** the car measured water against the carved road like any ground. Every road

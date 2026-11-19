@@ -5,8 +5,16 @@ using Rally.Core;
 
 namespace Rally.Geo
 {
-    public enum SignFacing : byte { Unknown, With, Against, Both }
+    /// <summary>
+    /// NVDB "Ansiktsside, rettet mot": With / Against = the face is turned to traffic travelling in / against the road's
+    /// metering direction; Both = a two-sided plate; TowardRoad / AwayFromRoad = mounted parallel to the road
+    /// ("Parallelt mot veg" / "fra veg"), the face turned to or from the carriageway.
+    /// </summary>
+    public enum SignFacing : byte { Unknown, With, Against, Both, TowardRoad, AwayFromRoad }
+    /// <summary>NVDB sideposisjon, relative to the metering direction.</summary>
     public enum RoadSide : byte { Unknown, Left, Right }
+    /// <summary>NVDB "Størrelse" (Liten / Middels / Stor størrelse); Medium when absent.</summary>
+    public enum SignSize : byte { Medium, Small, Large }
 
     /// <summary>One NVDB Skiltplate (type 96), as signs.js <c>parseSignPlate</c>.</summary>
     public sealed class SignPlate
@@ -14,6 +22,9 @@ namespace Rally.Geo
         public long Id;
         /// <summary>Norwegian sign number, e.g. "362.50" or "729".</summary>
         public string Number;
+        /// <summary>The whole sign code before the label, variant letters included: "906V", "713.H", "U722.3", "362.50".</summary>
+        public string Code;
+        public SignSize Size;
         /// <summary>The rest of the NVDB value after the number ("Fartsgrense 50 km/t").</summary>
         public string Label;
         /// <summary>Free text on the plate (road names on 729).</summary>
