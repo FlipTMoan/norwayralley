@@ -37,3 +37,21 @@ test('meanSpacing measures the polyline step', () => {
   assert.equal(meanSpacing(pts), 5);
   assert.equal(meanSpacing([{ x: 0, z: 0 }]), 1);
 });
+
+test('grading by distance: uneven samples (fine in bends) grade like even ones', () => {
+  const ground = (s) => 100 + 0.03 * s + 1.5 * Math.sin(s / 25);
+  const even = Array.from({ length: 201 }, (_, i) => i * 5);
+  // Same road, sampled 1 m apart in a stretch and 5 m elsewhere.
+  const uneven = [];
+  for (let s = 0; s <= 1000; s += s >= 300 && s < 400 ? 1 : 5) uneven.push(s);
+  const a = smoothRoadHeights(even.map(ground), 5, { s: even });
+  const b = smoothRoadHeights(uneven.map(ground), 5, { s: uneven });
+  let worst = 0;
+  uneven.forEach((s, i) => { if (s % 5 === 0 && s > 100 && s < 900) worst = Math.max(worst, Math.abs(b[i] - a[s / 5])); });
+  assert.ok(worst < 0.1, `uneven sampling shifts the grade by ${worst.toFixed(3)} m`);
+  // Index-based windows would shrink in the fine stretch: show that the option matters.
+  const byIndex = smoothRoadHeights(uneven.map(ground), meanSpacing(uneven.map((s) => ({ x: s, z: 0 }))));
+  let indexWorst = 0;
+  uneven.forEach((s, i) => { if (s % 5 === 0 && s > 100 && s < 900) indexWorst = Math.max(indexWorst, Math.abs(byIndex[i] - a[s / 5])); });
+  assert.ok(indexWorst > worst * 3, `index windows ${indexWorst.toFixed(3)} vs distance windows ${worst.toFixed(3)}`);
+});

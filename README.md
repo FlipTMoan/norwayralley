@@ -264,12 +264,19 @@ builder still works only inside the loaded world.
   DTM: a two-lane road is 10.5 m wide with 1.5 m shoulders inside an 18 m
   cut-through, a single-lane road 4.5 m wide with 1.5 m shoulders filling its
   7.5 m one (OSM `lanes` or class decides). Inside the cut-through the ground is
-  flat from shoulder to shoulder at the graded road height (three passes of
-  a ±60 m running mean) and blends to the natural ground at the edge, whose
-  height is smoothed along the road too; outside it the DTM is untouched.
-  Bends are rounded in 2D (Chaikin corner cutting with junction nodes
-  pinned), and wherever a road meets another its height is eased onto it, so
-  junctions and crossings are continuous.
+  one straight line from shoulder to shoulder at the graded road height
+  (three passes of a ±60 m running mean, measured in metres along the road)
+  and blends to the natural ground at the edge, whose height is smoothed along
+  the road too; outside it the DTM is untouched, and the terrain next to the
+  road is held at or under its surface so nothing pokes through the ribbon.
+  Roads are centripetal Catmull-Rom splines through every OSM / OSRM node
+  (junction nodes stay exact), sampled at most 5 m and 3° of heading apart, so
+  bends have no corners. Where roads meet (they share an OSM node) the higher
+  class keeps its profile — the stage road above all — and the lower road
+  takes its surface inside the junction, height and crossfall, then ramps
+  back to its own grade over 20–100 m without a step or a kink. Neighbouring
+  chunks re-settle their copy of a road when the other side of a junction
+  arrives later, so crossings agree across chunk borders too.
 - **Stage generation**: A* over a drivability grid prefers gentle ground and
   avoids cliffs; the road ribbon, marker posts and gates are draped onto the
   terrain.

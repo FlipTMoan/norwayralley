@@ -545,6 +545,9 @@ export async function createStreamingWorld({
 
   // ---- the world shell (sample() works from the corridor right away) ------
   const chunks = new Map();
+  const resettle = new Set(); // chunks whose OSM roads re-settle their junctions next frame
+  let roadSettles = 0;
+  let roadMsMax = 0;
   const heightsCache = new Map(); // LRU of disposed chunks' heights
   const waiters = [];
   const queue = [];
@@ -809,6 +812,8 @@ export async function createStreamingWorld({
         trees: treeCount,
         houses: houseCount,
         roads: world.roads.segmentCount,
+        roadSettles,       // chunks re-settled because a neighbour's junctions changed
+        roadMsMax: Math.round(roadMsMax), // slowest OSM road refresh of one chunk so far (ms)
       };
     },
 
@@ -850,7 +855,7 @@ export async function createStreamingWorld({
    */
   function gradeRoute(route) {
     const samples = route.samples;
-    const smooth = smoothRoadHeights(bridgeRaw(route.rawY, samples), 5);
+    const smooth = smoothRoadHeights(bridgeRaw(route.rawY, samples), 5, { s: samples.map((p) => p.s) });
     for (let i = 0; i < samples.length; i++) samples[i].roadY = smooth[i];
     applyBridgeProfile(samples, (x, z) => corridorSample(x, z) ?? fallbackSample(x, z));
     for (const p of samples) p.y = p.roadY + ROAD_LIFT;
@@ -937,6 +942,7 @@ export async function createStreamingWorld({
       refreshChunkCorridor(c);
       refreshChunkRoad(c);
       rescatter(c);
+      if (c.osm) resettle.add(c); // side roads meet the re-graded stage road
     }
     // This chunk is re-carved by its caller; its road visuals are refreshed here.
     refreshChunkRoad(chunk);
@@ -1022,7 +1028,9 @@ export async function createStreamingWorld({
   /** Carriageway height of whichever road's flat band covers (x, z): OSM roads or the stage route; null off-road. */
   function roadSurfaceAt(x, z) {
     const q = world.roads.nearest(x, z, 10);
-    if (q.roadY != null && !q.bridge && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
+    if (q.roadY != null && !q.bridge && q.distance <= (q.width ?? 0) + SHOULDER) {
+      return q.roadY + (q.bank || 0) * ((x - q.point.x) * -q.tangent.z + (z - q.point.z) * q.tangent.x);
+    }
     if (world.route && world.routeIndex?.nearest) {
       const r = world.routeIndex.nearest(x, z, 10);
       if (r.roadY != null && !r.bridge && r.distance <= world.route.roadWidth + SHOULDER) return r.roadY;
@@ -1305,7 +1313,7 @@ export async function createStreamingWorld({
     houses: (n) => { houseCount += n; },
     cull: (group) => cullHouses(group, lastFocus.x, lastFocus.z, HOUSE_DRAW_DISTANCE),
     signs: (c) => refreshChunkSigns(c),
-    roads: (c) => refreshChunkOsmRoads(c),
+    roads: (c) => { c.settles = 0; refreshChunkOsmRoads(c); },
     surfaces: (c) => applyChunkSurfaces(c),
     clearance: () => clearanceIndex,
     coverReady: (c) => {
@@ -1365,6 +1373,46 @@ export async function createStreamingWorld({
     }
   }
 
+  /** The stage road as a junction partner for OSM roads (`settleJunctions`). */
+  function stageSurface(x, z) {
+    const q = world.routeIndex?.nearest(x, z, 12);
+    return q && q.roadY != null ? q : null;
+  }
+
+  /**
+   * Neighbouring chunks hold their own copies of the ways that cross into
+   * this one. A copy settled before this chunk's roads were known (a junction
+   * just across the border) disagrees with this chunk's by more than 2 cm:
+   * re-settle it, one chunk per frame, at most twice per Overpass answer.
+   */
+  function queueDisagreeing(chunk) {
+    const key = (p) => `${Math.round(p.x * 2)}:${Math.round(p.z * 2)}`;
+    const mine = new Map();
+    for (const l of chunk.osmRoads || []) {
+      if (l.id == null) continue;
+      let m = mine.get(l.id);
+      if (!m) mine.set(l.id, (m = new Map()));
+      for (const p of l.samples) m.set(key(p), p.roadY);
+    }
+    if (!mine.size) return;
+    for (const c of chunks.values()) {
+      if (c === chunk || c.state !== 'ready' || !c.osmRoads?.length || Math.abs(c.ci - chunk.ci) > 1 || Math.abs(c.cj - chunk.cj) > 1) continue;
+      let worst = 0; let way = null;
+      for (const l of c.osmRoads) {
+        const m = mine.get(l.id);
+        if (!m) continue;
+        for (const p of l.samples) {
+          const y = m.get(key(p));
+          if (y != null && Math.abs(y - p.roadY) > worst) { worst = Math.abs(y - p.roadY); way = l.id; }
+        }
+      }
+      if (worst > 0.02 && (c.settles = (c.settles || 0) + 1) <= 2) {
+        log.debug(`re-settle ${c.key}: way ${way} differs by ${worst.toFixed(2)} m from ${chunk.key}`);
+        resettle.add(c);
+      }
+    }
+  }
+
   /** Hang a chunk's OSM road meshes in and register their bridge rails and piers as solid for the car. */
   function setOsmRoadGroup(chunk, group) {
     chunk.osmRoadGroup = group;
@@ -1373,7 +1421,23 @@ export async function createStreamingWorld({
   }
 
   /** OSM roads of one chunk: carve, ribbons, and the shared road network. */
-  function refreshChunkOsmRoads(chunk) {
+  function refreshChunkOsmRoads(chunk, settleOnly = false) {
+    const t0 = performance.now();
+    try {
+      refreshChunkOsmRoadsNow(chunk, settleOnly);
+    } finally {
+      roadMsMax = Math.max(roadMsMax, performance.now() - t0);
+    }
+  }
+
+  /**
+   * `settleOnly`: a re-settle after a neighbour's junctions changed. The roads,
+   * the carve and the ribbons update now; the chunk mesh and its corridor are
+   * rebuilt through the dirty-chunk queue (like after a fine-tile change), and
+   * only the 1 m tiles around the ways that moved are re-carved.
+   */
+  function refreshChunkOsmRoadsNow(chunk, settleOnly = false) {
+    const before = settleOnly ? new Map((chunk.osmRoads || []).flatMap((l) => l.samples.map((p) => [`${l.id}:${Math.round(p.x * 2)}:${Math.round(p.z * 2)}`, p.roadY]))) : null;
     if (chunk.osmRoadGroup) {
       disposeObject(chunk.osmRoadGroup);
       chunk.group.remove(chunk.osmRoadGroup);
@@ -1383,18 +1447,42 @@ export async function createStreamingWorld({
     if (!chunk.osm) return;
     const route = world.route;
     const routeChanged = markRouteBridges(chunk);
+    const tPrep = performance.now();
     const roads = prepareChunkRoads(chunk.osm.roads, world, { x0: chunk.x0, z0: chunk.z0, size: CHUNK }, {
       avoid: route ? { index: world.routeIndex, distance: route.cutHalf + 4 } : null,
       wet: chunkWet(chunk),
+      main: route ? stageSurface : null,
     });
     chunk.osmRoads = roads;
     if (chunk.surfaces?.length) surfaceOsmLines(roads, chunk.surfaces);
     world.roads.setChunk(chunk.key, roads);
+    queueDisagreeing(chunk);
     if (!roads.length && !routeChanged) return;
+    const tCarve = performance.now();
     carveChunk(chunk);
-    rebuildChunkGeometries(chunk);
-    refreshChunkCorridor(chunk);
-    fine.recarveWithin(chunk.x0 - 80, chunk.z0 - 80, CHUNK + 160);
+    let tCorr; let tFine;
+    if (settleOnly) {
+      const nowT = performance.now();
+      dirtyChunks.set(chunk, { first: nowT, last: nowT });
+      tCorr = tFine = performance.now();
+      // Only around the samples whose height changed.
+      let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
+      for (const l of roads) {
+        for (const p of l.samples) {
+          const y = before.get(`${l.id}:${Math.round(p.x * 2)}:${Math.round(p.z * 2)}`);
+          if (y != null && Math.abs(y - p.roadY) < 0.005) continue;
+          minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+        }
+      }
+      if (minX <= maxX) fine.recarveWithin(minX - 40, minZ - 40, maxX - minX + 80, maxZ - minZ + 80);
+    } else {
+      rebuildChunkGeometries(chunk); // a near (level 0) chunk rebuilds its corridor mesh here
+      tCorr = performance.now();
+      if (chunk.level !== 0) refreshChunkCorridor(chunk);
+      tFine = performance.now();
+      fine.recarveWithin(chunk.x0 - 80, chunk.z0 - 80, CHUNK + 160);
+    }
+    const tMesh = performance.now();
     if (!roads.length) { rescatter(chunk); return; }
     setOsmRoadGroup(chunk, buildRoadMeshes(roads, world));
     if (world.freeDrive && !world.roads.snapped) {
@@ -1408,7 +1496,10 @@ export async function createStreamingWorld({
         world.onSpawnSnapped?.(pose);
       }
     }
-    rescatter(chunk);
+    const tScatter = performance.now();
+    if (!settleOnly) rescatter(chunk);
+    const t = (a, b) => (b - a).toFixed(0);
+    log.debug(`roads ${chunk.key}: prepare ${t(tPrep, tCarve)} ms, carve ${t(tCarve, tCorr)}, corridor ${t(tCorr, tFine)}, fine ${t(tFine, tMesh)}, meshes ${t(tMesh, tScatter)}, scatter ${t(tScatter, performance.now())}`);
   }
 
   /** Real road signs beside the stage road, limited to this chunk's square. */
@@ -1613,6 +1704,12 @@ export async function createStreamingWorld({
    */
   world.update = (fx, fz, vx = 0, vz = 0) => {
     if (disposed) return;
+    // One chunk per frame re-settles its road junctions (see queueDisagreeing).
+    const settle = resettle.values().next().value;
+    if (settle) {
+      resettle.delete(settle);
+      if (settle.state === 'ready' && settle.osm) { roadSettles++; refreshChunkOsmRoads(settle, true); }
+    }
     lastFocus = { x: fx, z: fz };
     focusVel = { x: vx, z: vz };
     const speed = Math.hypot(vx, vz);
@@ -1844,6 +1941,7 @@ export async function createStreamingWorld({
     name: `${ROUTE_PROFILE_NAMES[profile] || 'OSRM road'} stage`,
     source: 'osrm',
     smooth: 1,
+    spline: true,
     spacing: 5,
     simplifyEpsilon: 2,
     roadWidth: profile === 'driving' ? LANES.two.half : LANES.one.half,

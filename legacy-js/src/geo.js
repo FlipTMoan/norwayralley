@@ -162,3 +162,63 @@ export function hash2(x, y, seed = 0) {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
+
+/**
+ * Centripetal Catmull-Rom spline through a polyline of `{x, z}` vertices,
+ * sampled so no step is longer than `maxStep` metres and the heading turns by
+ * at most `maxTurn` radians between samples (finer in bends, never under
+ * `minStep`). Every vertex is kept exactly (junction nodes stay where they
+ * are), the tangent is continuous at the vertices, and the centripetal
+ * parametrisation never loops or cusps. `before` / `after` are optional
+ * neighbour points beyond the ends (the way that continues there), so a road
+ * split into two ways keeps one tangent across the joint; without them the
+ * ends extrapolate straight. Returns `[{x, z}]`.
+ */
+export function splinePolyline(points, { maxStep = 5, maxTurn = 3 * DEG, minStep = 0.5, before = null, after = null } = {}) {
+  const p = [];
+  for (const v of points) {
+    const last = p[p.length - 1];
+    if (!last || Math.hypot(v.x - last.x, v.z - last.z) > 1e-6) p.push({ x: v.x, z: v.z });
+  }
+  if (p.length < 2) return p.map((v) => ({ ...v }));
+  const n = p.length;
+  const ext = (a, b) => ({ x: 2 * a.x - b.x, z: 2 * a.z - b.z });
+  const pt = (i) => (i < 0 ? (before || ext(p[0], p[1])) : i >= n ? (after || ext(p[n - 1], p[n - 2])) : p[i]);
+  const out = [{ ...p[0] }];
+  for (let i = 0; i + 1 < n; i++) {
+    const P0 = pt(i - 1); const P1 = p[i]; const P2 = p[i + 1]; const P3 = pt(i + 2);
+    const knot = (a, b) => Math.max(1e-6, Math.sqrt(Math.hypot(b.x - a.x, b.z - a.z)));
+    const t1 = knot(P0, P1); const t2 = t1 + knot(P1, P2); const t3 = t2 + knot(P2, P3);
+    // Barry–Goldman pyramid, scalar (this runs for every sample of every road).
+    const at = (u) => {
+      const t = t1 + (t2 - t1) * u;
+      const a1x = ((t1 - t) * P0.x + t * P1.x) / t1; const a1z = ((t1 - t) * P0.z + t * P1.z) / t1;
+      const a2x = ((t2 - t) * P1.x + (t - t1) * P2.x) / (t2 - t1); const a2z = ((t2 - t) * P1.z + (t - t1) * P2.z) / (t2 - t1);
+      const a3x = ((t3 - t) * P2.x + (t - t2) * P3.x) / (t3 - t2); const a3z = ((t3 - t) * P2.z + (t - t2) * P3.z) / (t3 - t2);
+      const b1x = ((t2 - t) * a1x + t * a2x) / t2; const b1z = ((t2 - t) * a1z + t * a2z) / t2;
+      const b2x = ((t3 - t) * a2x + (t - t1) * a3x) / (t3 - t1); const b2z = ((t3 - t) * a2z + (t - t1) * a3z) / (t3 - t1);
+      return { x: ((t2 - t) * b1x + (t - t1) * b2x) / (t2 - t1), z: ((t2 - t) * b1z + (t - t1) * b2z) / (t2 - t1) };
+    };
+    // Walk the span on a fine probe and emit a sample whenever the next probe
+    // step would take the arc since the last sample past `maxStep` metres or
+    // `maxTurn` of heading, so every chord stays short and turns little.
+    const chord = Math.hypot(P2.x - P1.x, P2.z - P1.z);
+    const probe = Math.max(8, Math.min(Math.ceil(chord / 0.5), Math.max(200, Math.ceil((chord * 4) / maxStep))));
+    let len = 0; let turn = 0;
+    let prev = P1; let prevH = null;
+    for (let k = 1; k <= probe; k++) {
+      const q = k === probe ? P2 : at(k / probe);
+      const h = Math.atan2(q.x - prev.x, q.z - prev.z);
+      const dl = Math.hypot(q.x - prev.x, q.z - prev.z);
+      const dt = prevH == null ? 0 : Math.abs(wrapAngle(h - prevH));
+      if ((len + dl > maxStep || turn + dt > maxTurn) && len >= minStep) {
+        out.push(prev);
+        len = 0; turn = 0;
+      }
+      len += dl; turn += dt;
+      prev = q; prevH = h;
+    }
+    out.push({ ...P2 });
+  }
+  return out;
+}

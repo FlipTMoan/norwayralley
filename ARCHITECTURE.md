@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-19 (JS bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-19 (JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -57,7 +57,7 @@ flowchart LR
 | `buildings.js` | One Overpass request per chunk (`out geom`); footprint → oriented rectangle → typed house instances. |
 | `signs.js` | NVDB (Statens vegvesen) sign plates and speed limits → textured plates on posts along the route. |
 | `bridges.js` | Bridge spans: OSM `bridge=*` (not `no`/`culvert`) or an untagged water crossing ≥ 6 m with water on both sides and the DTM at water level (`waterProbe`, `wetCore`, `markBridgeSpans`); the grade runs bank to bank (`bridgeRaw`), the deck gets an arch and a clearance lift with ramps (`applyBridgeProfile`); one merged mesh per chunk for deck slab, guard rails and piers, plus height-banded rail/pier boxes for the car. The OSRM stage road is matched to the chunk's bridge ways and water when its Overpass answer arrives (`stream.js markRouteBridges`), then re-graded and the chunks around re-carved. |
-| `roads.js` | OSM `highway=*` per chunk: carve into the heights, tarmac/gravel ribbons, `RoadNetwork` (48 m buckets) answering `nearest(x, z)` for the car, trees, houses and signs. In free drive the network is the car's route. |
+| `roads.js` | OSM `highway=*` per chunk: spline, grade, settle junctions by rank (`settleJunctions`), carve into the heights, tarmac/gravel ribbons, `RoadNetwork` (24 m buckets) answering `nearest(x, z, limit, filter)` (with grade, crossfall and rank) for the car, trees, houses and signs. In free drive the network is the car's route. |
 | `map.js` | The route map (Leaflet over OSM tiles): pins by click or typed `lat, lon`, each snapped to the nearest road of the profile within 1 km (OSRM `/nearest`, via `stage.js`), route-by select (OSRM profiles or off-road A*), FREE DRIVE. The only route picker; opened from the minimap. |
 | `cache.js` | IndexedDB cache (up to 32 GB, 10 % of the browser quota kept free, re-measured every 5 min / 256 MB; LRU) in front of every geodata fetch: DEM, Overpass, NVDB, SR16, OSRM, map tiles. |
 | `retro.js` | Low-resolution render target with scanlines and dithering. |
@@ -99,18 +99,45 @@ the spawn to the first road that arrives (`world.onSpawnSnapped`).
 The car, the ribbon, the gates, the trees and the camera all read the same
 per-chunk `heights` array through `world.sample(x, z)`:
 
-1. The route gets a smoothed `roadY` profile from a coarse corridor DEM.
-2. `carveChunk` pulls every ground cell within the road's half width to the
-   height interpolated along the nearest **route segment** (not sample), with
-   a smoothstep blend out to the hillside. The ribbon mesh is the same ruled
-   surface lifted by `ROAD_RIBBON_LIFT + ROAD_CROWN`.
-3. `car.groundAt(x, z)` = `sample(x, z)` + the ribbon lift blended over the
-   shoulder, so the tyres stand on the visible gravel.
+1. Every road line is a centripetal Catmull-Rom spline through its OSM / OSRM
+   nodes (`geo.js splinePolyline`: ≤ 5 m and ≤ 3° per sample) with a graded
+   `roadY` (running mean by distance) and a crossfall `bank` (rise per metre
+   to the left, non-zero only at junctions). Across the carriageway and
+   shoulder the surface is the straight line `roadY + bank · offset`.
+2. `carveChunk` pulls every ground cell within the road's half width to that
+   line, interpolated along the nearest **segment** (not sample), with a
+   smoothstep blend out to the hillside; cells up to 1.4 grid steps beyond the
+   band are held at or under the road plane so no triangle rises through it.
+   The ribbon mesh is that line itself lifted by `ROAD_RIBBON_LIFT + ROAD_CROWN`
+   (not draped on the terrain).
+3. `car.groundAt(x, z)` evaluates the same line (plus the ribbon lift blended
+   over the shoulder), so the tyres stand on the visible gravel.
 4. Bridges are the exception: segments whose two samples are both bridge
    samples are not carved (nor is the terrace drawn), so the ground and the
    river stay natural under the span; the ribbon lies on `roadY` and the car's
    `groundAt` returns the deck for a car up on it (within the rails, no more
-   than `DECK_CATCH` below the deck) and the natural ground otherwise.
+   than `DECK_CATCH` below the deck) and the natural ground otherwise; a deck
+   the car is on wins over a road passing under it.
+
+### Junctions
+
+```mermaid
+flowchart LR
+  A[chunk's ways: spline, grade, bridges, registry] --> S[sort by rank: stage road, motorway … track, then OSM id]
+  S --> J{inside the flat band of a road<br/>that outranks it and shares a node?}
+  J -- yes --> P[take that road's surface plane:<br/>height + crossfall]
+  J -- no --> K[keep own grade]
+  P --> R[C1 ramp back to own grade over 20–100 m,<br/>2 m samples in the ramp]
+  R --> N[RoadNetwork chunk copy]
+  N --> D{neighbour's copy of a shared way<br/>differs by > 2 cm?}
+  D -- yes --> Q[re-settle that chunk next frame,<br/>mesh rebuilt via the dirty-chunk queue]
+```
+
+`roads.js settleJunctions` does the settling; the per-way height registry
+(`world.roadHeights`) holds the graded profile *before* junctions, so every
+copy of a way starts from the same heights and the junction step is computed
+from whatever roads are loaded. `streamStats()` reports `roadSettles` and the
+slowest chunk road refresh (`roadMsMax`).
 
 ## Car physics loop
 

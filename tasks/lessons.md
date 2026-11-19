@@ -70,3 +70,38 @@
   at it before calling it done; a counter of "instances drawn" proves nothing about pixels.
 - When a draw is "submitted but invisible", bisect against a known-good draw of the same mesh/material at the same spot
   (params, timing, data source) instead of theorising about shaders.
+
+## 2026-11-19 — a work-in-progress web build overwrote the one the user plays
+- A background agent rebuilt `unity/Build/Web` mid-task; the user started it and got a stack overflow (unbounded
+  recursion, stripped wasm so no names). Rule: experiments build to `unity/Build/WebDev`; only a build that has
+  booted and driven in Chrome without console errors goes to `unity/Build/Web`. For crashes in the player, build
+  with `PlayerSettings.WebGL.debugSymbolMode` External/Embedded so the stack has names.
+
+## 2026-11-19 — polish pass (frame rate, roads)
+- A batchmode `PreviewShots` run hangs forever when any script changes while it plays (another agent, or me): leaving
+  play mode recompiles, the domain reload drops the `delayCall` that was to exit. Exit directly; and don't edit scripts
+  while a Unity run is in flight. `pgrep -f "Editor/Unity"` inside a `bash -c` matches the bash itself — anchor the
+  pattern on the binary path (`pgrep -f "^/home/pc/Unity/Hub/Editor"`).
+- Never build into the folder the user plays from: Unity writes Build/Web over ~4 minutes (data first, wasm last), and a
+  page loaded in between gets a new framework with an old wasm. Build to Build/WebDev, check it in Chrome, then swap
+  the folder in with two renames.
+- The user's python server already listens on 8090; my own Chrome runs must use another port, or they silently measure
+  whatever the user's server serves.
+- Mesh heights sampled from a height grid at build time go stale when a finer grid arrives later (the road ribbon was
+  built from the 8 m coarse tile and the 1 m tile then cut through it). Derive drawn surfaces from the same function the
+  physics uses, not from a cache of it.
+- `if (SegmentCount == 0) return;` where the count is only summed at the end of the call disabled junction easing for
+  every way of the tile being loaded. Check guards against state that is updated in the same call.
+
+## 2026-11-19 — JS roads: hidden-tab throttling, self-checking tests, window edges
+- A Claude-in-Chrome tab that has been hidden for minutes gets Chrome's intensive timer throttling: `setTimeout`
+  waits up to a minute and every `javascript_exec` with an `await` times out at 45 s ("renderer frozen"). Open a fresh
+  tab for each measured run. A CDP timeout in the middle of `__step` drops the captured rAF callback and the game loop
+  is dead in that tab; step in small batches with a time budget, or drive `car.update` directly for physics checks.
+- A test that compared a road's surface against `network.nearest(..., filter)` passed on the old code because the old
+  `nearest` ignored the filter and returned the road itself. Run new tests against the old code (a `git worktree` of
+  HEAD in the scratchpad) and make sure they fail there before trusting them.
+- Running means with windows in metres need a tolerance (or an exact integral): float error in `s` made samples
+  alternately include one more neighbour and turned a straight grade into a staircase.
+- Only roads that share an OSM node meet. Anchoring by "within the other road's band" alone pulled underpasses and
+  tunnel roads 4–10 m onto the road above.

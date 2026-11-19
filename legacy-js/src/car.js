@@ -808,6 +808,17 @@ export class Car {
    * the ribbon; elsewhere the natural ground.
    */
   groundAt(x, z) {
+    // A bridge deck the car is up on wins over whatever passes under it (the
+    // nearest centre line there can be the road below), and carries the car
+    // on side roads in stage mode too.
+    const net = this.terrain.roads;
+    if (net?.bridgeCount > 0) {
+      const b = net.nearest(x, z, 12, (seg) => seg.bridge);
+      // Only over the deck itself, not in the circle around its last sample.
+      const over = b.bridge && Math.abs((x - b.point.x) * b.tangent.x + (z - b.point.z) * b.tangent.z) < 0.3;
+      const deck = over ? this.deckAt(b, b.width) : null;
+      if (deck != null) return deck;
+    }
     if (this.route) {
       const q = this.route.nearest(x, z, 24); // wheels only need the roads right under the car
       const half = q.width ?? this.route.roadWidth;
@@ -822,15 +833,10 @@ export class Car {
         // Which side of the road: the left normal is (-tz, tx), like the carve.
         const leftSide = (x - q.point.x) * -q.tangent.z + (z - q.point.z) * q.tangent.x >= 0;
         const edge = leftSide ? q.edgeL : q.edgeR;
-        return profileHeight(q.roadY + ROAD_LIFT, ground, q.distance, half, cut, edge ?? null) + this.surfaceLift(q.distance, half);
+        // Straight across the carriageway: the centre height plus the crossfall.
+        const side = (q.bank || 0) * (leftSide ? 1 : -1) * Math.min(q.distance, flatHalf(half));
+        return profileHeight(q.roadY + ROAD_LIFT + side, ground, q.distance, half, cut, edge ?? null) + this.surfaceLift(q.distance, half);
       }
-    }
-    // Stage mode: a bridge on a side road (OSM network) carries the car too.
-    const net = this.terrain.roads;
-    if (net?.bridgeCount > 0 && net !== this.route) {
-      const b = net.nearest(x, z, 12);
-      const deck = b.bridge ? this.deckAt(b, b.width) : null;
-      if (deck != null) return deck;
     }
     return this.terrain.sample(x, z) + this.roadLift;
   }

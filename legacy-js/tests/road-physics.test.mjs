@@ -86,3 +86,44 @@ test('car rides on the road surface without sinking or sliding off', () => {
   assert.ok(lateral < route.roadWidth, `drifted ${lateral.toFixed(2)} m from the centre line`);
   assert.ok(car.roadLift > 0.15, 'car rides on the ribbon lift when on the road');
 });
+
+test('driving through a junction: no step and no vertical jolt where the side road crosses the main road', async () => {
+  const { prepareChunkRoads, RoadNetwork } = await import('../src/roads.js');
+  // Main road along x up an 8 % hill; a residential road crosses it along z.
+  // Away from the main road the ground the side road is graded on sits 1.5 m
+  // higher than the main road's own, so an unsettled crossing would step.
+  const size = 1600; const grid = 801;
+  const ground = (x, z) => 100 + 0.08 * x + 2 * Math.sin(z / 40) + (Math.abs(z) > 12 ? 1.5 : 0);
+  const heights = new Float32Array(grid * grid);
+  for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) heights[j * grid + i] = ground(-size / 2 + (i / (grid - 1)) * size, -size / 2 + (j / (grid - 1)) * size);
+  const terrain = createTerrainModel({
+    heights, grid, sizeX: size, sizeZ: size,
+    projection: { worldFromLatLon: () => ({ x: 0, z: 0 }), latLonFromWorld: () => ({ lat: 59, lon: 6 }) },
+    scene: { name: 't', title: 't', lat: 59, lon: 6 }, basemapUrl: null, meta: { originX: 0, originY: 0 },
+  });
+  terrain.worldFromLatLon = (lat, lon) => ({ x: lon, z: lat }); // test ways are given in metres
+  terrain.sampleBaseCoarse = ground;
+  const main = { id: 1, kind: 'secondary', points: [{ lat: 0, lon: -600 }, { lat: 0, lon: 0 }, { lat: 0, lon: 600 }] }; // shares the junction node
+  const side = { id: 2, kind: 'residential', points: [{ lat: -400, lon: 0 }, { lat: 0, lon: 0 }, { lat: 400, lon: 0 }] };
+  const lines = prepareChunkRoads([side, main], terrain, { x0: -700, z0: -700, size: 1400 });
+  const net = new RoadNetwork({ spawn: { x: 0, z: -150, yaw: 0 } });
+  net.setChunk('c', lines);
+  terrain.roads = net;
+  const car = new Car({ add() {}, remove() {} }, terrain);
+  car.setRoute(net);
+  const dt = 1 / 60;
+  const ys = [];
+  let airborne = 0;
+  for (let i = 0; i < 60 * 20 && car.pos.z < 150; i++) {
+    const v = car.speed;
+    car.update(dt, { throttle: v < 16 ? 0.6 : 0, brake: v > 18 ? 0.3 : 0, steer: 0, handbrake: false, jump: false });
+    if (Math.abs(car.pos.z) < 60) { ys.push(car.pos.y); if (!car.grounded) airborne++; }
+  }
+  assert.ok(car.pos.z >= 150, `drove through the junction (z=${car.pos.z.toFixed(1)})`);
+  let worstAcc = 0;
+  // Vertical acceleration over 0.1 s (what tyres and springs pass on), not frame to frame.
+  const k = 6;
+  for (let i = k; i + k < ys.length; i++) worstAcc = Math.max(worstAcc, Math.abs(ys[i + k] - 2 * ys[i] + ys[i - k]) / (k * dt) ** 2);
+  assert.equal(airborne, 0, 'the car never leaves the ground at the junction');
+  assert.ok(worstAcc < 0.25 * 9.81, `vertical jolt ${(worstAcc / 9.81).toFixed(2)} g`);
+});

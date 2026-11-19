@@ -229,8 +229,10 @@ export function bridgeRaw(raw, samples) {
  * abutment heights plus a gentle arch (2 % of the span, at most 1 m), lifted
  * when needed so the deck clears the water (`WATER_CLEARANCE`) or dry ground
  * (`DRY_CLEARANCE`) under every sample; the lift ramps out over 15–90 m
- * either side and tapers to nothing at the line's own ends, so a bridge
- * that is its own OSM way still meets the roads at its ends. `ground(x, z)`
+ * (≈ 3 % grade) either side and tapers to nothing at the line's own ends, so
+ * a bridge that is its own OSM way still meets the roads at its ends. The
+ * deck itself is a cubic between the abutments that leaves each one at the
+ * grade of the road beyond it, plus an arch that starts level: no kink. `ground(x, z)`
  * is the natural ground; `p.wet` marks samples over water.
  */
 export function applyBridgeProfile(samples, ground) {
@@ -246,24 +248,35 @@ export function applyBridgeProfile(samples, ground) {
     const L = Math.max(1e-6, samples[i1].s - s0);
     const y0 = samples[i0].roadY;
     const y1 = samples[i1].roadY;
+    // End grades of the road either side, so the deck leaves the approach
+    // without a kink (cubic Hermite between the abutments).
+    const chord = (y1 - y0) / L;
+    const m0 = i0 > 0 ? (y0 - samples[i0 - 1].roadY) / Math.max(1e-6, samples[i0].s - samples[i0 - 1].s) : chord;
+    const m1 = i1 + 1 < samples.length ? (samples[i1 + 1].roadY - y1) / Math.max(1e-6, samples[i1 + 1].s - samples[i1].s) : chord;
     const arch = Math.min(1, 0.02 * L);
     let need = 0;
     for (let i = i0; i <= i1; i++) {
       const p = samples[i];
       const t = (p.s - s0) / L;
-      p.roadY = lerp(y0, y1, t) + arch * 4 * t * (1 - t);
+      const t2 = t * t; const t3 = t2 * t;
+      const hermite = (2 * t3 - 3 * t2 + 1) * y0 + (t3 - 2 * t2 + t) * L * m0 + (-2 * t3 + 3 * t2) * y1 + (t3 - t2) * L * m1;
+      p.roadY = hermite + arch * 16 * t2 * (1 - t) * (1 - t); // the arch starts level at both ends
       if (i === i0 || i === i1) continue; // the abutments stand on the bank
       const g = ground(p.x, p.z);
       const req = p.wet ? Math.max(g, SEA_LEVEL) + WATER_CLEARANCE : g + DRY_CLEARANCE;
       need = Math.max(need, req - p.roadY);
     }
     if (need <= 1e-3) continue;
-    const ramp = clamp(need * 12, 15, 90);
+    // About 3 % at most; on a bridge that is its own way (ends held at the
+    // roads it joins) the lift spreads over up to half the line, a long low
+    // hump rather than a kicker.
+    const ramp = clamp(need * 30, 15, 90);
+    const endRamp = Math.min(ramp, Math.max(15, total / 2));
     for (let i = 0; i < n; i++) {
       const p = samples[i];
       const off = p.s < s0 ? s0 - p.s : p.s > samples[i1].s ? p.s - samples[i1].s : 0;
       if (off >= ramp) continue;
-      const w = (off > 0 ? smoothstep(1 - off / ramp) : 1) * endWeight(i, ramp);
+      const w = (off > 0 ? smoothstep(1 - off / ramp) : 1) * endWeight(i, endRamp);
       p.roadY += need * w;
     }
   }
@@ -317,7 +330,9 @@ export function buildBridgeParts(lines, ground) {
         const tl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
         const nx = -(b.z - a.z) / tl; const nz = (b.x - a.x) / tl;
         const top = p.roadY + ROAD_LIFT;
-        for (const [side, y, col] of [[1, top, CONCRETE], [-1, top, CONCRETE], [-1, top - DECK_THICKNESS, CONCRETE_DARK], [1, top - DECK_THICKNESS, CONCRETE_DARK]]) {
+        const tilt = (p.bank || 0) * W;
+        for (const [side, y0, col] of [[1, top, CONCRETE], [-1, top, CONCRETE], [-1, top - DECK_THICKNESS, CONCRETE_DARK], [1, top - DECK_THICKNESS, CONCRETE_DARK]]) {
+          const y = y0 + tilt * side;
           buf.positions.push(p.x + nx * W * side, y, p.z + nz * W * side);
           buf.colors.push(col.r, col.g, col.b);
         }

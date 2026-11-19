@@ -246,3 +246,38 @@ test('the guard rail stops a car steering off the deck; off the deck it falls in
   assert.ok(off.waterDepth > 0, 'beside the bridge is water');
   assert.ok(off.pos.y < 1, `car at y=${off.pos.y.toFixed(2)}`);
 });
+
+test('a car on a bridge stays on the deck where another road passes under it', () => {
+  // A dry valley (floor 2 m, banks 10 m) with a road along its floor and a bridge across it.
+  const size = 800; const grid = 401;
+  const heights = new Float32Array(grid * grid);
+  for (let j = 0; j < grid; j++) {
+    const z = -size / 2 + (j / (grid - 1)) * size;
+    const h = Math.abs(z) < 20 ? 2 : Math.abs(z) < 35 ? 2 + 8 * (Math.abs(z) - 20) / 15 : 10;
+    for (let i = 0; i < grid; i++) heights[j * grid + i] = h;
+  }
+  const terrain = createTerrainModel({
+    heights, grid, sizeX: size, sizeZ: size,
+    projection: { worldFromLatLon: () => ({ x: 0, z: 0 }), latLonFromWorld: () => ({ lat: 59, lon: 6 }) },
+    scene: { name: 'test', title: 'test', lat: 59, lon: 6 }, basemapUrl: null, meta: { originX: 0, originY: 0 },
+  });
+  terrain.worldFromLatLon = (lat, lon) => ({ x: lon, z: lat });
+  const ways = [
+    { id: 7, kind: 'primary', bridge: true, points: [{ lat: -45, lon: 0 }, { lat: 45, lon: 0 }] },
+    { id: 8, kind: 'residential', points: [{ lat: 3, lon: -200 }, { lat: 3, lon: 200 }] }, // no node in common
+  ];
+  const lines = prepareChunkRoads(ways, terrain, { x0: -400, z0: -400, size: 800 });
+  const net = new RoadNetwork({ spawn: { x: 1.5, z: -40, yaw: 0 } }); // 1.5 m right of the deck's centre line
+  net.setChunk('c', lines);
+  terrain.roads = net;
+  assert.equal(net.nearest(1.5, 3, 12).id, 8, 'the road below is the nearest centre line there');
+  const car = new Car({ add() {}, remove() {} }, terrain);
+  car.setRoute(net);
+  let lowest = Infinity;
+  for (let i = 0; i < 600 && car.pos.z < 40; i++) {
+    car.update(1 / 60, { throttle: 0.5, brake: 0, steer: 0, handbrake: false, jump: false });
+    if (Math.abs(car.pos.z) < 15) lowest = Math.min(lowest, car.pos.y);
+  }
+  assert.ok(car.pos.z >= 40, `crossed (z=${car.pos.z.toFixed(1)})`);
+  assert.ok(lowest > 8, `the car dropped to ${lowest.toFixed(2)} m (deck ≈ 10 m, road below at 2 m)`);
+});

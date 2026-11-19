@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, smoothstep } from './geo.js';
+import { clamp, smoothstep, splinePolyline } from './geo.js';
 import { logger } from './log.js';
 import { smoothRoadHeights, meanSpacing, assignEdgeHeights, RIBBON_SHOULDER, LANES, flatHalf, ROAD_LIFT } from './corridor.js';
 import { buildBridgeMesh } from './bridges.js';
@@ -102,7 +102,7 @@ export class StageRoute {
   assignRoadY(terrain, window = 45) {
     const s = this.samples;
     const raw = s.map((p) => terrain.sampleBase ? terrain.sampleBase(p.x, p.z) : terrain.sample(p.x, p.z));
-    const smooth = smoothRoadHeights(raw, meanSpacing(s), { window });
+    const smooth = smoothRoadHeights(raw, meanSpacing(s), { window, s: s.map((p) => p.s) });
     for (let i = 0; i < s.length; i++) s[i].roadY = smooth[i];
     const ground = terrain.sampleBaseCoarse || terrain.sampleBase || terrain.sample;
     assignEdgeHeights(s, this.cutHalf, (x, z) => ground.call(terrain, x, z));
@@ -303,12 +303,19 @@ function simplify(points, epsilon = 2.5) {
   return points.filter((_, i) => keep[i]);
 }
 
+/**
+ * A stage line from raw points: simplified, then either a centripetal
+ * Catmull-Rom spline through the remaining vertices (`spline: true`, real
+ * roads: no corner facets, finer samples in bends) or corner-cut and
+ * resampled at `spacing` (generated rally lines).
+ */
 export function makeRoute(points, terrain, options = {}) {
   const smoothIterations = options.smooth ?? 2;
   const spacing = options.spacing ?? 4;
   const simplified = options.simplify === false ? points : simplify(points, options.simplifyEpsilon ?? 2.5);
-  const smoothed = chaikin(simplified, smoothIterations);
-  const sampled = resample(smoothed, spacing);
+  const sampled = options.spline
+    ? splinePolyline(simplified, { maxStep: spacing })
+    : resample(chaikin(simplified, smoothIterations), spacing);
   return new StageRoute(sampled, terrain, options);
 }
 
@@ -837,7 +844,22 @@ export function buildRouteIndex(route, cell = 48) {
           }
         }
       }
-      return bi < 0 ? { distance: limit + cell, tangent: null, roadY: null } : { distance: best, tangent: tangentAt(bi), roadY: route.samples[bi].roadY ?? route.samples[bi].y ?? null, bridge: Boolean(route.samples[bi].bridge) };
+      if (bi < 0) return { distance: limit + cell, tangent: null, roadY: null };
+      // Refine on the two segments at the nearest sample: exact distance,
+      // interpolated height, the segment's direction and grade.
+      const s = route.samples;
+      const yOf = (p) => p.roadY ?? p.y ?? 0;
+      let out = { distance: best, tangent: tangentAt(bi), roadY: s[bi].roadY ?? s[bi].y ?? null, point: { x: s[bi].x, z: s[bi].z }, grade: 0, width: route.roadWidth, bridge: Boolean(s[bi].bridge) };
+      for (const [p0, p1] of [[s[Math.max(0, bi - 1)], s[bi]], [s[bi], s[Math.min(s.length - 1, bi + 1)]]]) {
+        const dx = p1.x - p0.x; const dz = p1.z - p0.z; const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        const t = clamp(((x - p0.x) * dx + (z - p0.z) * dz) / l2, 0, 1);
+        const d = Math.hypot(x - (p0.x + dx * t), z - (p0.z + dz * t));
+        if (d > out.distance + 1e-9) continue;
+        const l = Math.sqrt(l2);
+        out = { distance: d, tangent: { x: dx / l, z: dz / l }, roadY: yOf(p0) + (yOf(p1) - yOf(p0)) * t, point: { x: p0.x + dx * t, z: p0.z + dz * t }, grade: (yOf(p1) - yOf(p0)) / l, width: route.roadWidth, bridge: Boolean(p0.bridge && p1.bridge) };
+      }
+      return out;
     },
     /** Distance to the nearest sample, capped at `limit` (returns > limit when farther). */
     distanceTo(x, z, limit = 40) {
@@ -880,6 +902,7 @@ export function buildOsrmRoute(terrain, geometry, { requireInside = true } = {})
     name: `${profile === 'foot' ? 'Footpath' : profile === 'cycling' ? 'Bike trail' : 'OSRM road'} stage`,
     source: 'osrm',
     smooth: 1,
+    spline: true,
     spacing: 5,
     simplifyEpsilon: 2,
     roadWidth: profile === 'driving' ? LANES.two.half : LANES.one.half,
@@ -1082,10 +1105,12 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
   const cCentreLine = new THREE.Color(0xd9d6c8);
   const tmp = new THREE.Color();
 
-  // A rally ribbon must not tip over sideways or sink into a crest between two
-  // cross sections. Every edge height is clamped against the centre line and
-  // the whole slab is lifted a hair above the terrain, with a short skirt
-  // hanging off both shoulders so the road reads as a solid ribbon.
+  // Graded roads (`roadY`) lie on their profile: a straight line across from
+  // shoulder to shoulder (the centre height plus the crossfall `bank`), the
+  // same surface the carve and the car use. Ungraded lines are draped on the
+  // terrain with every edge clamped against the centre line so the slab never
+  // tips over or sinks into a crest. Both float a hair above the ground, with
+  // a short skirt hanging off both shoulders so the road reads as a solid ribbon.
   const tiltLimit = Math.max(0.5, half * 1.15);
   for (let i = 0; i < count; i++) {
     const gi = from + i;
@@ -1100,9 +1125,9 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
     const nz = tx;
     const fun = i < 3 || i > count - 4 ? 1 : 0.55;
     const pavedHere = paved || p.surface === 'asphalt';
-    // On a bridge the ribbon lies flat on the deck (the ground below is not carved).
-    const deckY = p.bridge ? p.roadY + ROAD_LIFT : null;
-    const centerY = deckY ?? terrain.sample(p.x, p.z);
+    const graded = p.roadY != null;
+    const centerY = graded ? p.roadY + ROAD_LIFT : terrain.sample(p.x, p.z);
+    const stripe = Math.floor((p.s ?? i * 5) / 5); // colour pattern by distance, not by sample
     const lift = ROAD_RIBBON_LIFT;
     for (let k = 0; k < ROWS; k++) {
       const offset = k <= 2
@@ -1110,9 +1135,11 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
         : (k === 3 ? half : k === 4 ? half + shoulder : half + shoulder);
       const x = p.x + nx * offset;
       const z = p.z + nz * offset;
-      let edgeY = deckY ?? terrain.sample(x, z);
-      if (k === 0 || k === 1 || k === 4 || k === 5) {
-        edgeY = centerY + clamp(edgeY - centerY, -tiltLimit, tiltLimit);
+      let edgeY;
+      if (graded) edgeY = centerY + (p.bank || 0) * offset;
+      else {
+        edgeY = terrain.sample(x, z);
+        if (k === 0 || k === 1 || k === 4 || k === 5) edgeY = centerY + clamp(edgeY - centerY, -tiltLimit, tiltLimit);
       }
       const crown = k === 2 || k === 3 ? ROAD_CROWN : 0;
       const drop = k === 0 || k === 5 ? 0.55 : 0;
@@ -1123,9 +1150,9 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
 
       if (k === 0 || k === 5) tmp.copy(cSkirt);
       else if (k === 1 || k === 4) tmp.copy(pavedHere ? cAsphaltShoulder : cShoulder);
-      else if (pavedHere) tmp.copy(i % 17 === 0 ? cCentreLine : i % 5 === 0 ? cAsphaltDark : cAsphalt);
-      else if (i % 17 === 0) tmp.copy(cEdge);
-      else tmp.copy(i % 5 === 0 ? cGravelDark : cGravel);
+      else if (pavedHere) tmp.copy(stripe % 17 === 0 ? cCentreLine : stripe % 5 === 0 ? cAsphaltDark : cAsphalt);
+      else if (stripe % 17 === 0) tmp.copy(cEdge);
+      else tmp.copy(stripe % 5 === 0 ? cGravelDark : cGravel);
       tmp.multiplyScalar(0.92 + fun * 0.08);
       colors[vi] = tmp.r;
       colors[vi + 1] = tmp.g;

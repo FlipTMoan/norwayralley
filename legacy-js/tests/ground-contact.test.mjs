@@ -62,3 +62,48 @@ test('wheels never render below the ground, on or off the road', () => {
   }
   assert.ok(worst < 0.12, `a wheel sank ${worst.toFixed(3)} m below the ground`);
 });
+
+test('across the road the surface is one straight line, and the terrain never pokes through it', async () => {
+  const { RoadNetwork } = await import('../src/roads.js');
+  const { ROAD_LIFT } = await import('../src/corridor.js');
+  // A hillside cutting: the ground rises 30 % to the left of a road along +z, on a coarse 10 m grid.
+  const size = 800; const grid = 81;
+  const heights = new Float32Array(grid * grid);
+  for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
+    const x = -size / 2 + (i / (grid - 1)) * size; const z = -size / 2 + (j / (grid - 1)) * size;
+    heights[j * grid + i] = 100 - 0.3 * x + 1.5 * Math.sin(z / 9) * Math.cos(x / 7);
+  }
+  const projection = { worldFromLatLon: () => ({ x: 0, z: 0 }), latLonFromWorld: () => ({ lat: 59, lon: 6 }) };
+  const terrain = createTerrainModel({ heights, grid, sizeX: size, sizeZ: size, projection, scene: { name: 't', title: 't', lat: 59, lon: 6 }, basemapUrl: null, meta: { originX: 0, originY: 0 } });
+  // A single-lane road (narrower than a grid cell) with a 4 % crossfall, graded along z.
+  const half = 2.25;
+  const samples = [];
+  for (let z = -300; z <= 300; z += 5) samples.push({ x: 3, z, roadY: 100 + 0.02 * z, bank: 0.04 });
+  terrain.carveRoad(samples, { halfWidth: half + 1.2, lift: ROAD_LIFT });
+  const flat = half + 1.5;
+  let poke = 0;
+  for (let z = -250; z <= 250; z += 0.7) {
+    for (let o = -flat; o <= flat; o += 0.25) {
+      // x = 3 - o: the left normal of a road along +z is -x.
+      const road = 100 + 0.02 * z + ROAD_LIFT + 0.04 * o;
+      poke = Math.max(poke, terrain.sample(3 - o, z) - road);
+    }
+  }
+  assert.ok(poke < 1e-3, `terrain rises ${poke.toFixed(3)} m through the road surface`);
+
+  // The car's ground across the carriageway is the straight line between the edges.
+  const net = new RoadNetwork({ spawn: { x: 3, z: 0, yaw: 0 } });
+  net.setChunk('c', [{ id: 1, half, cut: 3.75, samples }]);
+  const car = new Car({ add() {}, remove() {} }, terrain);
+  car.setRoute(net);
+  let worst = 0;
+  for (let z = -200; z <= 200; z += 3.3) {
+    const left = car.groundAt(3 + half, z); // o = -half
+    const right = car.groundAt(3 - half, z); // o = +half
+    for (let o = -half; o <= half; o += 0.25) {
+      const want = left + (right - left) * ((o + half) / (2 * half));
+      worst = Math.max(worst, Math.abs(car.groundAt(3 - o, z) - want));
+    }
+  }
+  assert.ok(worst < 0.02, `ground across the road deviates ${worst.toFixed(3)} m from a straight line`);
+});

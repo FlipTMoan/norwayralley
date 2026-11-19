@@ -4,6 +4,38 @@ _Updated 2026-11-19._
 
 ## 2026-11-19
 
+### JS game: roads are splines, junctions are one surface, straight across the road
+- Plan: every OSM way and the OSRM stage road is a centripetal Catmull-Rom spline through its nodes
+  (`geo.js splinePolyline`), sampled ≤ 5 m and ≤ 3° of heading apart (finer in bends), junction nodes exact; where a
+  way continues in another way the spline runs through the joint with one tangent. Replaces Chaikin corner cutting
+  (OSM) and the 1-pass Chaikin + 5 m resample of OSRM stages; generated A* stages are unchanged.
+- Grade: the ±60 m running mean is measured by distance (exact integral of the profile), so uneven samples grade
+  like even ones; a straight grade stays straight (it used to stair-step by float error at the window edges).
+- Junctions: ways settle in rank order (stage road, motorway … track, then OSM id; `roads.js settleJunctions`). A way
+  inside the flat band of a road that outranks it *and shares an OSM node with it* takes that road's surface plane —
+  height and crossfall (new per-sample `bank`) — and leaves on its slope, easing back to its own grade over 20–100 m
+  (C1, ≈ 3 % extra at most, 2 m samples in the ramp). Ways in the same chunk now settle on each other (they used to
+  leave 0.15–5.9 m steps; live Jørpeland junctions: 34.71 / 36.89 / 31.02 m → all within 1 cm). Roads without a
+  shared node (under- and overpasses, tunnels) keep their own heights. The registry of shared heights now holds the
+  profile before junctions; a neighbour chunk whose copy of a way disagrees by > 2 cm after a junction partner loads is
+  re-settled next frame (ribbons and carve at once, chunk mesh through the dirty-chunk queue, 1 m tiles only around
+  the change).
+- Across the road: the ribbon is the graded line itself (`roadY + bank · offset`), not draped on the terrain; the carve,
+  the corridor terrace and `car.groundAt` use the same line, and terrain cells up to 1.4 grid steps beyond the band
+  are held at or under the road plane, so the coarse grid never pokes through a narrow road.
+- Bridges: the deck is a cubic between the abutments that leaves at the approach grade, the arch starts level, the
+  clearance lift ramps at ≈ 3 %; a car on a deck is no longer dropped onto a road that passes under it (the nearest
+  centre line there), and the deck no longer extends as a flat disc beyond its last sample.
+- Performance (dense Jørpeland chunk, Node): prepare + carve + meshes 191 ms (was 226 ms); `RoadNetwork` uses 24 m
+  buckets with numeric keys, the coarse carve thins samples to the grid, the spline evaluates without allocations, a
+  level-0 chunk no longer builds its corridor mesh twice per road refresh. In the browser the 24 initial chunk road
+  refreshes took 7.2 s in total, slowest 0.87 s (baseline build 8.6 s, slowest 1.73 s); re-settles add 0.4–0.9 s
+  each, at most two per chunk per Overpass answer. `streamStats()` gains `roadSettles` and `roadMsMax`.
+- Tests: spline continuity and joints, grading by distance, side road on the main surface within 2 cm, junctions across
+  a chunk border, bridge ends, no meeting without a shared node, straight cross-section and no terrain poke-through on
+  a 10 m grid, a car through a junction (no air, < 0.25 g over 0.1 s), a car on a deck over a road.
+
+
 ### JS game: bridges where roads cross water
 - Before, every road was carved into the DTM: over a river the road sagged into the valley and the river ribbon was
   lifted onto the carved road. Now `src/bridges.js` finds bridge spans: OSM `bridge=*` ways (`bridge=no|culvert` and

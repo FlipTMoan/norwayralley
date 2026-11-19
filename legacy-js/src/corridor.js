@@ -60,6 +60,11 @@ export function profileHeight(roadY, ground, d, half, cut = null, edge = null) {
   return ground;
 }
 
+/** Crossfall (rise per metre to the left) interpolated along a segment of samples. */
+export function segmentBank(a, b, t) {
+  return lerp(a.bank || 0, b.bank || 0, t);
+}
+
 /** Road height interpolated along a segment of samples (`roadY` or `y`). */
 export function segmentRoadY(a, b, t) {
   return lerp(a.roadY ?? a.y, b.roadY ?? b.y, t);
@@ -100,10 +105,39 @@ export function assignEdgeHeights(samples, cut, groundAt, { window = 30 } = {}) 
  * ground under it. Three passes of a ±`window` metre (60 m) running mean (close to
  * a Gaussian of σ ≈ window) over the raw ground heights along the line; the
  * embankments and cuttings of the profile make up the difference. Returns a
- * Float64Array of road heights, one per sample.
+ * Float64Array of road heights, one per sample. With `s` (distance along
+ * the line per sample) the window is measured in metres and each sample is
+ * weighted by the road length it stands for, so unevenly spaced samples
+ * (fine in bends, coarse on straights) grade the same as even ones.
  */
-export function smoothRoadHeights(raw, spacing, { window = 60, passes = 3 } = {}) {
+export function smoothRoadHeights(raw, spacing, { window = 60, passes = 3, s = null } = {}) {
   const n = raw.length;
+  if (s && n > 1) {
+    // The running mean of the piecewise-linear profile, integrated exactly
+    // over [s − window, s + window]: spacing does not matter, a straight
+    // grade stays straight.
+    let cur = Float64Array.from(raw);
+    const I = new Float64Array(n);
+    for (let p = 0; p < passes; p++) {
+      for (let i = 1; i < n; i++) I[i] = I[i - 1] + ((cur[i - 1] + cur[i]) / 2) * (s[i] - s[i - 1]);
+      const at = (x, k) => {
+        const ds = s[k + 1] - s[k];
+        const u = x - s[k];
+        return I[k] + cur[k] * u + (ds > 0 ? ((cur[k + 1] - cur[k]) * u * u) / (2 * ds) : 0);
+      };
+      const next = new Float64Array(n);
+      let ka = 0; let kb = 0;
+      for (let i = 0; i < n; i++) {
+        const lo = Math.max(s[0], s[i] - window);
+        const hi = Math.min(s[n - 1], s[i] + window);
+        while (ka + 2 < n && s[ka + 1] <= lo) ka++;
+        while (kb + 2 < n && s[kb + 1] <= hi) kb++;
+        next[i] = hi > lo ? (at(hi, kb) - at(lo, ka)) / (hi - lo) : cur[i];
+      }
+      cur = next;
+    }
+    return cur;
+  }
   const k = Math.max(1, Math.round(window / Math.max(0.5, spacing)));
   let cur = Float64Array.from(raw);
   for (let p = 0; p < passes; p++) {
@@ -145,7 +179,12 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
     const reach = corridorReach(half, cut);
     const flat = flatHalf(half);
     const cutHalf = Math.max(cut, flat);
-    const s = line.samples;
+    // Cells up to a grid step and a half beyond the band edge are held at or
+    // under it, so no triangle between them and the band rises through the
+    // road (on a coarse grid that reaches past the profile itself).
+    const capReach = flat + cell * Math.SQRT2;
+    const loopReach = Math.max(reach, capReach);
+    const s = cell >= 4 ? thinned(line.samples, cell * 0.45) : line.samples;
     for (let k = 0; k + 1 < s.length; k++) {
       const a = s[k];
       const b = s[k + 1];
@@ -156,10 +195,10 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
       const len2 = len * len || 1;
       const nx = len > 1e-6 ? -dz / len : 0;
       const nz = len > 1e-6 ? dx / len : 1;
-      const gi0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - x0) / cell) - 1);
-      const gi1 = Math.min(n - 1, Math.ceil((Math.max(a.x, b.x) + reach - x0) / cell) + 1);
-      const gj0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - z0) / cell) - 1);
-      const gj1 = Math.min(n - 1, Math.ceil((Math.max(a.z, b.z) + reach - z0) / cell) + 1);
+      const gi0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - loopReach - x0) / cell) - 1);
+      const gi1 = Math.min(n - 1, Math.ceil((Math.max(a.x, b.x) + loopReach - x0) / cell) + 1);
+      const gj0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - loopReach - z0) / cell) - 1);
+      const gj1 = Math.min(n - 1, Math.ceil((Math.max(a.z, b.z) + loopReach - z0) / cell) + 1);
       for (let j = gj0; j <= gj1; j++) {
         const z = z0 + j * cell;
         for (let i = gi0; i <= gi1; i++) {
@@ -171,18 +210,22 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
           const cz = a.z + dz * t;
           const d = Math.hypot(x - cx, z - cz);
           const idx = j * n + i;
-          if (d > reach || d >= bestD[idx]) continue;
+          if (d > loopReach || d >= bestD[idx]) continue;
           const ground = base[idx];
-          const roadY = segmentRoadY(a, b, t) + lift;
           const leftSide = (x - cx) * nx + (z - cz) * nz >= 0;
+          // Straight across the band: the centre height plus the crossfall.
+          const roadY = segmentRoadY(a, b, t) + lift + segmentBank(a, b, t) * (leftSide ? 1 : -1) * Math.min(d, flat);
           const ea = leftSide ? a.edgeL : a.edgeR;
           const eb = leftSide ? b.edgeL : b.edgeR;
           const edge = ea != null && eb != null ? lerp(ea, eb, t) : null;
-          let y = profileHeight(roadY, ground, d, half, cut, edge);
-          if (d > flat && Math.abs(y - ground) > 1e-3) y -= CARVE_MARGIN;
+          let y = d > reach ? ground : profileHeight(roadY, ground, d, half, cut, edge);
+          if (d > flat && d <= reach && Math.abs(y - ground) > 1e-3) y -= CARVE_MARGIN;
+          // The cap is the road plane carried on past the edge (crossfall
+          // included), so a triangle reaching into the band stays under it.
+          if (d > flat && d < capReach) y = Math.min(y, roadY + segmentBank(a, b, t) * (leftSide ? 1 : -1) * (d - flat));
           bestD[idx] = d;
           target[idx] = y;
-          if (roadMask) kind[idx] = d <= flat ? (line.surface === 'asphalt' ? 3 : 2) : d < cutHalf ? 4 : 1;
+          if (roadMask) kind[idx] = d <= flat ? (line.surface === 'asphalt' ? 3 : 2) : d < cutHalf ? 4 : d <= reach || y < ground ? 1 : 0;
         }
       }
     }
@@ -197,6 +240,21 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
   return touched;
 }
 
+/**
+ * Every sample of a line a coarse grid can tell apart: roads are sampled every
+ * metre or two in bends and junction ramps, far finer than a 10 m height grid.
+ * Ends, bridge ends and crossfall changes are always kept.
+ */
+function thinned(samples, step) {
+  const out = [samples[0]];
+  for (let i = 1; i + 1 < samples.length; i++) {
+    const p = samples[i]; const last = out[out.length - 1];
+    if (Math.hypot(p.x - last.x, p.z - last.z) >= step || Boolean(p.bridge) !== Boolean(samples[i + 1].bridge) || Boolean(p.bridge) !== Boolean(samples[i - 1].bridge)) out.push(p);
+  }
+  out.push(samples[samples.length - 1]);
+  return out;
+}
+
 /** Resample a line to `step` metres with interpolated road heights. */
 function stations(samples, step) {
   const out = [];
@@ -209,7 +267,7 @@ function stations(samples, step) {
     let t = carry / len;
     while (t <= 1) {
       out.push({
-        x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, roadY: segmentRoadY(a, b, t), bridge: Boolean(a.bridge && b.bridge),
+        x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, roadY: segmentRoadY(a, b, t), bank: segmentBank(a, b, t), bridge: Boolean(a.bridge && b.bridge),
         edgeL: a.edgeL != null && b.edgeL != null ? lerp(a.edgeL, b.edgeL, t) : null,
         edgeR: a.edgeR != null && b.edgeR != null ? lerp(a.edgeR, b.edgeR, t) : null,
       });
@@ -220,7 +278,7 @@ function stations(samples, step) {
   const last = samples[samples.length - 1];
   const tail = out[out.length - 1];
   if (!tail || Math.hypot(tail.x - last.x, tail.z - last.z) > 1e-3) {
-    out.push({ x: last.x, z: last.z, roadY: last.roadY ?? last.y, edgeL: last.edgeL ?? null, edgeR: last.edgeR ?? null });
+    out.push({ x: last.x, z: last.z, roadY: last.roadY ?? last.y, bank: last.bank || 0, edgeL: last.edgeL ?? null, edgeR: last.edgeR ?? null });
   }
   return out;
 }
@@ -295,15 +353,16 @@ export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = R
         const onRoad = roadAt ? roadAt(x, z) : null;
         const rimRoad = off >= 0 ? rimRoadL : rimRoadR;
         const edge = rimRoad != null ? rimRoad + lift : (off >= 0 ? p.edgeL : p.edgeR);
+        const sideY = roadY + (p.bank || 0) * Math.sign(off) * Math.min(d, shoulder);
         // On another road's flat band the terrace lies flush under its ribbon.
-        const y = onRoad != null ? onRoad + lift : profileHeight(roadY, ground, d, half, cut, edge);
+        const y = onRoad != null ? onRoad + lift : profileHeight(sideY, ground, d, half, cut, edge);
         positions.push(x, y + (d <= shoulder ? 0.02 : 0.04), z);
         const diff = y - ground;
         if (d <= shoulder) color.copy(EARTH);
         else if (d < cutHalf && diff < -0.6) color.copy((i + offsets.indexOf(off)) % 3 ? ROCK : ROCK_DARK); // cutting face
         else if (d < cutHalf && diff > 0.4) color.copy(EARTH).multiplyScalar(0.9 + 0.1 * ((i % 4) / 3)); // embankment
         else {
-          const slope = Math.abs(profileHeight(roadY, sampleBase(x + nx, z + nz), d + 1, half, cut, edge) - y);
+          const slope = Math.abs(profileHeight(sideY, sampleBase(x + nx, z + nz), d + 1, half, cut, edge) - y);
           terrainColor(y, slope, x, z, color);
           if (d >= cutHalf) tint?.(x, z, color); // natural ground keeps its land cover; the terrace is bare
         }
