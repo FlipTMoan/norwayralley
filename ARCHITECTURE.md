@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-16 (evening: Unity rewrite layers added)._
+_Updated 2026-11-19 (JS bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -56,6 +56,7 @@ flowchart LR
 | `water.js` | River and stream ribbons draped in the valley floor; flat lake polygons; remembers the bodies and answers `waterAt(x, z)` (depth + surface) for the sea, shore, lakes and rivers, which the car uses for splash, spray, drag and the foam wake. |
 | `buildings.js` | One Overpass request per chunk (`out geom`); footprint → oriented rectangle → typed house instances. |
 | `signs.js` | NVDB (Statens vegvesen) sign plates and speed limits → textured plates on posts along the route. |
+| `bridges.js` | Bridge spans: OSM `bridge=*` (not `no`/`culvert`) or an untagged water crossing ≥ 6 m with water on both sides and the DTM at water level (`waterProbe`, `wetCore`, `markBridgeSpans`); the grade runs bank to bank (`bridgeRaw`), the deck gets an arch and a clearance lift with ramps (`applyBridgeProfile`); one merged mesh per chunk for deck slab, guard rails and piers, plus height-banded rail/pier boxes for the car. The OSRM stage road is matched to the chunk's bridge ways and water when its Overpass answer arrives (`stream.js markRouteBridges`), then re-graded and the chunks around re-carved. |
 | `roads.js` | OSM `highway=*` per chunk: carve into the heights, tarmac/gravel ribbons, `RoadNetwork` (48 m buckets) answering `nearest(x, z)` for the car, trees, houses and signs. In free drive the network is the car's route. |
 | `map.js` | The route map (Leaflet over OSM tiles): pins by click or typed `lat, lon`, each snapped to the nearest road of the profile within 1 km (OSRM `/nearest`, via `stage.js`), route-by select (OSRM profiles or off-road A*), FREE DRIVE. The only route picker; opened from the minimap. |
 | `cache.js` | IndexedDB cache (up to 32 GB, 10 % of the browser quota kept free, re-measured every 5 min / 256 MB; LRU) in front of every geodata fetch: DEM, Overpass, NVDB, SR16, OSRM, map tiles. |
@@ -105,6 +106,11 @@ per-chunk `heights` array through `world.sample(x, z)`:
    surface lifted by `ROAD_RIBBON_LIFT + ROAD_CROWN`.
 3. `car.groundAt(x, z)` = `sample(x, z)` + the ribbon lift blended over the
    shoulder, so the tyres stand on the visible gravel.
+4. Bridges are the exception: segments whose two samples are both bridge
+   samples are not carved (nor is the terrace drawn), so the ground and the
+   river stay natural under the span; the ribbon lies on `roadY` and the car's
+   `groundAt` returns the deck for a car up on it (within the rails, no more
+   than `DECK_CATCH` below the deck) and the natural ground otherwise.
 
 ## Car physics loop
 

@@ -1,8 +1,29 @@
 # Changes
 
-_Updated 2026-11-16._
+_Updated 2026-11-19._
 
 ## 2026-11-19
+
+### JS game: bridges where roads cross water
+- Before, every road was carved into the DTM: over a river the road sagged into the valley and the river ribbon was
+  lifted onto the carved road. Now `src/bridges.js` finds bridge spans: OSM `bridge=*` ways (`bridge=no|culvert` and
+  tunnels excluded; the parser now keeps the flag), plus untagged crossings of an OSM lake/river or the sea at least 6 m
+  long with water on both sides and the DTM at water level (so causeways and shoreline roads stay roads). The OSRM stage
+  road has no tags: when a chunk's Overpass answer arrives its samples are matched to that chunk's bridge ways (within
+  4 m, parallel) and water, and the road is re-graded and the chunks around re-carved.
+- Profile: the grade runs bank to bank over a span (short bridge ways are graded with 60 m of ground beyond their ends),
+  the deck gets a 2 % arch (≤ 1 m) and is lifted to 2.5 m over water / 0.8 m over dry ground with 15–90 m ramps.
+  The terrain is not carved or filled under a span (the carve stops square at the abutments, no terrace).
+- Geometry: one merged mesh per chunk — deck slab (0.9 m), steel guard rails on posts, piers every ~30 m on spans over
+  24 m, abutment walls. Rails and piers are solid boxes for the car within a height band, so a car in the river is not
+  stopped by the rail above it.
+- Car: rides on the deck (stage road, free-drive network and side roads), no water contact on the deck, no road grip or
+  ribbon lift under it, a reset on a bridge stands on the deck, and the "last dry spot" is never recorded on a deck.
+  Off the side it falls into the water as before. Marker posts are left off bridges (the rail marks the edge).
+- Culverted / piped waterways (`tunnel=*`) are no longer drawn as water over the road.
+- Tests: `tests/bridges.test.mjs` (tags and parsing, detection incl. culvert / shoreline / causeway, water probe, deck
+  clearance and grades, no carve under the span, network bridge ways, car across the deck without water contact, guard
+  rail stops the car, beside the deck is water).
 
 ### Unity: endless stage (key N) starts on the road
 - Root cause: the stage was chosen as soon as *any* tile's roads were in; at 59.6501, 6.34968 the west neighbour answered

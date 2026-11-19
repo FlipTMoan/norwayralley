@@ -149,6 +149,7 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
     for (let k = 0; k + 1 < s.length; k++) {
       const a = s[k];
       const b = s[k + 1];
+      if (a.bridge && b.bridge) continue; // a bridge span: the ground under it stays as it is (bridges.js)
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const len = Math.hypot(dx, dz);
@@ -163,7 +164,9 @@ export function carveProfile(grid, lines, { lift = ROAD_LIFT } = {}) {
         const z = z0 + j * cell;
         for (let i = gi0; i <= gi1; i++) {
           const x = x0 + i * cell;
-          const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
+          const along = ((x - a.x) * dx + (z - a.z) * dz) / len2;
+          if ((b.bridge && along > 1) || (a.bridge && along < 0)) continue; // the abutment ends the carve square
+          const t = clamp(along, 0, 1);
           const cx = a.x + dx * t;
           const cz = a.z + dz * t;
           const d = Math.hypot(x - cx, z - cz);
@@ -206,7 +209,7 @@ function stations(samples, step) {
     let t = carry / len;
     while (t <= 1) {
       out.push({
-        x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, roadY: segmentRoadY(a, b, t),
+        x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, roadY: segmentRoadY(a, b, t), bridge: Boolean(a.bridge && b.bridge),
         edgeL: a.edgeL != null && b.edgeL != null ? lerp(a.edgeL, b.edgeL, t) : null,
         edgeR: a.edgeR != null && b.edgeR != null ? lerp(a.edgeR, b.edgeR, t) : null,
       });
@@ -311,6 +314,7 @@ export function buildCorridorGeometry(lines, { sampleBase, tint = null, lift = R
     for (let i = 0; i + 1 < st.length; i++) {
       for (let c = 0; c + 1 < nc; c++) {
         if (offsets[c] < 0 && offsets[c + 1] > 0) continue; // the gap under the ribbon
+        if (st[i].bridge && st[i + 1].bridge) continue; // no terrace under a bridge
         const a = baseVertex + i * nc + c;
         const b = a + 1;
         const cc = a + nc;

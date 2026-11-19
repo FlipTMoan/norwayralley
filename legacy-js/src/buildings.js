@@ -18,6 +18,7 @@ import { logger } from './log.js';
  */
 
 import { cache } from './cache.js';
+import { isBridgeTag } from './bridges.js';
 
 const log = logger('buildings');
 
@@ -218,6 +219,7 @@ function parseElements(elements) {
         maxspeed: Number(tags.maxspeed) || null,
         oneway: tags.oneway === 'yes',
         lanes: tags.lanes || null,
+        bridge: isBridgeTag(tags),
         points: el.geometry,
       });
       continue;
@@ -233,6 +235,8 @@ function parseElements(elements) {
       continue;
     }
     if (tags.waterway && el.type === 'way' && el.geometry?.length >= 2) {
+      // A culverted or piped stream runs under the road: nothing to draw or bridge.
+      if (tags.tunnel && tags.tunnel !== 'no') continue;
       waterways.push({
         kind: tags.waterway,
         name: tags.name || null,

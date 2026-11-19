@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './geo.js';
 import { logger } from './log.js';
-import { smoothRoadHeights, meanSpacing, assignEdgeHeights, RIBBON_SHOULDER, LANES, flatHalf } from './corridor.js';
+import { smoothRoadHeights, meanSpacing, assignEdgeHeights, RIBBON_SHOULDER, LANES, flatHalf, ROAD_LIFT } from './corridor.js';
+import { buildBridgeMesh } from './bridges.js';
 import { cache } from './cache.js';
 
 /** How far the gravel ribbon floats above the carved ground. The car rides on
@@ -154,6 +155,7 @@ export class StageRoute {
     let roadY = p.roadY ?? p.y;
     let edgeL = p.edgeL ?? null;
     let edgeR = p.edgeR ?? null;
+    let bridge = false;
     for (const [p0, p1] of [[prev, p], [p, next]]) {
       const dx = p1.x - p0.x;
       const dz = p1.z - p0.z;
@@ -166,6 +168,7 @@ export class StageRoute {
         roadY = (p0.roadY ?? p0.y) + ((p1.roadY ?? p1.y) - (p0.roadY ?? p0.y)) * t;
         edgeL = p0.edgeL != null && p1.edgeL != null ? p0.edgeL + (p1.edgeL - p0.edgeL) * t : edgeL;
         edgeR = p0.edgeR != null && p1.edgeR != null ? p0.edgeR + (p1.edgeR - p0.edgeR) * t : edgeR;
+        bridge = Boolean(p0.bridge && p1.bridge);
       }
     }
     return {
@@ -173,6 +176,7 @@ export class StageRoute {
       roadY,
       edgeL,
       edgeR,
+      bridge,
       cut: this.cutHalf,
       index: bi,
       progress: this.length > 0 ? p.s / this.length : 0,
@@ -203,6 +207,7 @@ export class StageRoute {
       z: a.z + (b.z - a.z) * t,
       y: a.y + (b.y - a.y) * t,
       angle: Math.atan2(b.x - a.x, b.z - a.z),
+      bridge: Boolean(a.bridge || b.bridge),
     };
   }
 
@@ -832,7 +837,7 @@ export function buildRouteIndex(route, cell = 48) {
           }
         }
       }
-      return bi < 0 ? { distance: limit + cell, tangent: null, roadY: null } : { distance: best, tangent: tangentAt(bi), roadY: route.samples[bi].roadY ?? route.samples[bi].y ?? null };
+      return bi < 0 ? { distance: limit + cell, tangent: null, roadY: null } : { distance: best, tangent: tangentAt(bi), roadY: route.samples[bi].roadY ?? route.samples[bi].y ?? null, bridge: Boolean(route.samples[bi].bridge) };
     },
     /** Distance to the nearest sample, capped at `limit` (returns > limit when farther). */
     distanceTo(x, z, limit = 40) {
@@ -1041,6 +1046,10 @@ export function buildRoadVisuals(route, terrain, { bounds = null, gates = 'both'
     if (end - start < 1) continue;
     group.add(buildRibbon(route, terrain, start, end));
   }
+  const ground = (x, z) => (terrain.sampleBase ? terrain.sampleBase(x, z) : terrain.sample(x, z));
+  const bridges = buildBridgeMesh(runs.filter((r) => r.end > r.start).map((r) => ({ samples: all.slice(r.start, r.end + 1), half: route.roadWidth })), ground);
+  if (bridges) group.add(bridges);
+  group.userData.bridgeBoxes = bridges?.userData.boxes || [];
 
   if (posts) group.add(buildPosts(route, terrain, inBounds));
 
@@ -1091,7 +1100,9 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
     const nz = tx;
     const fun = i < 3 || i > count - 4 ? 1 : 0.55;
     const pavedHere = paved || p.surface === 'asphalt';
-    const centerY = terrain.sample(p.x, p.z);
+    // On a bridge the ribbon lies flat on the deck (the ground below is not carved).
+    const deckY = p.bridge ? p.roadY + ROAD_LIFT : null;
+    const centerY = deckY ?? terrain.sample(p.x, p.z);
     const lift = ROAD_RIBBON_LIFT;
     for (let k = 0; k < ROWS; k++) {
       const offset = k <= 2
@@ -1099,7 +1110,7 @@ export function buildRibbon(route, terrain, from, to, { paved = false } = {}) {
         : (k === 3 ? half : k === 4 ? half + shoulder : half + shoulder);
       const x = p.x + nx * offset;
       const z = p.z + nz * offset;
-      let edgeY = terrain.sample(x, z);
+      let edgeY = deckY ?? terrain.sample(x, z);
       if (k === 0 || k === 1 || k === 4 || k === 5) {
         edgeY = centerY + clamp(edgeY - centerY, -tiltLimit, tiltLimit);
       }
@@ -1160,7 +1171,7 @@ function buildPosts(route, terrain, inBounds) {
   const step = 26;
   for (let d = 18; d < route.length - 12; d += step) {
     const p = route.sampleAtDistance(d);
-    if (!inBounds(p)) continue;
+    if (!inBounds(p) || p.bridge) continue; // the guard rail marks the edge on a bridge
     const prev = route.sampleAtDistance(d - 3);
     const next = route.sampleAtDistance(d + 3);
     const tx = next.x - prev.x;

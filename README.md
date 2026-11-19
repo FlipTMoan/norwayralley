@@ -209,6 +209,13 @@ builder still works only inside the loaded world.
   foam wake on the surface, and water drag plus wet tyres slow the car. With
   the roof under for a few seconds the car is fished out onto the last dry
   ground it crossed. The HUD surface label reads WATER / DEEP WATER.
+- **Bridges**: where a road crosses water (OSM `bridge=*`, or an untagged
+  crossing of a lake, river or the sea at least 6 m wide) it runs on a
+  concrete deck with guard rails and piers instead of dipping into the
+  valley. The deck is graded bank to bank, arched slightly and lifted to
+  clear the water; the ground and the river under it are left as they are.
+  The car drives on the deck, the rails and piers are solid, and a car that
+  goes over the side lands in the water. Culverted streams stay plain road.
 - **Flat start pad**: the start of every stage is levelled and blended into the
   mountain, so the car never spawns on a sideways slope or rolls away during
   the countdown.
@@ -309,6 +316,7 @@ src/landcover.js           land cover grid per chunk: OSM polygons + NIBIO SR16 
 src/water.js               river/stream ribbons and lake polygons from OSM
 src/signs.js               NVDB road signs: fetch, sign-face textures, placement along the stage road
 src/roads.js               OSM roads per chunk: carve, ribbons, RoadNetwork spatial index (free drive)
+src/bridges.js             bridge spans (OSM tag or water crossing), deck profile, deck/rail/pier mesh and rail colliders
 src/buildings.js           Overpass fetch per chunk (buildings, areas, waterways) and footprint-oriented houses
 src/terrain.js             GeoTIFF loading, height field, road carving, minimap
 src/lod.js                 chunked terrain quadtree/LOD with edge skirts
@@ -376,7 +384,7 @@ three open services for what is really there, and draws it low-poly:
 | Fields, pasture, bog, built-up areas, lakes | **OpenStreetMap** polygons (`landuse=*`, `natural=*`) via the Overpass API, rasterised into the same 16 m grid | The ground mesh and minimap are tinted per cell: golden striped fields, green pasture, brown bog; no trees grow on them |
 | Rivers and streams, lakes | OpenStreetMap `waterway=*` lines and `natural=water` polygons | Water ribbons draped into the valley floor (never flowing uphill), flat lake polygons at the shore level |
 | Buildings | OpenStreetMap footprints (`building=*`, `out geom`) | Each footprint's minimum-area rectangle gives the house its heading and size; `building=*` picks a family (house, cabin, barn, shed, boathouse, church with tower, industrial hall, apartment block) for height, roof pitch and colours |
-| Roads (free drive, side roads) | OpenStreetMap `highway=*` centre lines | Carved into the chunk heights and drawn as ribbons (asphalt or gravel by class / `surface=*`); indexed so the car, trees, houses and signs know where the nearest road is |
+| Roads (free drive, side roads) | OpenStreetMap `highway=*` centre lines | Carved into the chunk heights and drawn as ribbons (asphalt or gravel by class / `surface=*`); indexed so the car, trees, houses and signs know where the nearest road is. `bridge=*` ways (and untagged water crossings, also on the OSRM stage road) become bridges |
 | Road signs | **Statens vegvesen NVDB API v4** (`Skiltplate`, type 96) plus `Fartsgrense` (type 105) | Real sign plates on posts beside the stage road, facing oncoming traffic; speed-limit signs are synthesised where the limit changes and no plate is registered |
 
 Everything is fetched per chunk, cached with the chunk, and degrades

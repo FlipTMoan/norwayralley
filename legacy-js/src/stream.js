@@ -10,6 +10,7 @@ import { fetchRoadSigns, buildChunkSigns } from './signs.js';
 import { prepareChunkRoads, buildRoadMeshes, RoadNetwork, fetchRoadSurfaces, assignSurfaces } from './roads.js';
 import { carveProfile, buildCorridorGeometry, corridorMesh, corridorReach, smoothRoadHeights, assignEdgeHeights, ASPHALT_HEX, GRAVEL_HEX, LANES, SHOULDER } from './corridor.js';
 import { createFineTiles } from './fine.js';
+import { waterProbe, wetCore, markBridgeSpans, bridgeRaw, applyBridgeProfile } from './bridges.js';
 import { logger } from './log.js';
 
 /**
@@ -835,16 +836,112 @@ export async function createStreamingWorld({
       const h = corridorSample(samples[i].x, samples[i].z);
       raw[i] = h ?? samples[i].y ?? 0;
     }
-    // Graded like a real road: bumps shorter than ~100 m are ironed out and
-    // the corridor's embankments and cuttings take up the difference.
-    const smooth = smoothRoadHeights(raw, 5);
-    for (let i = 0; i < samples.length; i++) {
-      samples[i].roadY = smooth[i];
-      samples[i].y = samples[i].roadY + ROAD_LIFT;
-    }
+    route.rawY = raw;
+    gradeRoute(route);
     assignEdgeHeights(samples, route.cutHalf, (x, z) => corridorSample(x, z) ?? fallbackSample(x, z));
     route.start = samples[0];
     route.finish = samples[samples.length - 1];
+  }
+
+  /**
+   * Graded like a real road: bumps shorter than ~100 m are ironed out and
+   * the corridor's embankments and cuttings take up the difference; bridge
+   * spans (known so far) are graded bank to bank and get their deck profile.
+   */
+  function gradeRoute(route) {
+    const samples = route.samples;
+    const smooth = smoothRoadHeights(bridgeRaw(route.rawY, samples), 5);
+    for (let i = 0; i < samples.length; i++) samples[i].roadY = smooth[i];
+    applyBridgeProfile(samples, (x, z) => corridorSample(x, z) ?? fallbackSample(x, z));
+    for (const p of samples) p.y = p.roadY + ROAD_LIFT;
+  }
+
+  /** `wet(x, z)` from a chunk's OSM water and the sea (bridges.js), built once per Overpass answer. */
+  function chunkWet(chunk) {
+    if (chunk.wetFor !== chunk.osm) {
+      chunk.wet = waterProbe(chunk.osm, (lat, lon) => world.worldFromLatLon(lat, lon), (x, z) => world.sampleBaseCoarse(x, z));
+      chunk.wetFor = chunk.osm;
+    }
+    return chunk.wet;
+  }
+
+  /**
+   * The OSRM stage road has no OSM tags: its samples in this chunk become
+   * bridge samples where it runs along a `bridge=*` way of the chunk's
+   * Overpass answer or crosses water. When that changes the spans, the road
+   * is re-graded and the chunks around the changed stretch re-carved.
+   * Returns true when the road changed (the caller re-carves this chunk).
+   */
+  function markRouteBridges(chunk) {
+    const route = world.route;
+    const idx = world.buckets.get(chunk.key);
+    if (!route || !chunk.osm || !idx?.length) return false;
+    const samples = route.samples;
+    const wet = chunkWet(chunk);
+    const decks = [];
+    for (const r of chunk.osm.roads || []) {
+      if (!r.bridge) continue;
+      const pts = r.points.map((p) => world.worldFromLatLon(p.lat, p.lon));
+      for (let k = 0; k + 1 < pts.length; k++) decks.push([pts[k], pts[k + 1]]);
+    }
+    const onDeck = (i) => {
+      const p = samples[i];
+      const a = samples[Math.max(0, i - 1)]; const b = samples[Math.min(samples.length - 1, i + 1)];
+      const tl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      for (const [u, v] of decks) {
+        const dx = v.x - u.x; const dz = v.z - u.z; const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        const t = clamp(((p.x - u.x) * dx + (p.z - u.z) * dz) / l2, 0, 1);
+        if (Math.hypot(p.x - (u.x + dx * t), p.z - (u.z + dz * t)) > 4) continue;
+        if (Math.abs(((b.x - a.x) * dx + (b.z - a.z) * dz) / (tl * Math.sqrt(l2))) > 0.8) return true;
+      }
+      return false;
+    };
+    // Contiguous runs of this chunk's samples (the route can leave and come back).
+    let changed = false;
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      const slice = run.map((i) => samples[i]);
+      const core = wetCore(slice, wet, { lateral: route.cutHalf + 4, ground: (x, z) => world.sampleBaseCoarse(x, z) });
+      run.forEach((i, k) => {
+        const c = core[k] || (decks.length > 0 && onDeck(i));
+        if (Boolean(samples[i].bridgeCore) !== c) { samples[i].bridgeCore = c; changed = true; }
+      });
+      run = [];
+    };
+    for (const i of idx) {
+      if (run.length && i !== run[run.length - 1] + 1) flush();
+      run.push(i);
+    }
+    flush();
+    if (!changed) return false;
+    const before = samples.map((p) => p.roadY);
+    const wasBridge = samples.map((p) => Boolean(p.bridge));
+    const spans = markBridgeSpans(samples, samples.map((p) => Boolean(p.bridgeCore)));
+    gradeRoute(route);
+    let minX = Infinity; let maxX = -Infinity; let minZ = Infinity; let maxZ = -Infinity;
+    samples.forEach((p, i) => {
+      if (Math.abs(p.roadY - before[i]) < 1e-3 && Boolean(p.bridge) === wasBridge[i]) return;
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    });
+    if (minX > maxX) return false;
+    log.info(`stage road: ${spans.length} bridge span(s) after ${chunk.key}`);
+    const m = 60;
+    minX -= m; maxX += m; minZ -= m; maxZ += m;
+    for (const c of chunks.values()) {
+      if (c.state !== 'ready' || c === chunk) continue;
+      if (c.x0 > maxX || c.x0 + CHUNK < minX || c.z0 > maxZ || c.z0 + CHUNK < minZ) continue;
+      carveChunk(c);
+      rebuildChunkGeometries(c);
+      refreshChunkCorridor(c);
+      refreshChunkRoad(c);
+      rescatter(c);
+    }
+    // This chunk is re-carved by its caller; its road visuals are refreshed here.
+    refreshChunkRoad(chunk);
+    fine.recarveWithin(minX, minZ, maxX - minX, maxZ - minZ);
+    return true;
   }
 
   function bucketRoute(route) {
@@ -925,10 +1022,10 @@ export async function createStreamingWorld({
   /** Carriageway height of whichever road's flat band covers (x, z): OSM roads or the stage route; null off-road. */
   function roadSurfaceAt(x, z) {
     const q = world.roads.nearest(x, z, 10);
-    if (q.roadY != null && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
+    if (q.roadY != null && !q.bridge && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
     if (world.route && world.routeIndex?.nearest) {
       const r = world.routeIndex.nearest(x, z, 10);
-      if (r.roadY != null && r.distance <= world.route.roadWidth + SHOULDER) return r.roadY;
+      if (r.roadY != null && !r.bridge && r.distance <= world.route.roadWidth + SHOULDER) return r.roadY;
     }
     return null;
   }
@@ -1264,9 +1361,15 @@ export async function createStreamingWorld({
         disposeObject(chunk.osmRoadGroup);
         chunk.group.remove(chunk.osmRoadGroup);
       }
-      chunk.osmRoadGroup = buildRoadMeshes(chunk.osmRoads, world);
-      if (chunk.osmRoadGroup) chunk.group.add(chunk.osmRoadGroup);
+      setOsmRoadGroup(chunk, buildRoadMeshes(chunk.osmRoads, world));
     }
+  }
+
+  /** Hang a chunk's OSM road meshes in and register their bridge rails and piers as solid for the car. */
+  function setOsmRoadGroup(chunk, group) {
+    chunk.osmRoadGroup = group;
+    if (group) chunk.group.add(group);
+    world.buildings.setChunk(`${chunk.key}|osm-bridges`, group?.userData.bridgeBoxes || []);
   }
 
   /** OSM roads of one chunk: carve, ribbons, and the shared road network. */
@@ -1276,21 +1379,24 @@ export async function createStreamingWorld({
       chunk.group.remove(chunk.osmRoadGroup);
       chunk.osmRoadGroup = null;
     }
+    world.buildings.removeChunk(`${chunk.key}|osm-bridges`);
     if (!chunk.osm) return;
     const route = world.route;
+    const routeChanged = markRouteBridges(chunk);
     const roads = prepareChunkRoads(chunk.osm.roads, world, { x0: chunk.x0, z0: chunk.z0, size: CHUNK }, {
       avoid: route ? { index: world.routeIndex, distance: route.cutHalf + 4 } : null,
+      wet: chunkWet(chunk),
     });
     chunk.osmRoads = roads;
     if (chunk.surfaces?.length) surfaceOsmLines(roads, chunk.surfaces);
     world.roads.setChunk(chunk.key, roads);
-    if (!roads.length) return;
+    if (!roads.length && !routeChanged) return;
     carveChunk(chunk);
     rebuildChunkGeometries(chunk);
     refreshChunkCorridor(chunk);
     fine.recarveWithin(chunk.x0 - 80, chunk.z0 - 80, CHUNK + 160);
-    chunk.osmRoadGroup = buildRoadMeshes(roads, world);
-    if (chunk.osmRoadGroup) chunk.group.add(chunk.osmRoadGroup);
+    if (!roads.length) { rescatter(chunk); return; }
+    setOsmRoadGroup(chunk, buildRoadMeshes(roads, world));
     if (world.freeDrive && !world.roads.snapped) {
       // First roads near the spawn: put the car on the nearest one.
       const pose = world.roads.poseNear(world.roads.spawn.x, world.roads.spawn.z, 600);
@@ -1346,6 +1452,7 @@ export async function createStreamingWorld({
       chunk.group.remove(chunk.roadVisuals);
       chunk.roadVisuals = null;
     }
+    world.buildings.removeChunk(`${chunk.key}|route-bridges`);
     const route = world.route;
     if (!route) return;
     const pad = 24;
@@ -1363,6 +1470,7 @@ export async function createStreamingWorld({
     const gates = startHere && finishHere ? 'both' : startHere ? 'start' : finishHere ? 'finish' : 'none';
     chunk.roadVisuals = buildRoadVisuals(route, world, { bounds, gates, posts: true });
     chunk.group.add(chunk.roadVisuals);
+    world.buildings.setChunk(`${chunk.key}|route-bridges`, chunk.roadVisuals.userData.bridgeBoxes);
   }
 
   function unloadChunk(chunk, cacheHeights = true) {
@@ -1385,6 +1493,8 @@ export async function createStreamingWorld({
     houseCount = Math.max(0, houseCount - (chunk.buildingGroup?.userData.count || 0));
     world.roads.removeChunk(chunk.key);
     world.buildings.removeChunk(chunk.key);
+    world.buildings.removeChunk(`${chunk.key}|osm-bridges`);
+    world.buildings.removeChunk(`${chunk.key}|route-bridges`);
     chunk.corridorMesh = null;
     chunks.delete(chunk.key);
     triangles = 0;

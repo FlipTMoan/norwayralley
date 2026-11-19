@@ -39,7 +39,7 @@ const WIDTHS = { canal: 5, stream: 2.4, drain: 1.4, ditch: 1.0 };
 const WATER_COLOR = 0x2a6f8a;
 const WATER_EMISSIVE = 0x0b2a38;
 
-function riverWidth(way) {
+export function riverWidth(way) {
   if (way.kind === 'river') {
     const w = Number(way.width);
     return w > 0 ? Math.min(Math.max(w, 4), 40) : 9;
@@ -217,7 +217,7 @@ function polygonCentroid(ring, area) {
   return { x: cx / (6 * area), z: cz / (6 * area) };
 }
 
-function pointInRing(x, z, ring) {
+export function pointInRing(x, z, ring) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const a = ring[i];

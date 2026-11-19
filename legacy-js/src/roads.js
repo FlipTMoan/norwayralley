@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clamp, lerp, smoothstep, utmForward, utmInverse } from './geo.js';
 import { buildRibbon } from './stage.js';
 import { carveProfile, smoothRoadHeights, assignEdgeHeights, LANES, SHOULDER } from './corridor.js';
+import { wetCore, markBridgeSpans, bridgeRaw, applyBridgeProfile, buildBridgeMesh } from './bridges.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cachedJson } from './cache.js';
 
@@ -96,9 +97,10 @@ function resample(points, step) {
  * Project, clip and resample a chunk's OSM roads, and give every sample a
  * smoothed road height (`roadY`). Samples closer than `avoid.distance` to
  * `avoid.index` (the stage route) are cut out so the OSRM stage road and its
- * OSM twin never overlap.
+ * OSM twin never overlap. `wet(x, z)` (bridges.js `waterProbe`) finds
+ * untagged water crossings; `bridge=*` ways are bridges end to end.
  */
-export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = null, pad = 60 } = {}) {
+export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = null, pad = 60, wet = null } = {}) {
   const minX = x0 - pad;
   const maxX = x0 + size + pad;
   const minZ = z0 - pad;
@@ -123,24 +125,43 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
     road.points.forEach((p, i) => { if ((nodeCount.get(nodeKey(p)) || 0) > 1) pinned.add(i); });
     const world = smoothWay(raw, pinned);
     const samples = resample(world, 5);
+    let along = 0;
+    samples.forEach((p, i) => { if (i) along += Math.hypot(p.x - samples[i - 1].x, p.z - samples[i - 1].z); p.s = along; });
     // Grade the whole way before clipping it to the chunk, on the coarse
     // ground only: every chunk that holds a piece of this road then computes
     // the same heights, whatever has loaded around it, so the copies agree
     // where they overlap (and the 1 m tiles never change a road's height).
     const ground = terrain.sampleBaseCoarse || terrain.sampleBase || terrain.sample;
-    const smooth = smoothRoadHeights(samples.map((p) => ground.call(terrain, p.x, p.z)), 5);
+    const groundAt = (x, z) => ground.call(terrain, x, z);
+    // Bridges: a tagged way end to end, else wherever it crosses water. The
+    // grade runs bank to bank over a span, then the deck is shaped on top.
+    const core = road.bridge ? samples.map(() => true) : wetCore(samples, wet, { lateral: cut + 4, ground: groundAt });
+    if (road.bridge && wet) for (const p of samples) p.wet = wet(p.x, p.z);
+    markBridgeSpans(samples, core);
+    const graded = bridgeRaw(samples.map((p) => groundAt(p.x, p.z)), samples);
+    // A bridge is usually its own short way: grade it with 60 m of the ground
+    // straight on beyond both ends, as the roads it joins are graded, or its
+    // ends average in the valley and sit below them.
+    const ext = road.bridge && samples.length >= 2 ? 12 : 0;
+    const beyond = (p, q) => {
+      const l = Math.hypot(p.x - q.x, p.z - q.z) || 1;
+      return Array.from({ length: ext }, (_, k) => groundAt(p.x + ((p.x - q.x) / l) * 5 * (k + 1), p.z + ((p.z - q.z) / l) * 5 * (k + 1)));
+    };
+    const n = samples.length;
+    const smooth = smoothRoadHeights([...beyond(samples[0], samples[1]).reverse(), ...graded, ...beyond(samples[n - 1], samples[n - 2])], 5).slice(ext, ext + n);
     // Heights this way was already given by another chunk win, so every copy
     // of a road agrees exactly where they overlap (sample i is the same point
     // in every copy: the way is resampled from its first node every time).
     // New stretches are eased onto the known ones instead of stepping.
     samples.forEach((p, i) => { p.roadY = smooth[i]; });
+    applyBridgeProfile(samples, groundAt);
     // Rim heights: another road's surface where one lies at the cut-through
     // edge (a junction or a parallel road), the natural ground otherwise.
     const net = terrain.roads;
     const rimGround = (x, z) => {
       if (net?.nearest) {
         const q = net.nearest(x, z, 10);
-        if (q.roadY != null && q.id !== road.id && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
+        if (q.roadY != null && !q.bridge && q.id !== road.id && q.distance <= (q.width ?? 0) + SHOULDER) return q.roadY;
       }
       return ground.call(terrain, x, z);
     };
@@ -159,6 +180,8 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
         const p = samples[i];
         const q = network.nearest(p.x, p.z, 4);
         if (!(q.distance <= 2.5) || q.roadY == null || q.id === road.id) continue;
+        // A road under a bridge (or a bridge over a road) does not meet it.
+        if (Boolean(q.bridge) !== Boolean(p.bridge) && Math.abs(q.roadY - p.roadY) > 3) continue;
         meets.push({ i, y: q.roadY });
         lastHit = i;
       }
@@ -197,13 +220,13 @@ export function prepareChunkRoads(roads, terrain, { x0, z0, size }, { avoid = nu
           }
         }
         for (let i = 0; i < samples.length; i++) {
-          if (kn[i]) { samples[i].roadY = kn[i].y; samples[i].edgeL = kn[i].l; samples[i].edgeR = kn[i].r; }
+          if (kn[i]) { samples[i].roadY = kn[i].y; samples[i].edgeL = kn[i].l; samples[i].edgeR = kn[i].r; samples[i].bridge = kn[i].b; samples[i].pier = kn[i].p; }
         }
       }
       const store = known || new Map();
       for (const p of samples) {
         const key = posKey(p);
-        if (!store.has(key)) store.set(key, { y: p.roadY, l: p.edgeL, r: p.edgeR });
+        if (!store.has(key)) store.set(key, { y: p.roadY, l: p.edgeL, r: p.edgeR, b: Boolean(p.bridge), p: Boolean(p.pier) });
       }
       registry.set(road.id, store);
     }
@@ -243,7 +266,7 @@ function finishRun(points, road, half, cut) {
   let s = 0;
   for (let i = 0; i < points.length; i++) {
     if (i > 0) s += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-    samples.push({ x: points[i].x, z: points[i].z, roadY: points[i].roadY, y: points[i].roadY, edgeL: points[i].edgeL, edgeR: points[i].edgeR, s });
+    samples.push({ x: points[i].x, z: points[i].z, roadY: points[i].roadY, y: points[i].roadY, edgeL: points[i].edgeL, edgeR: points[i].edgeR, s, bridge: Boolean(points[i].bridge), pier: Boolean(points[i].pier), wet: Boolean(points[i].wet) });
   }
   const paved = isPaved(road);
   return { id: road.id ?? null, kind: road.kind, name: road.name, half, cut, paved, surface: paved ? 'asphalt' : 'gravel', maxspeed: road.maxspeed, samples, length: s };
@@ -277,6 +300,9 @@ export function buildRoadMeshes(polylines, terrain) {
   mesh.castShadow = false;
   mesh.name = 'roadRibbons';
   group.add(mesh);
+  const bridges = buildBridgeMesh(polylines, (x, z) => (terrain.sampleBase ? terrain.sampleBase(x, z) : terrain.sample(x, z)));
+  if (bridges) group.add(bridges);
+  group.userData.bridgeBoxes = bridges?.userData.boxes || [];
   return group;
 }
 
@@ -304,6 +330,7 @@ export class RoadNetwork {
     this.start = { x: spawn.x, z: spawn.z };
     this.finish = { x: spawn.x, z: spawn.z };
     this.segmentCount = 0;
+    this.bridgeCount = 0; // bridge segments loaded (the car only looks for side-road decks when there are any)
   }
 
   key(bx, bz) { return `${bx},${bz}`; }
@@ -314,7 +341,7 @@ export class RoadNetwork {
     for (const line of polylines) {
       const s = line.samples;
       for (let k = 0; k + 1 < s.length; k++) {
-        const seg = { id: line.id ?? null, ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, al: s[k].edgeL ?? null, bl: s[k + 1].edgeL ?? null, ar: s[k].edgeR ?? null, br: s[k + 1].edgeR ?? null, half: line.half, cut: line.cut ?? null, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
+        const seg = { id: line.id ?? null, ax: s[k].x, az: s[k].z, bx: s[k + 1].x, bz: s[k + 1].z, ay: s[k].roadY ?? s[k].y ?? 0, by: s[k + 1].roadY ?? s[k + 1].y ?? 0, al: s[k].edgeL ?? null, bl: s[k + 1].edgeL ?? null, ar: s[k].edgeR ?? null, br: s[k + 1].edgeR ?? null, bridge: Boolean(s[k].bridge && s[k + 1].bridge), half: line.half, cut: line.cut ?? null, paved: line.paved, surface: line.surface || (line.paved ? 'asphalt' : 'gravel'), chunk: chunkKey };
         const bx = Math.floor(((seg.ax + seg.bx) / 2) / this.cell);
         const bz = Math.floor(((seg.az + seg.bz) / 2) / this.cell);
         const key = this.key(bx, bz);
@@ -322,6 +349,7 @@ export class RoadNetwork {
         if (!list) this.buckets.set(key, (list = []));
         list.push(seg);
         owned.push({ key, seg });
+        if (seg.bridge) this.bridgeCount++;
       }
     }
     this.byChunk.set(chunkKey, owned);
@@ -337,6 +365,7 @@ export class RoadNetwork {
       const i = list.indexOf(seg);
       if (i >= 0) list.splice(i, 1);
       if (!list.length) this.buckets.delete(key);
+      if (seg.bridge) this.bridgeCount--;
     }
     this.byChunk.delete(chunkKey);
     this.segmentCount -= owned.length;
@@ -381,6 +410,7 @@ export class RoadNetwork {
       id: best.id ?? null,
       paved: best.paved,
       surface: best.surface,
+      bridge: best.bridge,
       roadY: best.ay + (best.by - best.ay) * bestT,
       edgeL: best.al != null && best.bl != null ? best.al + (best.bl - best.al) * bestT : null,
       edgeR: best.ar != null && best.br != null ? best.ar + (best.br - best.ar) * bestT : null,

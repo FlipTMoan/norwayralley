@@ -3,6 +3,7 @@ import { clamp, damp, lerp, wrapAngle } from './geo.js';
 import { ROAD_RIBBON_LIFT, ROAD_CROWN, ROAD_SHOULDER } from './stage.js';
 import { profileHeight, corridorReach, flatHalf, ROAD_LIFT } from './corridor.js';
 import { pushOutOfBox } from './buildings.js';
+import { deckHalf, DECK_CATCH } from './bridges.js';
 
 // Porsche 911 (classic rally spec) proportions, metres.
 const WHEELBASE = 2.45;
@@ -742,6 +743,9 @@ export class Car {
       pose = p;
     }
     this.pos.set(pose.x, this.terrain.sample(pose.x, pose.z), pose.z);
+    // A pose on a bridge stands on the deck, not on the water under it.
+    const q = this.route?.nearest(pose.x, pose.z, 24);
+    if (q?.bridge && q.roadY != null && q.distance <= deckHalf(q.width ?? this.route.roadWidth)) this.pos.y = Math.max(this.pos.y, q.roadY + ROAD_LIFT);
     this.vel.set(0, 0);
     this.groundVy = 0;
     this.prevGroundY = null;
@@ -808,6 +812,11 @@ export class Car {
       const q = this.route.nearest(x, z, 24); // wheels only need the roads right under the car
       const half = q.width ?? this.route.roadWidth;
       const cut = q.cut ?? this.route.cutHalf ?? flatHalf(half);
+      if (q.bridge && q.roadY != null && q.distance <= corridorReach(half, cut)) {
+        // A bridge: the deck out to the guard rails for a car up on it, the
+        // untouched ground (or water) beside and under it.
+        return this.deckAt(q, half) ?? (this.terrain.sampleBase ? this.terrain.sampleBase(x, z) : this.terrain.sample(x, z));
+      }
       if (q.roadY != null && Number.isFinite(q.distance) && q.distance <= corridorReach(half, cut)) {
         const ground = this.terrain.sampleBase ? this.terrain.sampleBase(x, z) : this.terrain.sample(x, z);
         // Which side of the road: the left normal is (-tz, tx), like the carve.
@@ -816,7 +825,21 @@ export class Car {
         return profileHeight(q.roadY + ROAD_LIFT, ground, q.distance, half, cut, edge ?? null) + this.surfaceLift(q.distance, half);
       }
     }
+    // Stage mode: a bridge on a side road (OSM network) carries the car too.
+    const net = this.terrain.roads;
+    if (net?.bridgeCount > 0 && net !== this.route) {
+      const b = net.nearest(x, z, 12);
+      const deck = b.bridge ? this.deckAt(b, b.width) : null;
+      if (deck != null) return deck;
+    }
     return this.terrain.sample(x, z) + this.roadLift;
+  }
+
+  /** Deck surface for a road query on a bridge span, or null when the point is off the deck or the car is below it. */
+  deckAt(q, half) {
+    const top = q.roadY + ROAD_LIFT;
+    if (q.distance > deckHalf(half) || this.pos.y < top - DECK_CATCH) return null;
+    return top + this.surfaceLift(Math.min(q.distance, half + ROAD_SHOULDER), half);
   }
 
   right() {
@@ -903,6 +926,11 @@ export class Car {
       this.onRoad = this.roadQuery.distance <= half + 1.0;
       this.progress = this.roadQuery.progress;
       this.roadLift = this.surfaceLift(this.roadQuery.distance, half);
+      // Under a bridge (in the river) the road above is no grip and no lift.
+      if (this.roadQuery.bridge && this.pos.y < this.roadQuery.roadY + ROAD_LIFT - DECK_CATCH) {
+        this.onRoad = false;
+        this.roadLift = 0;
+      }
     } else {
       this.roadQuery = null;
       this.onRoad = false;
@@ -1167,6 +1195,8 @@ export class Car {
     const walls = this.wallsNear;
     if (walls?.length) {
       for (const box of walls) {
+        // Bridge rails and piers are solid only in their height band.
+        if (box.y0 != null && (this.pos.y < box.y0 || this.pos.y > box.y1)) continue;
         const hit = pushOutOfBox(box, this.pos.x, this.pos.z, CAR_RADIUS);
         if (!hit) continue;
         this.pos.x += hit.nx * hit.depth;
@@ -1427,7 +1457,8 @@ export class Car {
     this.waterDepth = depth;
     this.waterSurface = w ? w.surface : this.pos.y;
     if (depth <= 0) {
-      if (this.grounded && speed > 1) this.lastDry = { x: this.pos.x, z: this.pos.z, yaw: this.yaw };
+      // Not on a deck: a recovery there would drop the car into the water below.
+      if (this.grounded && speed > 1 && !this.roadQuery?.bridge) this.lastDry = { x: this.pos.x, z: this.pos.z, yaw: this.yaw };
       this.sunkTime = 0;
     } else {
       if (this.grounded && speed > 2.5) this.emitSpray(speed, depth, dt);
