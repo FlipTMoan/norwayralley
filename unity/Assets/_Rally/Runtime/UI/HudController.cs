@@ -49,6 +49,10 @@ namespace Rally.UI
             root.Q<Button>("mapBtn")?.RegisterCallback<ClickEvent>(_ => MapClicked?.Invoke());
             root.Q<Button>("mapButton")?.RegisterCallback<ClickEvent>(_ => MapClicked?.Invoke());
             root.Q<Button>("cacheClear")?.RegisterCallback<ClickEvent>(_ => CacheClearClicked?.Invoke());
+            helpOverlay = root.Q("helpOverlay");
+            root.Q<Button>("helpButton")?.RegisterCallback<ClickEvent>(_ => HelpVisible = !HelpVisible);
+            root.Q<Button>("helpBtn")?.RegisterCallback<ClickEvent>(_ => HelpVisible = true);
+            root.Q<Button>("helpClose")?.RegisterCallback<ClickEvent>(_ => HelpVisible = false);
             cacheInfo = root.Q<Label>("cacheInfo"); debugPanel = root.Q<Label>("debugPanel"); helpLine = root.Q<Label>("helpLine");
             touchControls = root.Q("touchControls");
             Touch("touchLeft", v => Rally.Core.TouchInput.Left = v);
@@ -103,6 +107,33 @@ namespace Rally.UI
         public void SetGearbox(bool automatic) { if (gearboxBtn != null) gearboxBtn.text = automatic ? "GEARBOX: AUTOMATIC" : "GEARBOX: MANUAL (Q/E)"; }
         public void SetSliding(int level, string name) { if (slideBtn != null) slideBtn.text = $"SLIDING: {level} {name.ToUpperInvariant()}"; }
         public void SetCacheInfo(string text) { if (cacheInfo != null) cacheInfo.text = text; }
+
+        VisualElement helpOverlay;
+        bool paused;
+        float timeScaleBefore = 1f;
+
+        /// <summary>
+        /// The help screen (H / F1, the ? buttons). While it is open the game is paused (time stops, sound pauses) unless
+        /// a room is open (the others keep driving), so closing it hands everything back as it was.
+        /// </summary>
+        public bool HelpVisible
+        {
+            get => helpOverlay != null && helpOverlay.style.display == DisplayStyle.Flex;
+            set
+            {
+                if (helpOverlay == null) return;
+                helpOverlay.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
+                if (value) Rally.Core.TouchInput.Release();
+                bool pause = value && !KeepRunningUnderHelp;
+                if (pause && !paused) { timeScaleBefore = Time.timeScale; Time.timeScale = 0f; AudioListener.pause = true; paused = true; }
+                else if (!pause && paused) { Time.timeScale = timeScaleBefore; AudioListener.pause = false; paused = false; }
+            }
+        }
+
+        /// <summary>Set by the game while a multiplayer room is open: the help screen then overlays without pausing.</summary>
+        public bool KeepRunningUnderHelp;
+
+        void OnDisable() { if (paused) { Time.timeScale = timeScaleBefore; AudioListener.pause = false; paused = false; } }
 
         /// <summary>The debug window (F10 / F3): shown or hidden; the text is refreshed by the game a few times a second.</summary>
         public bool DebugVisible

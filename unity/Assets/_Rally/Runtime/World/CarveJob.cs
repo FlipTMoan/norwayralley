@@ -35,7 +35,7 @@ namespace Rally.World
                 for (int s = 0; s < SegmentCount; s++)
                 {
                     var seg = Segments[s];
-                    float reach = seg.HalfWidth + seg.Shoulder;
+                    float reach = seg.Reach;
                     // Cheap box reject before the projection: most segments are far from most cells.
                     if (p.x < math.min(seg.A.x, seg.B.x) - reach || p.x > math.max(seg.A.x, seg.B.x) + reach
                         || p.y < math.min(seg.A.y, seg.B.y) - reach || p.y > math.max(seg.A.y, seg.B.y) + reach) continue;
@@ -44,8 +44,12 @@ namespace Rally.World
                     float t = len2 > 1e-12f ? math.saturate(math.dot(p - seg.A, ab) / len2) : 0f;
                     float d = math.distance(p, seg.A + ab * t);
                     if (d > reach || d >= bestD) continue;
+                    // Beyond the flat band a segment only claims cells its earthwork reaches (else the cell stays free
+                    // for a farther segment whose profile does reach it, as before the earthworks widened the reach).
+                    float h = math.lerp(seg.Ha, seg.Hb, t);
+                    if (d > seg.HalfWidth + RoadProfile.EarthworkWidth(h, ground, seg.Shoulder)) continue;
                     bestD = d;
-                    bestH = math.lerp(seg.Ha, seg.Hb, t);
+                    bestH = h;
                     bestFlat = seg.HalfWidth;
                     bestShoulder = seg.Shoulder;
                 }

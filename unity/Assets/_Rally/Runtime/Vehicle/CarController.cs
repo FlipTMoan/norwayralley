@@ -53,11 +53,12 @@ namespace Rally.Vehicle
         [Header("Physics layers")]
         [Tooltip("Buildings | Trees | Props: solid, resolved by overlap + ComputePenetration after each step.")]
         public LayerMask SolidLayers;
-        [Tooltip("Trees: a capsule thinner than ThinTreeRadius snaps (event only).")]
+        [Tooltip("Trees: a capsule shorter than ThinTreeHeight (a shrub) snaps (event only); every real tree stops the car.")]
         public LayerMask TreeLayers;
         public LayerMask WaterLayers;
         public LayerMask ActorLayers;
-        public float ThinTreeRadius = 0.15f;
+        [Tooltip("Tree capsules shorter than this are shrubs: the car breaks through them. Used to be a 0.15 m trunk radius, which let small birches (0.18 m × scale) and mountain birches through while they were still drawn.")]
+        public float ThinTreeHeight = 3f;
 
         /// <summary>Set by the world before the first frame.</summary>
         public IGround Ground;
@@ -87,7 +88,11 @@ namespace Rally.Vehicle
         Rigidbody rb;
         BoxCollider box;
         readonly Collider[] overlaps = new Collider[16];
+        readonly RaycastHit[] castHits = new RaycastHit[16];
         bool jumpLatch;
+        readonly CarDiagnostics diag = new CarDiagnostics();
+        /// <summary>Contact / sudden slow-down counters behind the "collision:" log lines.</summary>
+        public CarDiagnostics Diagnostics => diag;
 
         void Awake()
         {
@@ -150,7 +155,7 @@ namespace Rally.Vehicle
 
         void Update()
         {
-            if (Ground == null) return;
+            if (Ground == null || Time.timeScale == 0f) return;   // paused (the help screen)
             float dt = math.min(0.05f, math.max(0.0001f, Time.deltaTime)); // main.js:2137
             state.AutoShift = AutoShift;
             var input = Driver != null ? Driver.Drive(state, Route) : ReadInput();
@@ -158,8 +163,15 @@ namespace Rally.Vehicle
             input.Frozen = Frozen;
             lastInput = input;
             int gearBefore = state.Gear;
+            var before = state.Pos.xz;
+            float damageBefore = state.Damage.Total;
             CarSim.Step(ref state, Spec, input, Ground, Route, ReadOnlySpan<WallBox>.Empty, dt);
+            // Colliders moved this frame (the tree pool, a FloatingOrigin rebase of the tile roots) reach PhysX queries only
+            // at the next simulation step with autoSyncTransforms off: sync first, or the car tests stale positions.
+            Physics.SyncTransforms();
+            SweepWalls(before);
             ResolveCollisions();
+            diag.Watch(ref state, input, Ground, dt, damageBefore);
             if (state.Gear != gearBefore) Shifted?.Invoke(gearBefore, state.Gear);
             FloatingOrigin.MaybeRebase(state.Pos);
             ApplyPose();
@@ -209,6 +221,42 @@ namespace Rally.Vehicle
         }
 
         /// <summary>
+        /// Continuous collision for the body box: the sim moved the car from <paramref name="from"/> to its new position
+        /// in one go (up to 0.05 s of travel per frame); a box cast along that path finds the first solid it crosses, and
+        /// the car is put just into it so <see cref="ResolveCollisions"/> pushes it out with the wall rule and the damage.
+        /// Without it a car sliding sideways (1.7 m wide) at rally speed on a slow frame moved past a trunk's centre in one
+        /// frame and the overlap test pushed it out on the far side: through the tree.
+        /// </summary>
+        void SweepWalls(float2 from)
+        {
+            if (SolidLayers.value == 0) return;
+            float2 move = state.Pos.xz - from;
+            float len = math.length(move);
+            if (len < 0.05f) return;
+            var rot = (Quaternion)state.VisualRotation;
+            var offset = state.VisualPos.xz - state.Pos.xz;
+            var start = new Vector3(from.x + offset.x, state.VisualPos.y, from.y + offset.y) + rot * box.center;
+            var dir = new Vector3(move.x / len, 0f, move.y / len);
+            int n = Physics.BoxCastNonAlloc(start, box.size * 0.5f, dir, castHits, rot, len, SolidLayers, QueryTriggerInteraction.Ignore);
+            float best = float.PositiveInfinity;
+            for (int i = 0; i < n; i++)
+            {
+                var h = castHits[i];
+                if (h.collider == box || h.distance <= 0f || h.distance >= best || IsShrub(h.collider)) continue;   // distance 0: already overlapping, the overlap pass owns it
+                if (math.abs(h.normal.y) > 0.7f) continue;   // the top of something: the ground model owns that
+                best = h.distance;
+            }
+            if (float.IsPositiveInfinity(best)) return;
+            float keep = math.min(len, best + 0.05f);   // 5 cm in, so the overlap pass sees the contact and its normal
+            state.Pos.x = from.x + move.x / len * keep;
+            state.Pos.z = from.y + move.y / len * keep;
+            state.VisualPos.x = state.Pos.x + offset.x;
+            state.VisualPos.z = state.Pos.z + offset.y;
+        }
+
+        bool IsShrub(Collider c) => (TreeLayers.value & (1 << c.gameObject.layer)) != 0 && c is CapsuleCollider cap && cap.height < ThinTreeHeight;
+
+        /// <summary>
         /// Walls through PhysX: overlap the body box with Buildings | Trees | Props, compute each penetration,
         /// push out along it with the JS wall rule (CarSim.ApplyWallHit) and feed the damage model. Thin trees
         /// snap (event only). Runs on the pose the sim just produced, before it is drawn.
@@ -229,7 +277,7 @@ namespace Rally.Vehicle
                 float len = math.length(horizontal);
                 if (len < 1e-3f) continue; // standing on top of something: the ground model owns that
                 var normal = horizontal / len;
-                bool thin = (TreeLayers.value & (1 << other.gameObject.layer)) != 0 && other is CapsuleCollider cap && cap.radius < ThinTreeRadius;
+                bool thin = IsShrub(other);
                 var ev = new CollisionEvent
                 {
                     Normal = new float3(normal.x, 0f, normal.y),
@@ -241,6 +289,7 @@ namespace Rally.Vehicle
                 {
                     ev.SpeedInto = math.max(0f, -(state.Vel.x * normal.x + state.Vel.y * normal.y));
                     ev.NormalLocal = math.mul(math.inverse(state.VisualRotation), ev.Normal);
+                    diag.Contact(state, other, ev.SpeedInto, dist, true);
                     Collided?.Invoke(ev);
                     continue;
                 }
@@ -251,6 +300,7 @@ namespace Rally.Vehicle
                 ev.SpeedInto = into;
                 ev.NormalLocal = math.mul(math.inverse(state.VisualRotation), ev.Normal);
                 if (into > 0.5f) state.Damage.Apply(ev.NormalLocal, into, Spec.Mass);
+                diag.Contact(state, other, into, dist, false);
                 Collided?.Invoke(ev);
             }
         }

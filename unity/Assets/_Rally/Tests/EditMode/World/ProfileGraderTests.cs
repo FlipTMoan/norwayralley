@@ -52,11 +52,12 @@ namespace Rally.Tests.World
             var two = RoadProfile.Two;   // 10.5 m road, 1.5 m shoulders, 18 m cut-through
             float flat = RoadConstants.FlatHalf(two.Half), shoulder = RoadProfile.ShoulderFor(two.Half, two.Cut);
             Assert.AreEqual(6.75f, flat, 1e-6, "flat out to 6.75 m: 5.25 m half plus the 1.5 m shoulder");
-            Assert.AreEqual(100, RoadProfile.Height(100, 90, 0, flat, shoulder));
-            Assert.AreEqual(100, RoadProfile.Height(100, 90, flat, flat, shoulder), "flat out to the shoulder");
-            Assert.AreEqual(95, RoadProfile.Height(100, 90, (flat + two.Cut) / 2, flat, shoulder), 1e-5, "halfway across the terrace blend");
-            Assert.AreEqual(90, RoadProfile.Height(100, 90, two.Cut, flat, shoulder), 1e-6, "natural ground at the cut-through edge");
-            Assert.AreEqual(90, RoadProfile.Height(100, 90, RoadConstants.CorridorReach(two.Half, two.Cut) + 1, flat, shoulder), "untouched beyond");
+            // A low fill (1 m) keeps the class's terrace blend; higher ones run out wider (RoadEdgeFitTests.EmbankmentsSlopeGentlyToTheGround).
+            Assert.AreEqual(100, RoadProfile.Height(100, 99, 0, flat, shoulder));
+            Assert.AreEqual(100, RoadProfile.Height(100, 99, flat, flat, shoulder), "flat out to the shoulder");
+            Assert.AreEqual(99.5f, RoadProfile.Height(100, 99, (flat + two.Cut) / 2, flat, shoulder), 1e-5, "halfway across the terrace blend");
+            Assert.AreEqual(99, RoadProfile.Height(100, 99, two.Cut, flat, shoulder), 1e-6, "natural ground at the cut-through edge");
+            Assert.AreEqual(99, RoadProfile.Height(100, 99, RoadConstants.CorridorReach(two.Half, two.Cut) + 1, flat, shoulder), "untouched beyond");
             var one = RoadProfile.One;
             Assert.AreEqual(3.75f, RoadConstants.FlatHalf(one.Half), 1e-6, "single lane: 4.5 m + 1.5 m shoulders");
             Assert.AreEqual(3.75f + 1.5f, RoadConstants.CorridorReach(one.Half, one.Cut), 1e-6, "7.5 m cut-through plus the feather");

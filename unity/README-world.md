@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-16 (WebGL 2 path). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-19 (road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -54,6 +54,39 @@ when a tile's ways arrive, then `TileWorld.RecarveWithin(bounds)`; `RibbonMesh.B
 - Known limits: a way graded in an earlier tile keeps its heights (a side road graded before its main road arrives does
   not conform); OSRM / demo stage lines (`StageRoute`) keep their own Chaikin; at a junction corner on a steep side road
   the side road's first ribbon quad can sit a few cm–15 cm off the main road's surface; bridges are not modelled.
+
+### Road edges, earthworks and the road surface (2026-11-19, second pass)
+- **The terrain meets the ribbon edge.** The carve's flat band sits `RoadConstants.CarveLift` (ribbon lift − `EdgeTuck`)
+  above the road line, so the terrain is 4 cm under the shoulder edge instead of 16 cm (which, with a vertical skirt and
+  its shadow, read as a road floating on a dark line). `TileWorld.HeightAt` returns the ribbon on the road and the carve
+  (+ the last 4 cm of the lift fading out) beyond it. Skirts now slope 0.5 m out and 0.55 m down into the ground
+  (earth-coloured); the outer 0.45 m of the shoulder is clipped by noise in `Rally/Road`, so the edge breaks up into the verge.
+- **Earthworks** (`RoadProfile.EarthworkWidth`, same rule in `CarveJob` and `Carve.compute`): past the flat band the carve
+  runs to the natural ground over `FillRun` (2) m per metre of embankment or `CutRun` (1.25) m per metre of cutting, at
+  least the class's shoulder blend, at most `MaxEarthwork` (10 m). A segment only claims cells its earthwork reaches;
+  the nearest segment still wins a cell (ranking by distance past the flat band, as `RoadGraph.Nearest` does, was tried:
+  it fixed the junction case below but let a wide road steal a narrow road's cells at grade-separated crossings).
+- **Coarse clipmap rings** (4–16 m triangles) could not draw the band edge where it is: a triangle from a vertex on the
+  band to one down the embankment sagged under the ribbon edge. In `TerrainClipmap` a vertex off the band (carve mask
+  < 0.75) with a grid neighbour on it takes their height, so every triangle that holds the edge is flat at road height
+  (`Clipmap.DrawnHeight` is the CPU twin used by the tests and `PreviewShots`). What remains is the ring's own
+  resolution over a graded road: ≤ 8 cm at 64–128 m, ≤ 15 cm at 128–256 m, ≤ 30 cm beyond (test road with 10 % grades).
+- Measured with `PreviewShots -previewRoadDebug` (live, 59.6501, 6.34968, `road.txt` + the `edge fit:` log line).
+- **A road is dry:** `TileWorld.WaterAt` returns no water on a carriageway or its shoulder. Measured against the carved
+  road, roads graded near sea level sat under the 0.45 m sea plane and every OSM waterway crossing a road (culverts too)
+  added 0.2–0.7 m: a hidden water brake (183 + 2 of 4143 live road points).
+- Measured: edge samples floating > 10 cm, live within 600 m: 70.5 % → 30.3 % (2 m ring 99 % → 2 %, 4 m 79 → 12 %,
+  8 m 76 → 14 %, 16 m 68 → 37 %).
+- **Road surface**: `Editor/RoadTextures.cs` generates a 2-slice array (asphalt aggregate 2 m tile, crushed gravel 3 m tile,
+  alpha = height) and its normal map, assigned by `SceneBuilder.RoadMaterials`; `Rally/Road` samples it in world XZ at two
+  scales and angles (no stretching along bends, no repeat), with procedural darker rubbered wheel tracks, oil line,
+  patches with sealed seams, ravelled edges onto a gravel shoulder and worn markings on asphalt; packed ruts with potholes,
+  a lighter stony crown and edges, ochre/grey drift and damp patches on gravel. Normal detail fades over 25–115 m.
+- Known limits: at a junction on a steep side road the side road's first quad off the main road sits up to ~15 cm off the
+  main road's carve, so the main road's apron can show through it by up to ~12 cm on a 30 % side road (4 cm tuck instead of
+  the old 16 cm lift); the coarse-only carve still sinks `CarveMargin` (0.3 m) under the band, so far away where no 1 m tile is
+  loaded the ribbon edge stands ~0.3 m over the coarse terrain (under a pixel at that range); bridges are still not modelled
+  (the road is graded over the water; a road on DTM sea cells is drawn under the sea plane, though the car stays dry).
 
 ## How far ahead tiles and overlays are fetched (2026-11-18)
 

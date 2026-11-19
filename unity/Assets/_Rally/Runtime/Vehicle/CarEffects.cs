@@ -17,6 +17,7 @@ namespace Rally.Vehicle
         public Renderer BrakeLights;
         public Light HeadlightL, HeadlightR;
         public CarDamageVisual DamageVisual;
+        CarExhaust exhaust;
         [Tooltip("car.js:1525 — gravel plume / tyre smoke on asphalt.")]
         public Color DustGravel = new Color(0.81f, 0.76f, 0.63f), DustSmoke = new Color(0.85f, 0.85f, 0.84f);
         [Tooltip("Lateral slip (m/s) above which the rear tyres draw marks.")]
@@ -36,6 +37,7 @@ namespace Rally.Vehicle
             car.Shifted += OnShifted;
             car.Collided += OnCollided;
             if (DamageVisual == null) DamageVisual = GetComponent<CarDamageVisual>();
+            exhaust = GetComponent<CarExhaust>();
         }
 
         void OnDestroy()
@@ -85,7 +87,9 @@ namespace Rally.Vehicle
 
         void OnShifted(int from, int to)
         {
-            if (to > from && Exhaust != null) Exhaust.Emit(6);
+            if (to <= from) return;
+            if (exhaust != null) exhaust.Puff(5, 0.3f, 0.55f, 0.35f);   // a short darker puff from every pipe
+            else if (Exhaust != null) Exhaust.Emit(6);
         }
 
         void OnCollided(CollisionEvent ev)

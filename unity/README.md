@@ -1,6 +1,6 @@
 # Retro Norway Rally — Unity 6 web build
 
-_Updated 2026-11-16 (friends rooms: two channels, heartbeat, rejoin, challenges)._
+_Updated 2026-11-19 (help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` and is still what
 `npm run build` deploys to GitHub Pages; the Unity build is served next to it at
@@ -171,6 +171,17 @@ Press **F2** (or the LOG button next to the clock) in the game to open the scrol
 readiness, OSM road/feature counts, SR16 forest rasters, trees placed and cache hits and misses, with filter chips,
 FOLLOW (stick to the newest line) and COPY (visible lines to the clipboard). The same lines go to the browser
 console with a `[rally]` prefix. Source: `Runtime/UI/LogWindow.cs`, `Runtime/Core/RallyLog.cs`.
+Lines starting with `collision:` say why the car stopped: every hit (tree with its trunk size, building), damage steps,
+water under the car (and whether it was on the road), and any slow-down of more than 15 km/h in 0.2 s without brake or
+handbrake, with the surface, water, ground and contact at that moment (`Runtime/Vehicle/CarDiagnostics.cs`).
+
+## Help screen
+
+`H`, `F1`, the **? HELP** button on the start screen or the **?** button next to LOG / MAP open an overlay
+(`Hud.uxml` `helpOverlay`, `HudController.HelpVisible`) with the goal, the keyboard / gamepad / touch controls,
+the game keys, what the HUD shows, the stage types and the data credits. It pauses the game (time scale 0, sound
+paused) and gives everything back when closed with `H`, `F1`, `Esc` or CLOSE; with a friends room open it only
+overlays. Keep it in step with the controls table below.
 
 
 ## Controls (same as the JS game)
@@ -188,9 +199,10 @@ console with a `[rally]` prefix. Source: `Runtime/UI/LogWindow.cs`, `Runtime/Cor
 | `N` | Scout a new endless stage from where the car is |
 | `1` / `2` / `3`, `C` | Camera: above / chase / driver's seat, `C` cycles |
 | `M` | Mute |
+| `H` / `F1` | Help screen (controls, HUD, stage types, data credits); pauses the game unless a friends room is open |
 | `F10` / `F3` | Debug window (phone: three quick taps on the speed) |
 | `F2` | Log window |
-| `Esc` | Close the route map, or back to the start screen |
+| `Esc` | Close the help screen or the route map, or back to the start screen |
 | `Enter` | Start the engine |
 
 Mouse and touch: the **MAP** button (and PICK A ROUTE ON THE MAP on the start screen) opens the Leaflet route

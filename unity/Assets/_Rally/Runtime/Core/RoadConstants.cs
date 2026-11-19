@@ -37,6 +37,22 @@ namespace Rally.Core
         /// </summary>
         public const float CarveApron = 2f;
 
+        /// <summary>
+        /// The ribbon edge sits RoadRibbonLift above the carriageway's carve; the carve's flat band is raised by
+        /// <see cref="CarveLift"/> so the terrain meets the ribbon edge just <see cref="EdgeTuck"/> under it (it used to
+        /// stay 16 cm under, which with the vertical skirt read as a road floating on a dark line). The tuck keeps the
+        /// terrain from poking through the shoulder; Rally/Road draws with a depth offset so far away they do not fight.
+        /// </summary>
+        public const float EdgeTuck = 0.04f;
+        public const float CarveLift = RoadRibbonLift - EdgeTuck;
+
+        /// <summary>
+        /// Earthworks beyond the flat band: an embankment (road above the natural ground) runs out <see cref="FillRun"/>
+        /// metres per metre of height, a cutting <see cref="CutRun"/>, at most <see cref="MaxEarthwork"/> m wide; never
+        /// narrower than the road class's shoulder blend. A 3 m fill used to drop over 1.5–2.25 m (a near-vertical wall).
+        /// </summary>
+        public const float FillRun = 2f, CutRun = 1.25f, MaxEarthwork = 10f;
+
         /// <summary>Half width of the flat part: carriageway plus shoulder (corridor.js:38 flatHalf).</summary>
         public static float FlatHalf(float half) => half + Shoulder;
 

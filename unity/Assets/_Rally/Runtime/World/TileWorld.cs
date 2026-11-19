@@ -242,7 +242,8 @@ namespace Rally.World
             }
             // The 8 m coarse grid is drawn with bilinear weights: a texel up to one diagonal cell (11.3 m) from a point on
             // the ribbon pulls the terrain there. Widen the coarse flat band by that much and sink it by CarveMargin, so a
-            // coarse-only stretch of road (no 1 m tile yet) does not poke through the ribbon either.
+            // coarse-only stretch of road (no 1 m tile yet) does not poke through the ribbon either (on steep side roads near
+            // a junction the bilinear excess reaches ~0.25 m; the gap it leaves is only seen far away, where only coarse tiles are).
             if (tile.Key.Kind == TileKind.Coarse)
                 for (int i = 0; i < roadSegs; i++)
                 {
@@ -306,6 +307,13 @@ namespace Rally.World
             return t != null ? t.Grid.Sample(p) : 0f;
         }
 
+        /// <summary>The carve mask the clipmap reads (1 on a road's flat band), fine tile first; CPU path only.</summary>
+        public float CarveMaskAt(Utm33 p)
+        {
+            var t = TileFor(TileKind.Fine, p) ?? TileFor(TileKind.Coarse, p);
+            return t != null ? t.SampleMask(p) : 0f;
+        }
+
         /// <summary>Natural ground (stream.js sampleBase): the untouched DTM, fine first.</summary>
         public float BaseHeightAt(Utm33 p)
         {
@@ -324,7 +332,12 @@ namespace Rally.World
             {
                 float ground = BaseHeightAt(p);
                 float d = (float)q.Distance;
-                return RoadProfile.Height(q.RoadY + RoadConstants.RoadLift, ground, d, RoadConstants.FlatHalf(q.Half) + RoadConstants.CarveApron, RoadProfile.ShoulderFor(q.Half, q.Cut)) + RoadConstants.SurfaceLift(d, q.Half);
+                // On the ribbon: its surface. Past it: the carve (raised by CarveLift, so the terrain meets the ribbon edge) and
+                // the last EdgeTuck of the ribbon lift fading out (a 4 cm kerb, not a drop).
+                float roadY = q.RoadY + RoadConstants.RoadLift;
+                if (d <= q.Half + RoadConstants.RoadShoulder) return roadY + RoadConstants.SurfaceLift(d, q.Half);
+                float carved = RoadProfile.Height(roadY + RoadConstants.CarveLift, ground, d, RoadConstants.FlatHalf(q.Half) + RoadConstants.CarveApron, RoadProfile.ShoulderFor(q.Half, q.Cut));
+                return carved + math.max(0f, RoadConstants.SurfaceLift(d, q.Half) - RoadConstants.CarveLift);
             }
             return CarvedHeightAt(p);
         }
@@ -339,6 +352,12 @@ namespace Rally.World
         public WaterSample WaterAt(float2 xz)
         {
             var p = FloatingOrigin.ToUtm(xz);
+            // A road is built above the water: on a carriageway or its shoulder the car is dry. Water used to be measured
+            // against the carved road like any ground: every OSM waterway crossing a road (culverts included) added its
+            // 0.2–0.7 m there, and every road graded near sea level (quays, shore roads, roads over DTM sea cells) sat
+            // under the 0.45 m sea plane — water drag that grows with depth × speed², up to 16 m/s², and no splash to show
+            // for it: the "car suddenly brakes" of 2026-11-19.
+            if (Roads != null && Roads.Nearest(p, 12, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return WaterSample.Dry;
             var t = TileFor(TileKind.Coarse, p);
             return Water.WaterAt(t != null ? ((TileView)t.UserData).Water : null, p, CarvedHeightAt(p));
         }

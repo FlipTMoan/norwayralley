@@ -20,7 +20,8 @@ namespace Rally.World
         public float Shoulder;    // metres beyond the flat band to meet the untouched ground
 
         public const int Stride = 32;
-        public float Reach => HalfWidth + Shoulder;
+        /// <summary>How far from the line the segment can change the ground (flat band + the widest earthwork).</summary>
+        public float Reach => HalfWidth + math.max(Shoulder, RoadConstants.MaxEarthwork);
     }
 
     /// <summary>
@@ -46,11 +47,26 @@ namespace Rally.World
 
         public static float Smoothstep(float t) { t = math.saturate(t); return t * t * (3f - 2f * t); }
 
-        /// <summary>corridor.js profileHeight with edge == ground: flat to halfWidth, smoothstep to the ground over shoulder.</summary>
+        /// <summary>
+        /// Width of the earthwork from the flat band to the natural ground: <see cref="RoadConstants.FillRun"/> per metre
+        /// of fill, <see cref="RoadConstants.CutRun"/> per metre of cut, between <paramref name="shoulder"/> and the cap.
+        /// </summary>
+        public static float EarthworkWidth(float roadY, float ground, float shoulder)
+        {
+            float rise = roadY - ground;
+            float w = rise > 0 ? rise * RoadConstants.FillRun : -rise * RoadConstants.CutRun;
+            return math.clamp(w, shoulder, math.max(shoulder, RoadConstants.MaxEarthwork));
+        }
+
+        /// <summary>
+        /// corridor.js profileHeight with edge == ground: flat to halfWidth, then a smoothstep down (embankment) or up
+        /// (cutting) to the natural ground over <see cref="EarthworkWidth"/>, evaluated with the ground at the point.
+        /// </summary>
         public static float Height(float roadY, float ground, float d, float halfWidth, float shoulder)
         {
             if (d <= halfWidth) return roadY;
-            if (d < halfWidth + shoulder) return math.lerp(roadY, ground, Smoothstep((d - halfWidth) / shoulder));
+            float w = EarthworkWidth(roadY, ground, shoulder);
+            if (d < halfWidth + w) return math.lerp(roadY, ground, Smoothstep((d - halfWidth) / w));
             return ground;
         }
     }

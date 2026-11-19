@@ -67,6 +67,30 @@ float GroundHeight(float2 wxz, out float found)
     return 0;
 }
 
+// Ground height and the carve mask (1 on a road's / pad's flat band) from the same tile: fine first, then coarse.
+float GroundHeightMask(float2 wxz, out float found, out float mask)
+{
+    float2 local;
+    int slice = FineTile(wxz, local);
+    if (slice >= 0)
+    {
+        found = 1;
+        float2 uv = TileUV(local, _AtlasParams.z);
+        mask = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskFine, sampler_MaskCoarse, uv, slice, 0).r;
+        return SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsFine, sampler_HeightsFine, uv, slice, 0).r;
+    }
+    slice = CoarseTile(wxz, local);
+    if (slice >= 0)
+    {
+        found = 1;
+        float2 uv = TileUV(local, _AtlasParams.y);
+        mask = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, uv, slice, 0).r;
+        return SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsCoarse, sampler_HeightsCoarse, uv, slice, 0).r;
+    }
+    found = 0; mask = 0;
+    return 0;
+}
+
 // Ground layer weights of the coarse tile under a point (LandcoverSplat order: s0 = conifer floor, birch floor,
 // field, rock; s1 = heath, bog, snow, sand; grass = remainder) and the carve mask. The weights are looked up at
 // wxz + splatOffset (the caller jitters them so 16 m texel edges do not show), the mask at wxz itself: from the 1 m

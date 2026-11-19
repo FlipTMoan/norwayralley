@@ -10,7 +10,7 @@ namespace Rally.Roads
 {
     /// <summary>
     /// The road surface mesh (port of stage.js buildRibbon as roads.js buildRoadMeshes uses it): six rows per
-    /// station — skirt, shoulder, carriageway edge, carriageway edge, shoulder, skirt — and short skirts hanging
+    /// station — skirt, shoulder, carriageway edge, carriageway edge, shoulder, skirt — and short skirts sloping
     /// off both shoulders so the road reads as a solid ribbon. Every row height is the car's own ground there (what
     /// TileWorld.HeightAt answers on the road: the graded road height + ROAD_LIFT + RoadConstants.SurfaceLift), so the
     /// drawn road and the wheel contact are one surface, straight across the carriageway. It used to sample the carved height grid instead, which is the 8 m coarse grid when a tile's
@@ -23,7 +23,10 @@ namespace Rally.Roads
     public static class RibbonMesh
     {
         public const int Rows = 6;
-        public const float SkirtDrop = 0.55f;
+        /// <summary>Skirts run SkirtOut beyond the shoulder edge and SkirtDrop down: buried in the terrain that meets the edge
+        /// (RoadConstants.CarveLift), they show only where a coarse terrain ring sags, as an earth-coloured embankment face
+        /// rather than the vertical wall and shadow line they used to draw.</summary>
+        public const float SkirtDrop = 0.55f, SkirtOut = 0.5f;
 
         [StructLayout(LayoutKind.Sequential)]
         struct Vertex { public float3 Pos; public float3 Normal; public float2 UV; public float2 UV1; }
@@ -48,9 +51,10 @@ namespace Rally.Roads
                     for (int k = 0; k < Rows; k++)
                     {
                         float offset = k <= 2 ? -(k == 2 ? half : half + shoulder) : (k == 3 ? half : half + shoulder);
-                        double2 p = s[i].P + n * offset;
-                        // Skirts: straight down from the shoulder row (the same point, so they hang under its edge).
-                        float y = s[i].RoadY + RoadConstants.RoadLift + RoadConstants.SurfaceLift((float)math.abs(offset), half) - (k == 0 || k == 5 ? SkirtDrop : 0);
+                        bool skirt = k == 0 || k == 5;
+                        double2 p = s[i].P + n * (offset + (skirt ? math.sign(offset) * SkirtOut : 0));
+                        // Skirts: from the shoulder edge out and down into the ground.
+                        float y = s[i].RoadY + RoadConstants.RoadLift + RoadConstants.SurfaceLift((float)math.abs(offset), half) - (skirt ? SkirtDrop : 0);
                         float u = k == 0 ? -1 : k == 1 ? -shoulder / (2 * half) : k == 2 ? 0 : k == 3 ? 1 : k == 4 ? 1 + shoulder / (2 * half) : 2;
                         verts.Add(new Vertex
                         {

@@ -30,8 +30,9 @@
         <ui:Button name="gearboxBtn" text="GEARBOX: AUTOMATIC" class="toggleButton" />
         <ui:Button name="slideBtn" text="SLIDING: 0 MINIMAL" class="toggleButton" />
         <ui:Button name="mapBtn" text="PICK A ROUTE ON THE MAP" class="toggleButton" />
+        <ui:Button name="helpBtn" text="? HELP" class="toggleButton" />
       </ui:VisualElement>
-      <ui:Label text="WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 or C camera · M mute · F10 debug · F2 log" class="startControls" />
+      <ui:Label text="WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 or C camera · M mute · H help · F10 debug · F2 log" class="startControls" />
       <ui:VisualElement name="friends" class="friends">
         <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
         <ui:Button name="hostButton" text="HOST A ROOM" class="smallButton" />
@@ -49,7 +50,7 @@
       <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain © Kartverket (CC BY 4.0) · SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · Statens vegvesen (NLOD) · geoBoundaries (CC BY 4.0)" class="credits" />
     </ui:VisualElement>
     <ui:Label name="debugPanel" text="" class="debugPanel" />
-    <ui:Label name="helpLine" text="WASD drive · SPACE jump · SHIFT drift · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 C camera · F10 debug · F2 log · M mute" class="helpLine" />
+    <ui:Label name="helpLine" text="H help · WASD drive · SPACE jump · SHIFT drift · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 C camera · F10 debug · F2 log · M mute" class="helpLine" />
     <ui:VisualElement name="touchControls" class="touchControls">
       <ui:VisualElement class="touchSide">
         <ui:Button name="touchLeft" text="◀" class="touchButton" />
@@ -63,6 +64,47 @@
     </ui:VisualElement>
     <ui:Button name="mapButton" text="MAP" class="logButton mapButton" />
     <ui:Button name="logButton" text="LOG" class="logButton" />
+    <ui:Button name="helpButton" text="?" class="logButton helpButton" />
+    <ui:VisualElement name="helpOverlay" class="helpOverlay">
+      <ui:VisualElement class="helpPanel">
+        <ui:VisualElement class="helpBar">
+          <ui:Label text="HELP" class="helpTitle" />
+          <ui:Label text="game paused · H, F1 or Esc closes" class="helpHint" />
+          <ui:VisualElement class="logSpacer" />
+          <ui:Button name="helpClose" text="CLOSE" class="smallButton" />
+        </ui:VisualElement>
+        <ui:ScrollView name="helpScroll" mode="Vertical" horizontal-scroller-visibility="Hidden" class="helpScroll">
+          <ui:Label text="GOAL" class="helpHead" />
+          <ui:Label text="Drive real Norwegian roads, built from the map, as fast as you dare. On a route stage the clock runs from the end of the countdown to the finish line; hitting an animal or a person adds penalty seconds (red, next to the clock), a near miss takes one off. Crashes damage the car: a hurt engine loses power, a holed radiator overheats it, and a dead engine retires you." class="helpText" />
+          <ui:Label text="DRIVING" class="helpHead" />
+          <ui:VisualElement class="helpRow"><ui:Label text="" class="helpCell helpCellHead helpCol0" /><ui:Label text="KEYBOARD" class="helpCell helpCellHead helpCol1" /><ui:Label text="GAMEPAD" class="helpCell helpCellHead helpCol2" /><ui:Label text="TOUCH" class="helpCell helpCellHead helpCol3" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Throttle" class="helpCell helpCol0" /><ui:Label text="W / Up" class="helpCell helpCol1" /><ui:Label text="right trigger" class="helpCell helpCol2" /><ui:Label text="GAS" class="helpCell helpCol3" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Brake, reverse (hold)" class="helpCell helpCol0" /><ui:Label text="S / Down" class="helpCell helpCol1" /><ui:Label text="left trigger" class="helpCell helpCol2" /><ui:Label text="BRAKE" class="helpCell helpCol3" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Steer" class="helpCell helpCol0" /><ui:Label text="A D / Left Right" class="helpCell helpCol1" /><ui:Label text="left stick" class="helpCell helpCol2" /><ui:Label text="LEFT / RIGHT" class="helpCell helpCol3" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Handbrake (drift)" class="helpCell helpCol0" /><ui:Label text="Shift" class="helpCell helpCol1" /><ui:Label text="B (east)" class="helpCell helpCol2" /><ui:Label text="DRIFT" class="helpCell helpCol3" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Jump" class="helpCell helpCol0" /><ui:Label text="Space" class="helpCell helpCol1" /><ui:Label text="A (south)" class="helpCell helpCol2" /><ui:Label text="-" class="helpCell helpCol3" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Gear up / down" class="helpCell helpCol0" /><ui:Label text="E / Q" class="helpCell helpCol1" /><ui:Label text="RB / LB" class="helpCell helpCol2" /><ui:Label text="-" class="helpCell helpCol3" /></ui:VisualElement>
+          <ui:Label text="Q / E (or RB / LB) switch an automatic gearbox to manual; G switches back. On the start screen: START ENGINE (or Enter), GEARBOX, SLIDING (how easily the tail steps out, 0-3) and PICK A ROUTE ON THE MAP." class="helpText" />
+          <ui:Label text="GAME KEYS" class="helpHead" />
+          <ui:VisualElement class="helpRow"><ui:Label text="H or F1" class="helpCell helpKey helpCol0" /><ui:Label text="this help (game paused)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="C" class="helpCell helpKey helpCol0" /><ui:Label text="next camera - 1 overhead, 2 chase, 3 seat" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="R" class="helpCell helpKey helpCol0" /><ui:Label text="restart the stage" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="N" class="helpCell helpKey helpCol0" /><ui:Label text="new endless stage from where you are" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="G" class="helpCell helpKey helpCol0" /><ui:Label text="gearbox automatic / manual" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="M" class="helpCell helpKey helpCol0" /><ui:Label text="sound on / off" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Esc" class="helpCell helpKey helpCol0" /><ui:Label text="back to the start screen (closes the help or the map first)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="MAP button" class="helpCell helpKey helpCol0" /><ui:Label text="pick a route on the map (web build)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="F2 or LOG" class="helpCell helpKey helpCol0" /><ui:Label text="log window - collision: lines say what stopped the car" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="F10 or F3" class="helpCell helpKey helpCol0" /><ui:Label text="debug window (phones: tap the speed three times)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:Label text="ON SCREEN" class="helpHead" />
+          <ui:Label text="Top left: stage time, penalty and distance to the finish. Top right: the pace note for the next turn - arrow, metres to it and its kind (EASY LEFT, HAIRPIN RIGHT ...). Bottom: speed in km/h, gear (R = reverse), rev bar (red near the limiter), the surface under the car (ASPHALT, GRAVEL, OFF ROAD, WATER) and the red damage bar." class="helpText" />
+          <ui:Label text="STAGES" class="helpHead" />
+          <ui:Label text="Route stage: pick start and finish on the MAP; the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts. Every stage is a link in the address bar you can share." class="helpText" />
+          <ui:Label text="DATA" class="helpHead" />
+          <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
+        </ui:ScrollView>
+      </ui:VisualElement>
+    </ui:VisualElement>
     <ui:VisualElement name="logWindow" class="logWindow">
       <ui:VisualElement class="logBar">
         <ui:Label text="LOG" class="logTitle" />

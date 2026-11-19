@@ -565,6 +565,8 @@ namespace Rally.Editor
         public static (Material tarmac, Material gravel) RoadMaterials()
         {
             var shader = Shader.Find("Rally/Road");
+            EnsureFolder(SettingsDir + "/Road");
+            var (detail, detailNormals) = RoadTextures.Build(SettingsDir + "/Road", ForceArt);
             Material Make(string name, float gravel)
             {
                 string path = SettingsDir + "/" + name + ".mat";
@@ -574,6 +576,8 @@ namespace Rally.Editor
                 else m.shader = shader;
                 m.SetFloat("_Gravel", gravel);
                 m.SetColor("_Tint", Color.white);
+                m.SetTexture("_Detail", detail);
+                m.SetTexture("_DetailNormals", detailNormals);
                 EditorUtility.SetDirty(m);
                 return m;
             }

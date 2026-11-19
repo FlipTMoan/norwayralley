@@ -38,16 +38,19 @@ namespace Rally.Tests.World
             {
                 Assert.AreEqual(114, At(h, 80, 80), 1e-5, "centre line at road height");
                 Assert.AreEqual(114, At(h, 84, 80), 1e-5, "shoulder flat (4 m inside the flat band)");
-                float s6 = (6 - flat) / (cut - flat);
-                float blend6 = math.lerp(114, Ground(74), s6 * s6 * (3 - 2 * s6));
-                Assert.AreEqual(blend6, At(h, 74, 80), 1e-3, "terrace blend on the low side");
-                Assert.AreEqual(Ground(72), At(h, 72, 80), 1e-4, "cut-through edge meets the ground, no step");
-                Assert.AreEqual(Ground(88), At(h, 88, 80), 1e-4, "high side edge");
-                Assert.AreEqual(Ground(100), At(h, 100, 80), 0, "untouched beyond the cut-through");
+                // Beyond the flat band every cell follows the shared earthwork rule (RoadProfile.Height): this road sits on a
+                // 4–6 m embankment on the low side and in a cutting on the high side, so the earthwork runs out wider than the
+                // class's terrace blend (FillRun / CutRun), then meets the ground with no step.
+                for (float x = 60; x <= 100; x += 2)
+                    Assert.AreEqual(RoadProfile.Height(114, Ground(x), math.abs(x - 80), flat, shoulder), At(h, x, 80), 1e-3, $"earthwork at x={x}");
+                Assert.Less(At(h, 74, 80), 114, "the embankment falls away");
+                Assert.Greater(At(h, 74, 80), Ground(74), "above the natural ground");
+                Assert.AreEqual(Ground(64), At(h, 64, 80), 1e-4, "low side: the embankment toe meets the ground");
+                Assert.AreEqual(Ground(96), At(h, 96, 80), 1e-4, "high side: the cutting meets the ground");
                 Assert.AreEqual(Ground(160), At(h, 160, 80), 0, "untouched far away");
-                // Monotone blend: from the centre out to the edge on the low side the height never rises.
-                float prev = At(h, 80, 80);
-                for (float x = 78; x >= 70; x -= 2) { float v = At(h, x, 80); Assert.LessOrEqual(v, prev + 1e-5, $"x={x}"); prev = v; }
+                // Monotone blend: from the ribbon edge out on the low side the height never rises.
+                float prev = At(h, 76, 80);
+                for (float x = 74; x >= 66; x -= 2) { float v = At(h, x, 80); Assert.LessOrEqual(v, prev + 1e-5, $"x={x}"); prev = v; }
                 Assert.AreEqual(255, mask[(80 / 2) * N + 80 / 2], "flat band mask");
                 Assert.AreEqual(128, mask[(80 / 2) * N + 74 / 2], "blend mask");
                 Assert.AreEqual(0, mask[(80 / 2) * N + 100 / 2], "untouched mask");

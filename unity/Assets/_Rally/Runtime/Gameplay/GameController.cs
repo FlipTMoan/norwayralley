@@ -793,6 +793,12 @@ namespace Rally.Gameplay
         {
             var kb = Keyboard.current;
             if (kb == null || (Hud != null && Hud.IsTyping)) return;
+            if (Hud != null)
+            {
+                Hud.KeepRunningUnderHelp = session != null && !session.Closed;
+                if (kb.hKey.wasPressedThisFrame || kb.f1Key.wasPressedThisFrame) Hud.HelpVisible = !Hud.HelpVisible;
+                if (Hud.HelpVisible) { if (kb.escapeKey.wasPressedThisFrame) Hud.HelpVisible = false; return; }   // keys stay with the help screen
+            }
             if (kb.gKey.wasPressedThisFrame) ToggleGearbox();
             if (kb.mKey.wasPressedThisFrame) ToggleMute();
             if (kb.f10Key.wasPressedThisFrame || kb.f3Key.wasPressedThisFrame) { if (Hud != null) Hud.DebugVisible = !Hud.DebugVisible; }

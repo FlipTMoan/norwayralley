@@ -150,6 +150,29 @@ namespace Rally.World
         }
 
         public void Dispose() { RallyObjects.Destroy(centre); RallyObjects.Destroy(ring); }
+
+        /// <summary>
+        /// CPU twin of the vertex shader (TerrainClipmap DisplacedPosition) for one ring's cell size: the height the drawn
+        /// terrain has at <paramref name="xz"/> — vertices on the cell grid, triangles split along the (i+1, j)–(i, j+1)
+        /// diagonal, and for cells over 2 m a vertex off the flat band (mask &lt; 0.75) with neighbours on it takes their
+        /// mean height. <paramref name="height"/> / <paramref name="mask"/> are the carved grid and its mask (TileWorld).
+        /// </summary>
+        public static float DrawnHeight(float2 xz, float cell, System.Func<float2, float> height, System.Func<float2, float> mask, bool dilate = true)
+        {
+            float V(float i, float j)
+            {
+                var p = new float2(i, j) * cell;
+                float h = height(p);
+                if (!dilate || cell <= 2.5f || mask(p) >= 0.75f) return h;
+                float sum = 0, n = 0;
+                void Add(float di, float dj) { var q = new float2(i + di, j + dj) * cell; if (mask(q) >= 0.75f) { sum += height(q); n++; } }
+                Add(-1, 0); Add(1, 0); Add(0, -1); Add(0, 1); Add(1, -1); Add(-1, 1);
+                return n > 0 ? sum / n : h;
+            }
+            float fx = xz.x / cell, fz = xz.y / cell, ci = math.floor(fx), cj = math.floor(fz), u = fx - ci, w = fz - cj;
+            float a = V(ci, cj), b = V(ci + 1, cj), c = V(ci, cj + 1), d = V(ci + 1, cj + 1);
+            return u + w <= 1 ? a + (b - a) * u + (c - a) * w : d + (c - d) * (1 - u) + (b - d) * (1 - w);
+        }
     }
 
     /// <summary>

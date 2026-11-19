@@ -105,3 +105,17 @@
   alternately include one more neighbour and turned a straight grade into a staircase.
 - Only roads that share an OSM node meet. Anchoring by "within the other road's band" alone pulled underpasses and
   tunnel roads 4–10 m onto the road above.
+
+## 2026-11-19 — "the car suddenly brakes": a hidden water brake, found by measuring, not by driving
+- The ScriptedDriver on live endless stages leaves the road within a minute (hairpins, steep verges), so a scripted
+  "drive and wait for the bug" run never got far enough to see it. A per-road-point survey of the live data
+  (`PreviewShots -previewRoadDebug`: is the car in water here?) found it at once: 197 of 4143 road points counted as
+  0.2–0.7 m deep water, because every OSM waterway crossing a road adds its depth to whatever ground is there.
+  Rule: for "sometimes the car does X", list every force/state that can cause X (drag, water, damage, contacts) and
+  survey the live map for where each one fires on the road, before trying to reproduce it by driving.
+- A plausible fix that matches another module's rule (rank carve segments by distance past the flat band, like
+  `RoadGraph.Nearest`) fixed the case under test (a junction) and broke an untested one (grade-separated crossings: a
+  wide road took a narrow road's cells, terrain 2 m over the ribbon). The live survey's "carved terrain above the
+  ribbon" count went 3 → 166; reverted. Keep before/after survey numbers for every carve change, not only the new metric.
+- Check new collision tests against the old code: the 60 km/h sideways case passed on the old code too; only 100 km/h
+  on 0.05 s frames and the thin birch reproduced the pass-through.

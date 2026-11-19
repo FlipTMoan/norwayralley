@@ -70,7 +70,7 @@ namespace Rally.Tests.World
             var segs = new List<CarveSegment>();
             g.CollectCarveSegments(new Bounds25833(0, 0, 2048, 2048), new Utm33(0, 0), segs);
             Assert.Greater(segs.Count, 50, "5 m samples over 500 m");
-            Assert.AreEqual(100 + RoadConstants.RoadLift, segs[0].Ha, 1e-5);
+            Assert.AreEqual(100 + RoadConstants.RoadLift + RoadConstants.CarveLift, segs[0].Ha, 1e-5, "the carve meets the ribbon edge");
             Assert.AreEqual(RoadConstants.FlatHalf(RoadProfile.One.Half) + RoadConstants.CarveApron, segs[0].HalfWidth, 1e-6, "flat band: carriageway, shoulder and the carve apron");
             Assert.AreEqual(RoadConstants.Feather, segs[0].Shoulder, 1e-6, "single lane: the feather is the blend");
             Assert.AreEqual(1000, segs[0].A.x, 1e-3);

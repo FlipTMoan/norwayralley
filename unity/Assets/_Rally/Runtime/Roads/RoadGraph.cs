@@ -516,7 +516,7 @@ namespace Rally.Roads
             return true;
         }
 
-        /// <summary>Carve input for a tile: every segment whose reach touches the bounds, tile-local, ROAD_LIFT added (roads.js carvePolylines).</summary>
+        /// <summary>Carve input for a tile: every segment whose reach touches the bounds, tile-local, ROAD_LIFT + CarveLift added (roads.js carvePolylines; the lift puts the terrain at the ribbon edge).</summary>
         public void CollectCarveSegments(Bounds25833 bounds, Utm33 origin, List<CarveSegment> output)
         {
             int bx0 = (int)math.floor((bounds.MinE - 32) / Cell), bx1 = (int)math.floor((bounds.MaxE + 32) / Cell);
@@ -527,13 +527,13 @@ namespace Rally.Roads
                     if (!buckets.TryGetValue(Key(bx, bz), out var list)) continue;
                     foreach (var seg in list)
                     {
-                        float flat = RoadConstants.FlatHalf(seg.Lanes.Half) + RoadConstants.CarveApron, shoulder = RoadProfile.ShoulderFor(seg.Lanes.Half, seg.Lanes.Cut), reach = flat + shoulder;
+                        float flat = RoadConstants.FlatHalf(seg.Lanes.Half) + RoadConstants.CarveApron, shoulder = RoadProfile.ShoulderFor(seg.Lanes.Half, seg.Lanes.Cut), reach = flat + math.max(shoulder, RoadConstants.MaxEarthwork);
                         double2 lo = math.min(seg.A, seg.B) - reach, hi = math.max(seg.A, seg.B) + reach;
                         if (hi.x < bounds.MinE || lo.x > bounds.MaxE || hi.y < bounds.MinN || lo.y > bounds.MaxN) continue;
                         output.Add(new CarveSegment
                         {
                             A = (float2)(seg.A - new double2(origin.E, origin.N)), B = (float2)(seg.B - new double2(origin.E, origin.N)),
-                            Ha = seg.Ya + RoadConstants.RoadLift, Hb = seg.Yb + RoadConstants.RoadLift, HalfWidth = flat, Shoulder = shoulder,
+                            Ha = seg.Ya + RoadConstants.RoadLift + RoadConstants.CarveLift, Hb = seg.Yb + RoadConstants.RoadLift + RoadConstants.CarveLift, HalfWidth = flat, Shoulder = shoulder,
                         });
                     }
                 }

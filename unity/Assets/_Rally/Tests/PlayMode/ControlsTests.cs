@@ -95,5 +95,41 @@ namespace Rally.Tests.Play
             }
             Assert.IsEmpty(watch.Problems, watch.Summary);
         }
+
+        [UnityTest]
+        public IEnumerator HOpensAndClosesTheHelpScreen()
+        {
+            using var watch = new LogWatch();
+            yield return Boot();
+            var game = Object.FindAnyObjectByType<GameController>();
+            var hud = Object.FindAnyObjectByType<Rally.UI.HudController>();
+            Assert.IsNotNull(hud);
+            Assert.IsFalse(hud.HelpVisible, "the help screen starts closed");
+            yield return Tap(kb.hKey);
+            Assert.IsTrue(hud.HelpVisible, "H opens the help screen");
+            Assert.AreEqual(0f, Time.timeScale, "the game pauses under it");
+            yield return Tap(kb.hKey);
+            Assert.IsFalse(hud.HelpVisible, "H closes it again");
+            Assert.AreEqual(1f, Time.timeScale, "and time runs again");
+            yield return Tap(kb.f1Key);
+            Assert.IsTrue(hud.HelpVisible, "F1 opens it too");
+            yield return Tap(kb.escapeKey);
+            Assert.IsFalse(hud.HelpVisible, "Esc closes it");
+            Assert.AreEqual(Phase.Intro, game.Phase, "and does not leave the start screen");
+
+            // Closed, it blocks nothing: the engine starts and the car drives.
+            game.StartEngine();
+            float until = Time.realtimeSinceStartup + 6f;
+            while (game.Phase != Phase.Racing && Time.realtimeSinceStartup < until) yield return null;
+            Assert.AreEqual(Phase.Racing, game.Phase);
+            var car = Object.FindAnyObjectByType<CarController>();
+            var start = car.transform.position;
+            Press(kb.wKey);
+            until = Time.realtimeSinceStartup + 1.5f;
+            while (Time.realtimeSinceStartup < until) yield return null;
+            Release(kb.wKey);
+            Assert.Greater(Vector3.Distance(car.transform.position, start), 1f, "W drives after the help screen was closed");
+            Assert.IsEmpty(watch.Problems, watch.Summary);
+        }
     }
 }

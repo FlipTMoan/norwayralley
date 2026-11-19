@@ -97,6 +97,19 @@ namespace Rally.World
             return math.lerp(math.lerp(h00, h10, tx), math.lerp(h01, h11, tx), ty);
         }
 
+        /// <summary>Bilinear sample of the CPU carve mask, 0..1 (1 = flat band). CPU path only: zero on the GPU path.</summary>
+        public float SampleMask(Utm33 p)
+        {
+            int n = Grid.N;
+            if (!Mask.IsCreated) return 0f;
+            float fx = math.clamp((float)((p.E - Grid.Origin.E) / Grid.CellM), 0, n - 1.0001f);
+            float fy = math.clamp((float)((p.N - Grid.Origin.N) / Grid.CellM), 0, n - 1.0001f);
+            int c = (int)fx, r = (int)fy;
+            float tx = fx - c, ty = fy - r;
+            float m00 = Mask[r * n + c], m10 = Mask[r * n + c + 1], m01 = Mask[(r + 1) * n + c], m11 = Mask[(r + 1) * n + c + 1];
+            return math.lerp(math.lerp(m00, m10, tx), math.lerp(m01, m11, tx), ty) / 255f;
+        }
+
         /// <summary>Slope (rise per metre) of the carved grid at a point, from the cell's gradient (terrain.js slope).</summary>
         public float Slope(Utm33 p)
         {

@@ -4,6 +4,46 @@ _Updated 2026-11-19._
 
 ## 2026-11-19
 
+### Unity: hidden water brake on shore roads and streams, trees from any direction, roads meet the ground, real road surfaces, help screen, exhaust
+- **"The car suddenly brakes" — root cause:** the car measured water against the carved road like any ground. Every road
+  graded near sea level (quays, shore roads, roads over DTM sea cells: no bridges yet) sat under the 0.45 m sea plane, and
+  every OSM waterway crossing a road (culverts included) added its 0.2–0.7 m there. Water drag grows with depth × speed²
+  (up to 16 m/s²), grip drops, and nothing shows it (the spray slot is empty). On the live test area (59.6501, 6.34968)
+  185 of 4143 road points put the car in water (183 sea, 2 streams); now 0. `TileWorld.WaterAt`: on a carriageway or its
+  shoulder the car is dry. Every contact, damage step, water entry and unexplained slow-down (> 15 km/h in 0.2 s without
+  brake) is now a `collision:` line in the F2 log (`CarDiagnostics`). Physics transforms are synced before the car's
+  collision queries (moved tree colliders and a FloatingOrigin rebase used to be tested at stale positions for a frame).
+- **Trees from any direction:** the car's collision was a discrete overlap per frame; on a slow frame a car sliding sideways
+  (1.7 m wide) at 100 km/h moved past a trunk's centre in one step and was pushed out on the far side. The body box is now
+  swept along the frame's motion (`CarController.SweepWalls`) and stopped at the first trunk or wall, then the normal wall
+  rule and damage apply. Trees under 0.15 m trunk radius used to "snap" (no stop) while still drawn — every small birch;
+  now only shrubs (< 3 m tall) do. In closed forest more than the pool's 96 trees stand within 40 m; the pool now takes the
+  nearest (it took the first in bucket order, leaving the trees north-east of the car without colliders).
+- **Roads meet the ground:** the terrain sat 16 cm under the ribbon edge (a vertical skirt and a shadow line: a floating
+  road) and coarse clipmap rings (4–16 m triangles) sagged off embankments by up to metres from 64 m on. The carve's flat
+  band now meets the shoulder edge 4 cm under it (`RoadConstants.CarveLift`), skirts slope out into the ground, coarse
+  rings (4 m and coarser) pull a vertex next to the band up to the road (`TerrainClipmap`, CPU twin `Clipmap.DrawnHeight`), and embankments
+  and cuttings run out at 2 : 1 / 1.25 : 1 to the natural ground (max 10 m) instead of a 1.5–2.25 m wall. Edge samples with
+  a gap of more than 10 cm under the ribbon edge, live, within 600 m: 70.5 % → 30.3 % (2 m ring 99 % → 2 %, 4 m 79 → 12 %,
+  8 m 76 → 14 %, 16 m 68 → 37 %; what remains far away is the 0.3 m coarse-only sink and the ring size over the grade).
+- **Road surface:** generated aggregate / crushed-gravel texture arrays with normal maps (`Editor/RoadTextures.cs`),
+  sampled in world space at two scales (8× anisotropic, normal detail fading over 25–115 m); asphalt gets darker rubbered wheel tracks, an oil line, patches with sealed seams,
+  colour drift, a ravelled edge onto a gravel shoulder and worn markings; gravel gets packed ruts with potholes, a lighter
+  stony crown and edges, grey/ochre drift and damp patches; the shoulder edge breaks up into the verge.
+- **Help screen:** H / F1 or the ? buttons (start screen and HUD): goal, keyboard / gamepad / touch controls, game keys,
+  HUD, stage types, data credits; pauses the game unless a friends room is open; Esc / H / CLOSE close it.
+- **Exhaust:** both tailpipes of the 911 smoke (`CarExhaust`, `Rally/Smoke`, `Editor/CarExhaustSetup`): faint idle haze,
+  rate and size with throttle × rpm, whiter and denser for the first 30 s, a dark puff when floored from low rpm and on
+  upshifts, now and then a pop with a tiny flash on a high-rpm lift-off; 60 particles per pipe, none beyond 90 m.
+- Tests: `RoadEdgeFitTests` (edge within 4 cm on fills and cuts next to the car, coarse rings bounded; earthwork widths; a
+  stream under the road is dry), `TreeCollisionTests` (sideways 60 / 100 km/h, reversing, spinning into a thin birch, on
+  0.05 s frames; the 100 km/h and birch cases fail on the old code), `ExhaustTests`, `ControlsTests.HOpensAndClosesTheHelpScreen`.
+  EditMode 150 / 150, PlayMode 9 / 9.
+- Frame time (`PreviewShots -previewBench`, live, WebGL 2 path, GTX 1060 editor, 1080p; before = HEAD 1b411a1, same
+  place): chase 5.89 → 6.00 ms, hillside 6.15 → 6.02, overview 5.71 → 5.79, forest edge 6.01 → 6.13, 60 s drive 7.32 →
+  7.24 ms (p95 8.87 → 8.86): no measurable change. The browser `?bench` could not be timed (the automation tab is hidden
+  and Chrome throttles it).
+
 ### JS game: roads are splines, junctions are one surface, straight across the road
 - Plan: every OSM way and the OSRM stage road is a centripetal Catmull-Rom spline through its nodes
   (`geo.js splinePolyline`), sampled ≤ 5 m and ≤ 3° of heading apart (finer in bends), junction nodes exact; where a

@@ -42,15 +42,41 @@ Shader "Rally/TerrainClipmap"
         };
 
         // The one vertex function all passes share: world XZ from the level origin and cell, height from the tiles.
+        // Rings coarser than 2 m cannot draw the road's flat band edge where it is (a 4–16 m triangle from a vertex on
+        // the band to one down an embankment sagged under the ribbon edge: the road floated). So a vertex off the band
+        // with a grid neighbour on it (±x, ±z and the two neighbours across the triangles' split diagonal) takes their
+        // height: the band grows by up to one cell and every triangle that holds the ribbon edge is flat at road height,
+        // embankment or cutting. Clipmap.DrawnHeight is the CPU twin (tests, PreviewShots).
         float3 DisplacedPosition(Attributes v, out float3 normalWS, out float found)
         {
             float cell = _Level.z;
             float2 wxz = _Level.xy + v.positionOS.xz * cell;
-            float h = GroundHeight(wxz, found);
-            float f;
-            float hx0 = GroundHeight(wxz - float2(cell, 0), f), hx1 = GroundHeight(wxz + float2(cell, 0), f);
-            float hz0 = GroundHeight(wxz - float2(0, cell), f), hz1 = GroundHeight(wxz + float2(0, cell), f);
+            float m, mx0, mx1, mz0, mz1, md0, md1, f;
+            if (cell <= 2.5)   // the 2 m ring draws the band edge where it is (CarveApron): no masks needed
+            {
+                float h0 = GroundHeight(wxz, found);
+                float ax0 = GroundHeight(wxz - float2(cell, 0), f), ax1 = GroundHeight(wxz + float2(cell, 0), f);
+                float az0 = GroundHeight(wxz - float2(0, cell), f), az1 = GroundHeight(wxz + float2(0, cell), f);
+                normalWS = normalize(float3(ax0 - ax1, 2 * cell, az0 - az1));
+                h0 -= v.uv.x * _Level.w;
+                return float3(wxz.x, h0, wxz.y);
+            }
+            float h = GroundHeightMask(wxz, found, m);
+            float hx0 = GroundHeightMask(wxz - float2(cell, 0), f, mx0), hx1 = GroundHeightMask(wxz + float2(cell, 0), f, mx1);
+            float hz0 = GroundHeightMask(wxz - float2(0, cell), f, mz0), hz1 = GroundHeightMask(wxz + float2(0, cell), f, mz1);
             normalWS = normalize(float3(hx0 - hx1, 2 * cell, hz0 - hz1));
+            if (m < 0.75)
+            {
+                float hd0 = GroundHeightMask(wxz + float2(cell, -cell), f, md0), hd1 = GroundHeightMask(wxz + float2(-cell, cell), f, md1);
+                float4 on = step(0.75, float4(mx0, mx1, mz0, mz1));
+                float2 onD = step(0.75, float2(md0, md1));
+                float n = dot(on, 1) + onD.x + onD.y;
+                if (n > 0)
+                {
+                    h = (dot(on, float4(hx0, hx1, hz0, hz1)) + dot(onD, float2(hd0, hd1))) / n;
+                    normalWS = normalize(lerp(normalWS, float3(0, 1, 0), 0.5));
+                }
+            }
             h -= v.uv.x * _Level.w;   // skirt vertices hang below the surface
             return float3(wxz.x, h, wxz.y);
         }
