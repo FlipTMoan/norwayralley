@@ -1,6 +1,7 @@
 // Road ribbon (Roads/RibbonMesh): asphalt or gravel, the same on WebGPU and WebGL 2 (target 3.5, one SubShader).
 // UV0: u = 0..1 across the carriageway (−1 / 2 at the skirts, the shoulders between), v = metres along / 4.
-// UV1.x: the carriageway half width in metres (markings only on two-lane asphalt).
+// UV1.x: the carriageway half width in metres (markings only on two-lane asphalt). UV1.y: how far inside a road tunnel
+// (0 outside … 0.9 from 40 m past a portal, as Rally/Tunnel's vertex alpha): there the tunnel lamps light the road, not the sun.
 // Detail: _Detail / _DetailNormals, a 2-slice Texture2DArray from Editor/RoadTextures (0 asphalt aggregate, 1 gravel),
 // alpha = height; sampled in world XZ (no stretch along bends or seams between runs), twice at two scales and angles
 // so the tile does not repeat, normal detail fading out with distance (no shimmer). Everything at road scale is
@@ -29,14 +30,14 @@ Shader "Rally/Road"
     float _Gravel;
     CBUFFER_END
     struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; float2 uv1 : TEXCOORD1; };
-    struct Varyings { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float2 uv : TEXCOORD2; float halfW : TEXCOORD3; };
+    struct Varyings { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float2 uv : TEXCOORD2; float halfW : TEXCOORD3; float inside : TEXCOORD4; };
     Varyings Vert(Attributes v)
     {
         Varyings o;
         o.positionWS = TransformObjectToWorld(v.positionOS.xyz);
         o.positionCS = TransformWorldToHClip(o.positionWS);
         o.normalWS = TransformObjectToWorldNormal(v.normalOS);
-        o.uv = v.uv; o.halfW = max(v.uv1.x, 1);
+        o.uv = v.uv; o.halfW = max(v.uv1.x, 1); o.inside = saturate(v.uv1.y / 0.9);
         return o;
     }
     float Hash12(float2 p) { float3 p3 = frac(p.xyx * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return frac((p3.x + p3.y) * p3.z); }
@@ -212,6 +213,7 @@ Shader "Rally/Road"
                 #endif
                 ao *= lerp(0.75, 1, saturate(tex.a * 1.6));               // crevices between the stones
                 float3 color = albedo * (light.color * ndl * light.shadowAttenuation + SampleSH(n) * ao);
+                color = lerp(color, albedo * float3(0.70, 0.66, 0.58) * ao, i.inside);   // Rally/Tunnel _TunnelLight
                 color = MixFog(color, ComputeFogFactor(i.positionCS.z));
                 return half4(color, 1);
             }

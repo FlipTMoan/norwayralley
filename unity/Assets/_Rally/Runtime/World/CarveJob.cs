@@ -1,6 +1,7 @@
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
+using Rally.Core;
 using Unity.Mathematics;
 
 namespace Rally.World
@@ -35,7 +36,10 @@ namespace Rally.World
                 float2 p = new float2(col * CellM, y);
                 float ground = Base[rowBase + col];
                 float bestD = float.PositiveInfinity, bestH = ground, bestFlat = 0, bestShoulder = 0;
-                bool bestDeck = false;
+                // The nearest layer segment (a bridge span or a tunnel) is tracked apart from the roads on the ground: it
+                // takes the cell only when it is nearer than the nearest ground road that claims it and at about its height.
+                float layD = float.PositiveInfinity, layH = 0, layFlat = 0;
+                uint layFlags = 0;
                 for (int s = 0; s < SegmentCount; s++)
                 {
                     var seg = Segments[s];
@@ -47,9 +51,13 @@ namespace Rally.World
                     float len2 = math.lengthsq(ab);
                     float t = len2 > 1e-12f ? math.saturate(math.dot(p - seg.A, ab) / len2) : 0f;
                     float d = math.distance(p, seg.A + ab * t);
-                    if (d > reach || d >= bestD) continue;
-                    // A bridge span wins its cells like a road, and leaves them as they are.
-                    if ((seg.Flags & CarveSegment.DeckOnly) != 0) { bestD = d; bestFlat = seg.HalfWidth; bestDeck = true; continue; }
+                    if (d > reach) continue;
+                    if ((seg.Flags & CarveSegment.Layer) != 0)
+                    {
+                        if (d < layD) { layD = d; layH = math.lerp(seg.Ha, seg.Hb, t); layFlat = seg.HalfWidth; layFlags = seg.Flags; }
+                        continue;
+                    }
+                    if (d >= bestD) continue;
                     // Beyond the flat band a segment only claims cells its earthwork reaches (else the cell stays free
                     // for a farther segment whose profile does reach it, as before the earthworks widened the reach).
                     float h = math.lerp(seg.Ha, seg.Hb, t);
@@ -58,11 +66,17 @@ namespace Rally.World
                     bestH = h;
                     bestFlat = seg.HalfWidth;
                     bestShoulder = seg.Shoulder;
-                    bestDeck = false;
                 }
                 int idx = rowBase + col;
+                // A bridge span or a tunnel wins its cells like a road, and leaves them as they are.
+                if (layD < bestD && (bestD == float.PositiveInfinity || math.abs(layH - bestH) < RoadConstants.PassOver))
+                {
+                    Heights[idx] = ground;
+                    bool footprint = layD <= layFlat && ((layFlags & CarveSegment.DeckOnly) != 0 || ground - layH < CarveSegment.TunnelMaskCover);
+                    Mask[idx] = footprint ? (byte)128 : (byte)0;
+                    continue;
+                }
                 if (bestD == float.PositiveInfinity) { Heights[idx] = ground; Mask[idx] = 0; continue; }
-                if (bestDeck) { Heights[idx] = ground; Mask[idx] = bestD <= bestFlat ? (byte)128 : (byte)0; continue; }
                 Heights[idx] = RoadProfile.Height(bestH, ground, bestD, bestFlat, bestShoulder);
                 Mask[idx] = bestD <= bestFlat ? (byte)255 : (byte)128;
             }

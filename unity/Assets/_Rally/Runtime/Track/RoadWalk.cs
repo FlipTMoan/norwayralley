@@ -14,7 +14,8 @@ namespace Rally.Track
         public float Climb;         // |Δelevation| / Length — hills are good
         public bool Paved;          // asphalt (false = gravel/track: better)
         public byte RoadClass;      // 0 motorway/trunk … 5 track; see RoadGraph
-        public bool Barred;         // tunnel, ferry, motorway, private: never
+        public bool Barred;         // ferry, motorway, private: never
+        public bool Tunnel;         // a road tunnel: allowed, but a stage prefers the open road
         public float Forest;        // 0..1 forest cover beside it
     }
 
@@ -142,6 +143,7 @@ namespace Rally.Track
             w *= 1f + 2.5f * math.saturate(e.Curvature / 0.8f);     // bends
             w *= 1f + 1.5f * math.saturate(e.Climb / 0.08f);        // hills
             w *= e.Paved ? 1f : 2f;                                 // gravel
+            w *= e.Tunnel ? 0.15f : 1f;                             // through the mountain only when the open road runs out
             w *= 0.5f + 0.5f * e.Forest;                            // trees close to the road
             w *= e.RoadClass switch { 0 => 0.05f, 1 => 0.2f, 2 => 0.6f, 3 => 1f, 4 => 1.4f, _ => 1.2f };
             var dir = math.normalizesafe((float2)graph.NodePos(e.To).Minus(graph.NodePos(e.From)), heading);

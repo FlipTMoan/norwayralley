@@ -26,7 +26,7 @@ namespace Rally.World
         public readonly Texture2DArray Base;
         public readonly Texture Heights;
         public readonly Texture Mask;
-        public readonly RenderTexture BestD;        // compute scratch
+        public readonly RenderTexture BestD, BestY, LayerD;   // compute scratch (Carve.compute)
         public readonly Texture2DArray Splat, Splat2, Cover; // null for fine tiles
         readonly Stack<int> free = new Stack<int>();
         readonly Texture2D stagingF, stagingB, stagingRGBA;   // one slice's worth, so an upload never re-sends the whole array
@@ -41,6 +41,10 @@ namespace Rally.World
                 Mask = NewArrayRT(n, slices, "TileMask");
                 BestD = new RenderTexture(n, n, 0, RenderTextureFormat.RFloat) { enableRandomWrite = true, name = "CarveBestD" };
                 BestD.Create();
+                BestY = new RenderTexture(n, n, 0, RenderTextureFormat.RFloat) { enableRandomWrite = true, name = "CarveBestY" };
+                BestY.Create();
+                LayerD = new RenderTexture(n, n, 0, RenderTextureFormat.RFloat) { enableRandomWrite = true, name = "CarveLayerD" };
+                LayerD.Create();
             }
             else
             {
@@ -99,6 +103,8 @@ namespace Rally.World
             RallyObjects.Destroy(Heights);
             RallyObjects.Destroy(Mask);
             if (BestD != null) BestD.Release();
+            if (BestY != null) BestY.Release();
+            if (LayerD != null) LayerD.Release();
             if (Splat != null) RallyObjects.Destroy(Splat);
             if (Splat2 != null) RallyObjects.Destroy(Splat2);
             if (Cover != null) RallyObjects.Destroy(Cover);

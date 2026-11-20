@@ -28,6 +28,32 @@ Shader "Rally/TerrainClipmap"
         #include "TerrainGround.hlsl"
 
         float4 _Level;        // (originX, originZ, cell, skirtDrop) per clipmap level
+
+        // Road tunnels (TileWorld.UpdateTunnelHoles): the terrain is one height per point, so at a portal it runs down across
+        // the tube's mouth and where the rock is thin it cuts through the tube. Pixels inside a tube's plan (a 5 m piece,
+        // reaching 2.5 m past both ends, out to the walls' outside) between 0.25 m over its floor and a metre over its crown
+        // are discarded in every pass. _TunnelA = piece ends (world xz), _TunnelB = (floor at A, floor at B, half width, top).
+        #define MAX_TUNNEL_HOLES 48
+        float4 _TunnelA[MAX_TUNNEL_HOLES];
+        float4 _TunnelB[MAX_TUNNEL_HOLES];
+        float _TunnelCount;
+        float4 _TunnelBox;    // xz bounds of all pieces (overlap and half widths included): most pixels skip the loop
+        void TunnelClip(float3 pw)
+        {
+            if (pw.x < _TunnelBox.x || pw.z < _TunnelBox.y || pw.x > _TunnelBox.z || pw.z > _TunnelBox.w) return;
+            int count = (int)_TunnelCount;
+            for (int k = 0; k < count; k++)
+            {
+                float4 a = _TunnelA[k], b = _TunnelB[k];
+                float2 ab = a.zw - a.xy;
+                float len = max(length(ab), 1e-3);
+                float2 dir = ab / len, rel = pw.xz - a.xy;
+                float t = dot(rel, dir), lat = abs(dot(rel, float2(-dir.y, dir.x)));
+                if (t < -2.5 || t > len + 2.5 || lat > b.z) continue;
+                float floorY = lerp(b.x, b.y, saturate(t / len));
+                if (pw.y > floorY + 0.25 && pw.y < floorY + b.w) discard;
+            }
+        }
         float _Tiling, _SnowLine, _RetroFlat, _HeightFogBase;
         float4 _HeightFog;
 
@@ -146,6 +172,7 @@ Shader "Rally/TerrainClipmap"
             half4 Frag(Varyings i) : SV_Target
             {
                 clip(i.found - 0.5);
+                TunnelClip(i.positionWS);
                 float3 n = normalize(i.normalWS);
                 if (_RetroFlat > 0.5) n = normalize(cross(ddy(i.positionWS), ddx(i.positionWS)));   // faceted, like the low-poly original
                 float2 wxz = i.positionWS.xz;
@@ -262,7 +289,7 @@ Shader "Rally/TerrainClipmap"
                 o.skirt = v.uv.x;
                 return o;
             }
-            half4 ShadowFrag(Varyings i) : SV_Target { clip(i.found - 0.5); return 0; }
+            half4 ShadowFrag(Varyings i) : SV_Target { clip(i.found - 0.5); TunnelClip(i.positionWS); return 0; }
             ENDHLSL
         }
 
@@ -283,7 +310,7 @@ Shader "Rally/TerrainClipmap"
                 o.skirt = v.uv.x;
                 return o;
             }
-            half4 DepthFrag(Varyings i) : SV_Target { clip(i.found - 0.5); return 0; }
+            half4 DepthFrag(Varyings i) : SV_Target { clip(i.found - 0.5); TunnelClip(i.positionWS); return 0; }
             ENDHLSL
         }
 
@@ -304,7 +331,7 @@ Shader "Rally/TerrainClipmap"
                 o.skirt = v.uv.x;
                 return o;
             }
-            half4 DepthNormalsFrag(Varyings i) : SV_Target { clip(i.found - 0.5); return half4(normalize(i.normalWS), 0); }
+            half4 DepthNormalsFrag(Varyings i) : SV_Target { clip(i.found - 0.5); TunnelClip(i.positionWS); return half4(normalize(i.normalWS), 0); }
             ENDHLSL
         }
     }

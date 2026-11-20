@@ -45,13 +45,30 @@ namespace Rally.Roads
         /// <summary>
         /// corridor.js smoothRoadHeights: `passes` passes of a ±window running mean over the raw heights
         /// (prefix sums, edges shrink the window). Returns one road height per sample.
+        /// With <paramref name="pinEnds"/> the window does not shrink at the ends: the heights are continued past each end by
+        /// an odd reflection about the end sample, which leaves both ends exactly at their raw ground and keeps the slope there.
+        /// The shrinking window pulled an end towards the way's own inside by up to the slope × the window: on a steep hillside
+        /// two ways that meet end to end ended 10 m above and below the ground at their shared node, a 20 m step (2026-11-20).
         /// </summary>
-        public static double[] SmoothRoadHeights(IReadOnlyList<double> raw, double spacing, double window = GradeWindow, int passes = GradePasses)
+        public static double[] SmoothRoadHeights(IReadOnlyList<double> raw, double spacing, double window = GradeWindow, int passes = GradePasses, bool pinEnds = false)
         {
             int n = raw.Count;
             int k = math.max(1, (int)math.round(window / math.max(0.5, spacing)));
             var cur = new double[n];
             for (int i = 0; i < n; i++) cur[i] = raw[i];
+            if (pinEnds && n >= 2)
+            {
+                var ext = new double[n + 2 * k + 1];
+                for (int p = 0; p < passes; p++)
+                {
+                    ext[0] = 0;
+                    for (int j = -k; j < n + k; j++) ext[j + k + 1] = ext[j + k] + Reflected(cur, j);
+                    var next = new double[n];
+                    for (int i = 0; i < n; i++) next[i] = (ext[i + 2 * k + 1] - ext[i]) / (2 * k + 1);
+                    cur = next;
+                }
+                return cur;
+            }
             var prefix = new double[n + 1];
             for (int p = 0; p < passes; p++)
             {
@@ -66,6 +83,19 @@ namespace Rally.Roads
                 cur = next;
             }
             return cur;
+        }
+
+        /// <summary>Sample <paramref name="j"/> of <paramref name="v"/> continued past both ends by odd reflection (v(−j) = 2 v(0) − v(j), likewise at the far end).</summary>
+        static double Reflected(double[] v, int j)
+        {
+            int n = v.Length;
+            double add = 0, sign = 1;
+            for (;;)
+            {
+                if (j < 0) { add += sign * 2 * v[0]; sign = -sign; j = -j; }
+                else if (j > n - 1) { add += sign * 2 * v[n - 1]; sign = -sign; j = 2 * (n - 1) - j; }
+                else return add + sign * v[j];
+            }
         }
 
         /// <summary>corridor.js meanSpacing.</summary>

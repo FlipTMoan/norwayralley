@@ -43,6 +43,8 @@ namespace Rally.Presentation
 
         /// <summary>Set by the world so the camera never goes under the ground (IGround.HeightAt + 0.5 m).</summary>
         public System.Func<float2, float> GroundHeight;
+        /// <summary>Set by the world (ILayeredGround.TunnelAt): in a road tunnel the chase camera stays inside the tube.</summary>
+        public Rally.Core.TunnelQuery Tunnel;
 
         void LateUpdate()
         {
@@ -80,6 +82,7 @@ namespace Rally.Presentation
                     var back = new Vector3(Mathf.Sin(chaseYaw), 0, Mathf.Cos(chaseYaw));
                     var want = t.position - back * ChaseBack + Vector3.up * ChaseUp;
                     chasePos = Vector3.Lerp(chasePos, want, k);
+                    KeepInTunnel(t.position);
                     if (GroundHeight != null)
                     {
                         float g = GroundHeight(new float2(chasePos.x, chasePos.z)) + 0.6f;
@@ -107,6 +110,28 @@ namespace Rally.Presentation
                 float want = baseFov + (CurrentMode == Mode.Overhead ? 0f : FovGain * Mathf.Clamp01(vel.magnitude / FovFullSpeed));
                 cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, want, 1f - Mathf.Exp(-3f * dt));
             }
+        }
+
+        /// <summary>
+        /// In a road tunnel the follow point stays in the tube: with the car in a tube and the camera outside its plan (a bend,
+        /// a spin) it is pulled towards the car until it is in; inside, it keeps half a metre off the walls and under the roof
+        /// arch. Above the roof (the car on the mountain over a tunnel) nothing changes. Without this the ground clamp lifted
+        /// the camera onto the mountain over the tube.
+        /// </summary>
+        void KeepInTunnel(Vector3 car)
+        {
+            if (Tunnel == null || !Tunnel(new float2(car.x, car.z), out var carSpot) || car.y > carSpot.Crown) return;
+            for (int i = 0; i < 8 && !Tunnel(new float2(chasePos.x, chasePos.z), out _); i++) chasePos = Vector3.Lerp(chasePos, car, 0.35f);
+            if (!Tunnel(new float2(chasePos.x, chasePos.z), out var spot)) return;
+            float room = spot.Half - 0.5f;
+            if (math.abs(spot.Lateral) > room)
+            {
+                var c = new Vector3(spot.Centre.x, chasePos.y, spot.Centre.y);
+                var side = new Vector3(chasePos.x, chasePos.y, chasePos.z) - c;
+                chasePos = c + side * (room / math.abs(spot.Lateral));
+                Tunnel(new float2(chasePos.x, chasePos.z), out spot);
+            }
+            chasePos.y = math.clamp(chasePos.y, spot.Floor + 0.6f, math.max(spot.Floor + 0.6f, spot.Roof - 0.4f));
         }
 
         float shakeTime;

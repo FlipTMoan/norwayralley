@@ -231,3 +231,16 @@
   30 m + 1 s ahead and steer by the heading error (the ScriptedDriver way).
 - To show a test fails on the old code without a worktree: copy the new files aside, `git show HEAD:<file> > <file>`
   for just the files under test, run the filtered tests, copy back (diff to confirm the restore).
+
+## 2026-11-20 — tunnels: the DTM at a portal, and cascades that must converge
+- A road end pinned to "the ground at its end node" is wrong at a tunnel portal: the DTM there runs up the rock face (a
+  9 m OSM connector between a gorge bridge and a portal climbed 10 m, and the tunnel followed it). Look at the ground
+  profile along the line of sight (`-previewPoses` logs it) before tuning visuals: the "lip" in the shot was a 10 m step.
+- A regrade cascade ("ways that took their height from X follow X") ping-ponged 32 times between two tiles: a Rebuild
+  dropped the tile's last refs, so ways were graded afresh and flagged their neighbours again. Rule: a follow-up rule
+  must only fire when the value it protects actually changed (compare the joint height), and re-setting a tile must not
+  throw away state it is about to recreate. Add a "set again without news flags nothing" assertion to load-order tests.
+- An overpass test sampled on the lower road's centre line passed on the old code too (the road is nearer there); the
+  bug was only where the deck's centre line is nearer. Run new tests against the old code (stash runtime + tests) first.
+- Free drive "starts on the sea" when the start roads are late (Overpass mirrors failing): compare with the before run
+  before calling it a regression.

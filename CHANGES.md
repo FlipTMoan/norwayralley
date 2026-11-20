@@ -1,8 +1,30 @@
 # Changes
 
-_Updated 2026-11-20 (Unity: the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-20 (Unity: road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: tunnels from the map; overpasses; ways meet at one height
+- **Tunnels.** A way tagged `tunnel=yes` used to be graded and carved like any road: a trench over the mountain or a road
+  draped over it. It is now a tube: graded straight between its portals (under the sea 40 m down at ≤ 8 %), the mountain
+  over it is not carved, and it is drawn — floor, walls, roof arch, a lamp every 24 m, a concrete collar and face at each
+  portal, lamp-lit inside (no sun beyond the shadow distance), the road ribbon too. The terrain is cut open at the portals
+  and where the rock over the tube is thin (terrain shader, up to 48 pieces near the camera). The car drives on the tunnel
+  floor while it is below the roof (also when placed or reset in a tunnel), the walls and portal faces are solid, the chase
+  camera stays inside the tube. `tunnel=avalanche_protector` gets a gallery roof (wall on the mountain side, pillars on the
+  valley side); `building_passage` stays an open road. Stages may now go through tunnels (random walks prefer open roads).
+- **Portal heights:** the DTM at a portal runs up the rock face, so portals take the height of the road outside (tunnels
+  are graded after their roads and follow them), road ends are pinned to the ground fitted 10–30 m in, a short connector
+  at a portal takes its other end's height (a 10 m step at Trolljuvet before).
+- **Overpasses:** a bridge deck (or tunnel) only takes the carve from a road at about its height: a road under an
+  overpass is carved under the deck and the car on it drives on it, not on the deck's ground.
+- **Ways meeting end to end at one height.** At Sauda two ways met with a 20 m step (704.2 / 723.7 m, DTM 714.7 m; every car
+  stalled) and a road ending on another 6 m off it. Causes: the grade's running mean shrank at a way's end and pulled it
+  10 m towards its own inside on the steep slope; and junction easing only saw roads registered near the junction, while
+  a way is graded once, in the first tile that holds any of it. Now ends are pinned (odd reflection), every graded way's
+  OSM nodes are registered and a later way takes the earlier one's height at shared nodes in any tile; regrades make
+  followers follow where the joint changed, and tiles set again settle (a ping-pong of 32 rebuilds seen and fixed).
+- Help text: tunnels and galleries. Tests: EditMode `TunnelTests` (8), `WayJoinTests` (6), PlayMode `TunnelPlayTests` (2).
 
 ### Unity: the car always stays outside objects; full speed on minor roads, gravel roads max 120 km/h
 - **Houses were not solid at speed.** A car driven head-on (150 km/h) or sideways (100 km/h) into a house on 20 fps frames

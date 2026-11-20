@@ -41,7 +41,7 @@ namespace Rally.Editor
         static float driveSecs, driveKmh;
         static double nextTrace, exhaustT0;
         static bool exhaust, mud, treeShots;
-        static string lookSpots;
+        static string lookSpots, poseSpec, carAtSpec;
         static readonly Queue<string> mudRuns = new Queue<string>();
         static string mudRun;
         static double mudT0;
@@ -69,6 +69,8 @@ namespace Rally.Editor
             mud = Array.IndexOf(args, "-previewMud") >= 0;
             treeShots = Array.IndexOf(args, "-previewTrees") >= 0;
             lookSpots = Arg(args, "-previewLook");
+            poseSpec = Arg(args, "-previewPoses");
+            carAtSpec = Arg(args, "-previewCarAt");
             seams = Array.IndexOf(args, "-previewSeams") >= 0;
             glide = Array.IndexOf(args, "-previewGlide") >= 0;
             minorSurvey = Array.IndexOf(args, "-previewMinor") >= 0;
@@ -322,7 +324,7 @@ namespace Rally.Editor
             float3 c = car.position;
             float2 fwd = math.normalizesafe(((float3)car.forward).xz);
             float2 hillDir = HillDir(c, fwd);
-            if (lookSpots != null) { LookShots(lookSpots); return; }
+            if (lookSpots != null || poseSpec != null || carAtSpec != null) { if (lookSpots != null) LookShots(lookSpots); PoseShots(rig); return; }
             if (seams) { SeamReport(); return; }
             shots.Enqueue(("02_hillside", () => Look(c.xz - hillDir * 30, 4, c.xz + hillDir * 600, 0.45f)));
             shots.Enqueue(("03_overview", () => Look(c.xz - hillDir * 250, 120, c.xz + hillDir * 300, 0f)));
@@ -682,6 +684,59 @@ namespace Rally.Editor
                 shots.Enqueue(($"17_look{k}_low", () => Look(at + side * 25 - dir * 10, 1.2f, at + dir * 5, -1f)));
                 shots.Enqueue(($"17_look{k}_along", () => Look(at - dir * 35, 2.2f, at + dir * 10, 0.5f)));
             }
+        }
+
+        /// <summary>
+        /// <c>-previewPoses "NAME|LAT,LON,UP|LAT,LON,UP;…"</c>: a camera UP m over the ground the game reports at the first point
+        /// (in a road tunnel: its floor), looking at UP m over the ground at the second — the same places before and after a change
+        /// (portals, inside a tunnel). <c>-previewCarAt "NAME|LAT,LON,YAWDEG;…"</c>: the car is reset there (CarController.ResetTo,
+        /// as the game places it) and the chase camera shot after it settled (NAME_settle, then NAME).
+        /// </summary>
+        static void PoseShots(CameraRig rig)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            float2 At(string latLon, out float up)
+            {
+                var v = latLon.Split(',');
+                up = v.Length > 2 ? float.Parse(v[2], inv) : 0f;
+                return FloatingOrigin.ToWorldXZ(Proj.ToUtm(new LatLon(double.Parse(v[0], inv), double.Parse(v[1], inv))));
+            }
+            if (poseSpec != null)
+                foreach (var spec in poseSpec.Split(';'))
+                {
+                    var part = spec.Split('|');
+                    if (part.Length != 3) continue;
+                    float2 from = At(part[1], out float upFrom), to = At(part[2], out float upTo);
+                    string pname = part[0];
+                    shots.Enqueue(($"18_{part[0]}", () =>
+                    {
+                        if (rig != null) rig.enabled = false;
+                        Look(from, upFrom, to, upTo);
+                        // The ground the game reports along the line of sight (portals: does the road meet the tunnel floor?).
+                        var sb = new System.Text.StringBuilder($"PreviewShots: pose {pname} ground from→to every 1/20:");
+                        // (TunnelAt by reflection, so the tool also runs on a checkout from before tunnels, for before/after shots.)
+                        var tunnelAt = typeof(TileWorld).GetMethod("TunnelAt");
+                        for (int k = 0; k <= 20; k++)
+                        {
+                            var q = math.lerp(from, to, k / 20f);
+                            bool inTube = tunnelAt != null && (bool)tunnelAt.Invoke(world, new object[] { q, null });
+                            sb.Append(FormattableString.Invariant($" {world.HeightAt(q):0.0}{(inTube ? "T" : "")}"));
+                        }
+                        Debug.Log(sb.ToString());
+                    }));
+                }
+            if (carAtSpec != null)
+                foreach (var spec in carAtSpec.Split(';'))
+                {
+                    var part = spec.Split('|');
+                    if (part.Length != 2) continue;
+                    var v = part[1].Split(',');
+                    float2 at = At(part[1], out _);
+                    float yaw = math.radians(v.Length > 2 ? float.Parse(v[2], inv) : 0f);
+                    var car = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
+                    shots.Enqueue(($"19_{part[0]}_settle", () => { if (rig != null) rig.enabled = true; car.ResetTo(at, yaw); }));
+                    shots.Enqueue(($"19_{part[0]}", () => { }));
+                }
         }
 
         static void Look(float2 from, float up, float2 at, float atUp, float atGround = float.NaN)

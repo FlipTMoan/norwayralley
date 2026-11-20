@@ -70,7 +70,7 @@ namespace Rally.Track
             }
         }
 
-        static RoadEdge Edge(RoadLink l) => new RoadEdge { From = l.From, To = l.To, Length = l.Length, Curvature = l.Curvature, Climb = l.Climb, Paved = l.Paved, RoadClass = l.RoadClass, Barred = l.Barred, Forest = 0.5f };
+        static RoadEdge Edge(RoadLink l) => new RoadEdge { From = l.From, To = l.To, Length = l.Length, Curvature = l.Curvature, Climb = l.Climb, Paved = l.Paved, RoadClass = l.RoadClass, Barred = l.Barred, Tunnel = l.Tunnel, Forest = 0.5f };
 
         public Utm33 NodePos(long node) => graph.TryNodePosition(node, out var p) ? p : default;
 

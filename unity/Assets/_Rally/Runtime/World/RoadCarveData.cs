@@ -14,6 +14,10 @@ namespace Rally.World
     /// <see cref="Reach"/>), but a cell it wins keeps the natural ground: nothing under a bridge is carved, and an approach
     /// road's carve ends where the deck is nearer (the abutment), instead of filling the river with its end cap. The deck's
     /// footprint (<see cref="HalfWidth"/>) is marked 128 on the mask so no tree grows through it.
+    /// <see cref="TunnelOnly"/>: a road tunnel, the same claim (the mountain over a tunnel stays as it is and the approach's
+    /// cutting ends at the portal); its footprint is masked only where the rock over it is thin (no trees on a portal).
+    /// A layer segment (either flag) only takes a cell from a road on the ground whose height there is within
+    /// <see cref="RoadConstants.PassOver"/> of its own: a road under a bridge or over a tunnel is carved as usual.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct CarveSegment
@@ -22,9 +26,11 @@ namespace Rally.World
         public float Ha, Hb;      // road height at A and B, metres a.s.l., ROAD_LIFT already added
         public float HalfWidth;   // flat band: carriageway half width + shoulder (corridor.js flatHalf)
         public float Shoulder;    // metres beyond the flat band to meet the untouched ground
-        public uint Flags;        // DeckOnly
+        public uint Flags;        // DeckOnly, TunnelOnly
 
-        public const uint DeckOnly = 1;
+        public const uint DeckOnly = 1, TunnelOnly = 2, Layer = DeckOnly | TunnelOnly;
+        /// <summary>A tunnel footprint is masked where the natural ground is less than this above its road (portals, thin cover).</summary>
+        public const float TunnelMaskCover = 10f;
         public const int Stride = 36;
         /// <summary>How far from the line the segment can change the ground (flat band + the widest earthwork).</summary>
         public float Reach => HalfWidth + math.max(Shoulder, RoadConstants.MaxEarthwork);
@@ -98,10 +104,21 @@ namespace Rally.World
         public int Side;
         /// <summary>On a bridge span: <see cref="RoadY"/> is the deck's road height and nothing under it is carved.</summary>
         public bool Bridge;
+        /// <summary>In a road tunnel: <see cref="RoadY"/> is the tunnel floor's road height and the mountain over it is not carved.</summary>
+        public bool Tunnel;
     }
 
-    /// <summary>Which roads a nearest-road query looks at: all, only those on the ground, only bridge decks.</summary>
-    public enum RoadLayer : byte { Any, Ground, Deck }
+    /// <summary>Which roads a nearest-road query looks at: all, only those on the ground (not decks, not tunnels), only bridge decks, only tunnels.</summary>
+    public enum RoadLayer : byte { Any, Ground, Deck, Tunnel }
+
+    /// <summary>One 5 m piece of a road tunnel (<see cref="IRoadQuery.TunnelSegmentsNear"/>).</summary>
+    public struct TunnelPiece
+    {
+        public double2 A, B;
+        public float Ya, Yb;     // graded road heights, no lift
+        public float Half;       // carriageway half width
+        public bool PortalA, PortalB;   // that end is a portal (a way end), not the middle of a tube
+    }
 
     /// <summary>The road graph as seen from below it: TileWorld (World) cannot reference Rally.Roads.</summary>
     public interface IRoadQuery
@@ -112,6 +129,10 @@ namespace Rally.World
         bool Nearest(Utm33 p, double limit, RoadLayer layer, out RoadHit hit);
         /// <summary>Bridge segments loaded (the deck queries are skipped while there are none).</summary>
         int BridgeSegmentCount { get; }
+        /// <summary>Tunnel segments loaded (the tunnel queries are skipped while there are none).</summary>
+        int TunnelSegmentCount { get; }
+        /// <summary>Tunnel segments within <paramref name="radius"/> of a point: ends (EPSG:25833), graded road heights, carriageway half width.</summary>
+        void TunnelSegmentsNear(Utm33 p, double radius, System.Collections.Generic.List<TunnelPiece> output);
         /// <summary>Every segment that can reach into <paramref name="bounds"/>, as carve input local to <paramref name="origin"/>, ROAD_LIFT added.</summary>
         void CollectCarveSegments(Bounds25833 bounds, Utm33 origin, System.Collections.Generic.List<CarveSegment> output);
         /// <summary>Road sample points within <paramref name="radius"/> (the scheduler's fine-tile band follows them).</summary>

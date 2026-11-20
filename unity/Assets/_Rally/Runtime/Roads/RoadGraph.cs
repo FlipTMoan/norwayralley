@@ -16,6 +16,8 @@ namespace Rally.Roads
         public bool Covered;
         /// <summary>On a bridge span (its two end samples are the abutments on the banks); <see cref="Pier"/>: a pier stands under it.</summary>
         public bool Bridge, Pier;
+        /// <summary>In a road tunnel (<see cref="Tunnels"/>), under an avalanche gallery's roof; <see cref="Portal"/>: an end of either (a way end, not a tile cut).</summary>
+        public bool Tunnel, Gallery, Portal;
     }
 
     /// <summary>A prepared run of one OSM way inside a tile: what the carve, the ribbon and the index consume (roads.js finishRun).</summary>
@@ -28,6 +30,8 @@ namespace Rally.Roads
         public Surface Surface => Paved ? Surface.Asphalt : Surface.Gravel;
         public List<RoadSample> Samples;
         public float Length;
+        /// <summary>Length of the whole OSM way (a run is the piece inside one tile; RoadSample.S counts from the way's start).</summary>
+        public float WayLength;
     }
 
     /// <summary>
@@ -44,6 +48,8 @@ namespace Rally.Roads
         public float Curvature;         // mean |Δheading| per 100 m, radians
         public float Climb;             // |Δelevation| / Length
         public bool Paved, Barred;
+        /// <summary>A road tunnel: stages may use it, the walk prefers open roads (RoadWalk.Score).</summary>
+        public bool Tunnel;
         public byte RoadClass;          // 0 motorway/trunk, 1 primary, 2 secondary, 3 tertiary, 4 minor, 5 track
         public List<double2> Points;
         public float[] Heights;
@@ -90,8 +96,13 @@ namespace Rally.Roads
         public const double JunctionFlat = 6, JunctionRamp = 25;
         public const double SurfaceMaxDist = RoadSurfaceIndex.DefaultMaxDist;   // roads.js assignSurfaces maxDist
         public const int MinSurfaceRun = 4;     // samples (20 m): shorter NVDB surface flips are absorbed by their neighbour
-        /// <summary>A bridge deck this far above or below another road's grade passes over it: no junction easing between them.</summary>
-        public const double PassOver = 2.5;
+        /// <summary>A bridge deck or tunnel this far above or below another road's grade passes over / under it: no junction easing between them.</summary>
+        public const double PassOver = RoadConstants.PassOver;
+        /// <summary>
+        /// A way that meets an already graded way at a shared OSM node takes its height there exactly; the offset fades out over
+        /// at least FadeJ samples, longer when it is large, so the ease adds no more than this grade.
+        /// </summary>
+        public const double NodeEaseGrade = 0.08;
         /// <summary>
         /// No road is graded from ground under this (the sea plane + 0.5 m): quay and shore roads over the DTM's sea cells (height 0)
         /// used to be graded to ~0.3 m and drawn under the 0.45 m sea plane (183 of 4143 live road points at Sand); a road that
@@ -105,8 +116,27 @@ namespace Rally.Roads
             public long Id; public double2 A, B; public float Ya, Yb; public LaneSpec Lanes; public bool Paved;
             /// <summary>Both ends on a bridge span.</summary>
             public bool Bridge;
+            /// <summary>In a road tunnel; <see cref="PortalA"/> / <see cref="PortalB"/>: that end is a portal.</summary>
+            public bool Tunnel, PortalA, PortalB;
         }
-        sealed class GradedWay { public List<double2> Points; public double[] Heights; public bool[] Covered, Bridge, Pier, Unknown; public int Refs; }
+        sealed class GradedWay
+        {
+            public List<double2> Points; public double[] Heights; public bool[] Covered, Bridge, Pier, Unknown; public int Refs;
+            public TunnelKind Tunnel;
+            /// <summary>The OSM nodes of the way (node key, nearest sample) as registered in <see cref="nodeWays"/>.</summary>
+            public List<(long node, int sample)> Nodes;
+            /// <summary>Ways this one took its height from at a shared node: when one of them is graded again, so must this be.</summary>
+            public HashSet<long> EasedOnto;
+            /// <summary>A way it eased onto was graded again: grade this one again when a tile next sets it.</summary>
+            public bool Regrade;
+        }
+        /// <summary>
+        /// Every graded way's OSM nodes: node key → (way, nearest sample). A way graded later takes the height of an earlier one at
+        /// every node they share (<see cref="EaseOntoNodes"/>), whatever tile either was graded in. The bucket easing only saw the
+        /// roads registered near the junction; a way graded in a tile that held none of the junction (its other end was there)
+        /// met the other way with a step (6 m and 20 m at Sauda, 2026-11-20).
+        /// </summary>
+        readonly Dictionary<long, List<(long way, int sample)>> nodeWays = new Dictionary<long, List<(long, int)>>();
 
         readonly Dictionary<long, List<Seg>> buckets = new Dictionary<long, List<Seg>>();
         readonly Dictionary<TileKey, List<(long bucket, Seg seg)>> byTile = new Dictionary<TileKey, List<(long, Seg)>>();
@@ -128,11 +158,19 @@ namespace Rally.Roads
             return list;
         }
 
-        /// <summary>Set a tile again from what it was set with (null when it is not registered).</summary>
+        /// <summary>
+        /// Set a tile again from what it was set with (null when it is not registered). Its gradings are kept meanwhile: a way
+        /// only this tile holds would otherwise be dropped and graded afresh, and a fresh grading can make the ways at its nodes
+        /// follow it again (tiles setting each other again, 32 rounds at Svandalsflona before this).
+        /// </summary>
         public List<RoadPolyline> Rebuild(TileKey key)
         {
             if (!inputs.TryGetValue(key, out var a)) return null;
-            return SetTile(key, a.data, a.ground, a.surfaces, a.wet, a.known);
+            var keep = waysByTile.TryGetValue(key, out var held) ? new List<long>(held) : new List<long>();
+            foreach (var id in keep) if (graded.TryGetValue(id, out var g)) g.Refs++;
+            var lines = SetTile(key, a.data, a.ground, a.surfaces, a.wet, a.known);
+            foreach (var id in keep) if (graded.TryGetValue(id, out var g) && --g.Refs <= 0) { graded.Remove(id); UnregisterNodes(id, g); }
+            return lines;
         }
         readonly Dictionary<long, GradedWay> graded = new Dictionary<long, GradedWay>();
         // Junction graph (RoadLink): node key → outgoing links; links shared by overlapping tiles are ref-counted.
@@ -152,6 +190,7 @@ namespace Rally.Roads
         public float SpawnYaw;
         public int SegmentCount { get; private set; }
         public int BridgeSegmentCount { get; private set; }
+        public int TunnelSegmentCount { get; private set; }
 
         static long Key(int bx, int bz) => ((long)bx << 32) ^ (uint)bz;
         static long BucketOf(double2 p) => Key((int)math.floor(p.x / Cell), (int)math.floor(p.y / Cell));
@@ -173,11 +212,10 @@ namespace Rally.Roads
             }
         }
 
-        /// <summary>Never part of a stage: tunnels, motorways, private roads (RoadWalk skips Barred links).</summary>
+        /// <summary>Never part of a stage: motorways, private roads (RoadWalk skips Barred links). Tunnels are drawn and driven now: allowed.</summary>
         public static bool IsBarred(Dictionary<string, string> tags)
         {
             if (tags == null) return false;
-            if (tags.TryGetValue("tunnel", out var t) && t != "no") return true;
             if (tags.TryGetValue("access", out var a) && (a == "private" || a == "no")) return true;
             if (tags.TryGetValue("motorroad", out var m) && m == "yes") return true;
             return tags.TryGetValue("highway", out var k) && (k == "motorway" || k == "trunk");
@@ -238,6 +276,11 @@ namespace Rally.Roads
                 if (ProfileGrader.LaneSpecFor(way.Tags) == null) continue;
                 foreach (var p in way.Nodes) { var k = NodeKey(p); nodeCount[k] = nodeCount.TryGetValue(k, out var c) ? c + 1 : 1; }
             }
+            // Portal nodes: the ends of the tubes in this answer. The DTM there runs up the rock face over the mouth.
+            var portalNodes = new HashSet<long>();
+            foreach (var way in data.Ways)
+                if (way.Nodes != null && way.Nodes.Count >= 2 && Tunnels.KindOf(way.Tags) == TunnelKind.Tube)
+                { portalNodes.Add(NodeKey(way.Nodes[0])); portalNodes.Add(NodeKey(way.Nodes[way.Nodes.Count - 1])); }
             var owned = new List<(long, Seg)>();
             var ways = new List<long>();
             var tileLinks = new List<long>();
@@ -246,8 +289,15 @@ namespace Rally.Roads
             linksByTile[key] = tileLinks;
             surfaceByTile[key] = stats;
             // Major roads first: a way is graded once and later ways ease onto the roads already graded
-            // (EaseOntoJunctions), so at a junction the main road keeps its profile and the side road ramps to it.
-            foreach (var way in System.Linq.Enumerable.OrderBy(data.Ways, w => w.Tags != null && w.Tags.TryGetValue("highway", out var hk) ? ClassOf(hk) : 9))
+            // (EaseOntoJunctions), so at a junction the main road keeps its profile and the side road ramps to it. Within a class
+            // the longer way first (a 9 m connector between a bridge and a portal takes its ends from them, not they from it),
+            // and tunnels last: a portal takes the height of the road outside it, graded on its own bed, since the DTM at a
+            // portal node runs up the rock face.
+            var order = System.Linq.Enumerable.ThenByDescending(System.Linq.Enumerable.ThenBy(System.Linq.Enumerable.OrderBy(data.Ways,
+                    w => Tunnels.KindOf(w.Tags) == TunnelKind.Tube ? 1 : 0),
+                    w => w.Tags != null && w.Tags.TryGetValue("highway", out var hk) ? ClassOf(hk) : 9),
+                    RawLength);
+            foreach (var way in order)
             {
                 var spec = ProfileGrader.LaneSpecFor(way.Tags);
                 if (spec == null || way.Nodes == null || way.Nodes.Count < 2) continue;
@@ -258,6 +308,7 @@ namespace Rally.Roads
                 if (!any) continue;
                 bool Stale(GradedWay old)
                 {
+                    if (old.Regrade) return true;
                     if (old.Unknown == null || known == null) return false;
                     for (int i = 0; i < old.Points.Count; i++)
                         if (old.Unknown[i] && Inside(old.Points[i]) && known(new Utm33(old.Points[i].x, old.Points[i].y))) return true;
@@ -267,39 +318,96 @@ namespace Rally.Roads
                 {
                     int refs = g?.Refs ?? 0;
                     if (g != null)   // graded again: every other tile cut from the old grading must be set again
+                    {
                         foreach (var kv in waysByTile)
                             if (!kv.Key.Equals(key) && kv.Value.Contains(way.Id)) dirty.Add(kv.Key);
+                        UnregisterNodes(way.Id, g);
+                    }
+                    // Ways that took their height from this one at a shared node: not eased onto now; they follow it afterwards if
+                    // the height at the node changed (FollowAtNodes).
+                    var dependents = Dependents(way.Id);
                     long tg = FrameProbe.Start();
                     var pinned = new HashSet<int>();
                     for (int i = 0; i < way.Nodes.Count; i++) if (nodeCount[NodeKey(way.Nodes[i])] > 1) pinned.Add(i);
                     var samples = ProfileGrader.ResampleEven(ProfileGrader.SmoothThrough(raw, pinned, SmoothRounds), ProfileGrader.SampleStep);
                     int n = samples.Count;
+                    var tunnel = Tunnels.KindOf(way.Tags);
+                    bool tube = tunnel == TunnelKind.Tube;
                     var ground = new double[n];
                     for (int i = 0; i < n; i++) ground[i] = math.max(MinGradeGround, coarseGround(new Utm33(samples[i].x, samples[i].y)));
                     bool[] unknown = null;
                     if (known != null)
                     {
-                        for (int i = 0; i < n; i++) if (!known(new Utm33(samples[i].x, samples[i].y))) (unknown ??= new bool[n])[i] = true;
-                        if (unknown != null) HoldKnownGround(ground, unknown);
+                        if (tube)
+                        {
+                            // A tube is graded from its two portals (and the sea under it): an unknown portal takes the other one's ground
+                            // until it is in; any unknown sample grades the tube again when its ground comes (it may be the sea).
+                            for (int i = 0; i < n; i++) if (!known(new Utm33(samples[i].x, samples[i].y))) (unknown ??= new bool[n])[i] = true;
+                            bool k0 = unknown == null || !unknown[0], k1 = unknown == null || !unknown[n - 1];
+                            if (!k0 && k1) ground[0] = ground[n - 1];
+                            if (k0 && !k1) ground[n - 1] = ground[0];
+                        }
+                        else
+                        {
+                            for (int i = 0; i < n; i++) if (!known(new Utm33(samples[i].x, samples[i].y))) (unknown ??= new bool[n])[i] = true;
+                            if (unknown != null) HoldKnownGround(ground, unknown);
+                        }
                     }
                     FrameProbe.Stop(".grade.ground", tg); tg = FrameProbe.Start();
                     var bridge = new bool[n]; var pier = new bool[n];
-                    var spans = FindBridges(way, spec.Value, samples, coarseGround, wet, bridge, pier, out var along, out var wetAt);
+                    double[] along;
+                    bool[] wetAt;
+                    List<BridgeSpan> spans;
+                    if (tube)
+                    {
+                        spans = new List<BridgeSpan>();
+                        along = new double[n]; wetAt = new bool[n];
+                        for (int i = 1; i < n; i++) along[i] = along[i - 1] + math.distance(samples[i], samples[i - 1]);
+                    }
+                    else spans = FindBridges(way, spec.Value, samples, coarseGround, wet, bridge, pier, out along, out wetAt);
                     FrameProbe.Stop(".grade.bridges", tg); tg = FrameProbe.Start();
                     double[] heights;
-                    if (spans.Count == 0) heights = ProfileGrader.SmoothRoadHeights(ground, ProfileGrader.SampleStep);
+                    if (tube)
+                    {
+                        var sea = new bool[n];
+                        for (int i = 1; i + 1 < n; i++)
+                        {
+                            var u = new Utm33(samples[i].x, samples[i].y);
+                            sea[i] = (known == null || known(u)) && coarseGround(u) < 0.1f;   // DTM sea cells are 0
+                        }
+                        // The DTM at a portal node runs up the rock face over the mouth (the 8 m grid smears it over a cell or two):
+                        // read the portal's height from the ground outside it, where the road comes in.
+                        // (Not when the ground outside falls away — a gorge, a fjord under the bridge that comes in: keep the portal's own.)
+                        double PortalY(double raw, double outside) => raw - outside > RoadConstants.TunnelWall * 2 ? raw : math.min(raw, outside);
+                        double y0 = PortalY(ground[0], OutsideGround(samples, true, coarseGround, known)), y1 = PortalY(ground[n - 1], OutsideGround(samples, false, coarseGround, known));
+                        heights = Tunnels.Profile(along, math.max(MinGradeGround, y0), math.max(MinGradeGround, y1), sea);
+                    }
+                    else if (spans.Count == 0)
+                    {
+                        EndGround(ground, along);
+                        PortalEnds(way, ground, along, portalNodes);
+                        heights = ProfileGrader.SmoothRoadHeights(ground, ProfileGrader.SampleStep, pinEnds: true);
+                    }
                     else
                     {
+                        if (!bridge[0] && !bridge[n - 1]) EndGround(ground, along);
+                        if (!bridge[0] && !bridge[n - 1]) PortalEnds(way, ground, along, portalNodes);
                         Bridges.BridgeRaw(ground, along, spans);
-                        heights = GradeBridgeWay(ground, samples, coarseGround, Bridges.IsBridgeTag(way.Tags));
+                        heights = ProfileGrader.SmoothRoadHeights(ground, ProfileGrader.SampleStep, pinEnds: true);
                     }
                     var covered = new bool[n];
                     FrameProbe.Stop(".grade.smooth", tg); tg = FrameProbe.Start();
-                    EaseOntoJunctions(way.Id, samples, heights, covered, bridge, spans);
+                    var eased = EaseOntoNodes(way, samples, heights, bridge, spans, dependents, tube, out var tubesToFollow);
+                    EaseOntoJunctions(way.Id, samples, heights, covered, bridge, spans, tube);
                     FrameProbe.Stop(".grade.ease", tg);
                     if (spans.Count > 0) Bridges.ApplyProfile(samples, along, heights, spans, wetAt, p => coarseGround(new Utm33(p.x, p.y)));
-                    g = new GradedWay { Points = samples, Heights = heights, Covered = covered, Bridge = bridge, Pier = pier, Unknown = unknown, Refs = refs };
+                    g = new GradedWay { Points = samples, Heights = heights, Covered = covered, Bridge = bridge, Pier = pier, Unknown = unknown, Refs = refs, Tunnel = tunnel, EasedOnto = eased };
                     graded[way.Id] = g;
+                    RegisterNodes(way, g);
+                    // Those, and a tube meeting this road at a portal graded before it (the tube follows the road, not the road the
+                    // tube, so the joint is the road's height in any load order), are graded again where the heights now differ.
+                    FollowAtNodes(g, dependents, key, ways);
+                    FollowAtNodes(g, tubesToFollow, key, ways);
                 }
                 g.Refs++;
                 ways.Add(way.Id);
@@ -317,6 +425,8 @@ namespace Rally.Roads
                 string name = way.Tags != null && way.Tags.TryGetValue("name", out var nm) ? nm : null;
                 string kind = way.Tags["highway"];
                 AddLinks(way, g, nodeCount, paved, kind, tileLinks);
+                float wayLength = 0;
+                for (int i = 1; i < g.Points.Count; i++) wayLength += (float)math.distance(g.Points[i], g.Points[i - 1]);
                 // Split into runs inside the padded tile and at material changes; runs shorter than 3 samples are noise.
                 var run = new List<RoadSample>();
                 var runSource = new List<SurfaceSource>();
@@ -325,12 +435,13 @@ namespace Rally.Roads
                 {
                     if (run.Count >= 3)
                     {
-                        var line = new RoadPolyline { Id = way.Id, Name = name, Kind = kind, Lanes = spec.Value, Paved = runPaved, Samples = run, Length = run[run.Count - 1].S - run[0].S };
+                        var line = new RoadPolyline { Id = way.Id, Name = name, Kind = kind, Lanes = spec.Value, Paved = runPaved, Samples = run, Length = run[run.Count - 1].S - run[0].S, WayLength = wayLength };
                         lines.Add(line);
                         for (int k = 0; k + 1 < run.Count; k++)
                         {
-                            var seg = new Seg { Id = way.Id, A = run[k].P, B = run[k + 1].P, Ya = run[k].RoadY, Yb = run[k + 1].RoadY, Lanes = spec.Value, Paved = runPaved, Bridge = run[k].Bridge && run[k + 1].Bridge };
+                            var seg = new Seg { Id = way.Id, A = run[k].P, B = run[k + 1].P, Ya = run[k].RoadY, Yb = run[k + 1].RoadY, Lanes = spec.Value, Paved = runPaved, Bridge = run[k].Bridge && run[k + 1].Bridge, Tunnel = run[k].Tunnel && run[k + 1].Tunnel, PortalA = run[k].Portal, PortalB = run[k + 1].Portal };
                             if (seg.Bridge) BridgeSegmentCount++;
+                            if (seg.Tunnel) TunnelSegmentCount++;
                             long bk = BucketOf((seg.A + seg.B) / 2);
                             if (!buckets.TryGetValue(bk, out var list)) buckets[bk] = list = new List<Seg>();
                             list.Add(seg);
@@ -365,7 +476,11 @@ namespace Rally.Roads
                         run.Add(last); runSource.Add(lastSource);
                         runPaved = paved[i];
                     }
-                    run.Add(new RoadSample { P = p, RoadY = (float)g.Heights[i], S = s, Covered = g.Covered[i], Bridge = g.Bridge[i], Pier = g.Pier[i] });
+                    run.Add(new RoadSample
+                    {
+                        P = p, RoadY = (float)g.Heights[i], S = s, Covered = g.Covered[i], Bridge = g.Bridge[i], Pier = g.Pier[i],
+                        Tunnel = g.Tunnel == TunnelKind.Tube, Gallery = g.Tunnel == TunnelKind.Gallery, Portal = g.Tunnel != TunnelKind.None && (i == 0 || i == g.Points.Count - 1),
+                    });
                     runSource.Add(source[i]);
                 }
                 Flush();
@@ -373,6 +488,224 @@ namespace Rally.Roads
                 if (!WorkBudget.Left) yield return null;
             }
             if (byTile.TryGetValue(key, out var mine) && mine == owned) complete.Add(key);
+        }
+
+        /// <summary>
+        /// The graded sample nearest to each OSM node of the way, in order (a node's sample is at or after the previous one's).
+        /// The scan from the previous node's sample stops once the line has moved 30 m further away than the best so far.
+        /// </summary>
+        static List<(long node, int sample)> NodeSamples(RoadWay way, List<double2> samples)
+        {
+            var list = new List<(long, int)>(way.Nodes.Count);
+            int from = 0;
+            foreach (var node in way.Nodes)
+            {
+                var p = new double2(node.E, node.N);
+                int best = from; double bestD = double.PositiveInfinity;
+                for (int k = from; k < samples.Count; k++)
+                {
+                    double d = math.distance(samples[k], p);
+                    if (d < bestD) { bestD = d; best = k; }
+                    else if (d > bestD + 30) break;
+                }
+                list.Add((NodeKey(node), best));
+                from = best;
+            }
+            return list;
+        }
+
+        void RegisterNodes(RoadWay way, GradedWay g)
+        {
+            g.Nodes = NodeSamples(way, g.Points);
+            foreach (var (node, sample) in g.Nodes)
+            {
+                if (!nodeWays.TryGetValue(node, out var list)) nodeWays[node] = list = new List<(long, int)>(2);
+                list.Add((way.Id, sample));
+            }
+        }
+
+        void UnregisterNodes(long wayId, GradedWay g)
+        {
+            if (g.Nodes == null) return;
+            foreach (var (node, _) in g.Nodes)
+            {
+                if (!nodeWays.TryGetValue(node, out var list)) continue;
+                list.RemoveAll(e => e.way == wayId);
+                if (list.Count == 0) nodeWays.Remove(node);
+            }
+            g.Nodes = null;
+        }
+
+        /// <summary>Ways that took their height from <paramref name="wayId"/> at a shared node (not eased onto while it is graded again).</summary>
+        HashSet<long> Dependents(long wayId)
+        {
+            HashSet<long> found = null;
+            foreach (var kv in graded)
+                if (kv.Key != wayId && !kv.Value.Regrade && kv.Value.EasedOnto != null && kv.Value.EasedOnto.Contains(wayId)) (found ??= new HashSet<long>()).Add(kv.Key);
+            return found;
+        }
+
+        /// <summary>
+        /// Each of <paramref name="followers"/> whose height at a node it shares with the newly graded <paramref name="g"/> differs
+        /// from <paramref name="g"/>'s by more than a centimetre is flagged to be graded again, and the tiles that hold it are set
+        /// again (<see cref="TakeDirtyTiles"/>; this tile only if it already set that way). A grading that did not change the
+        /// joint flags nothing, so tiles setting each other again always settle.
+        /// </summary>
+        void FollowAtNodes(GradedWay g, HashSet<long> followers, TileKey key, List<long> tileWays)
+        {
+            if (followers == null || g.Nodes == null) return;
+            var at = new Dictionary<long, int>(g.Nodes.Count);
+            foreach (var (node, sample) in g.Nodes) at[node] = sample;
+            foreach (var id in followers)
+            {
+                if (!graded.TryGetValue(id, out var f) || f.Regrade || f.Nodes == null) continue;
+                bool differs = false;
+                foreach (var (node, sample) in f.Nodes)
+                    if (at.TryGetValue(node, out var gs) && math.abs(f.Heights[sample] - g.Heights[gs]) > 0.01) { differs = true; break; }
+                if (!differs) continue;
+                f.Regrade = true;
+                foreach (var t in waysByTile)
+                    if (t.Value.Contains(id) && (!t.Key.Equals(key) || tileWays.Contains(id))) dirty.Add(t.Key);
+            }
+        }
+
+        static double EaseFade(double dist, double len) { if (dist >= len) return 0; double t = 1 - dist / len; return t * t * (3 - 2 * t); }
+
+        /// <summary>
+        /// At every OSM node this way shares with a way graded before it, take that way's height there exactly (whatever tile
+        /// either was graded in). The offsets are interpolated between neighbouring nodes and fade out beyond them over at least
+        /// <see cref="FadeJ"/> samples, longer for large offsets (no more than <see cref="NodeEaseGrade"/> of added grade). Not on a
+        /// bridge span between its abutments (the deck passes over), not onto ways about to be graded again (<paramref name="skip"/>).
+        /// A road does not take a tube's height: the tubes it meets are returned in <paramref name="tubesToFollow"/> to be graded
+        /// again onto it (portals take the road's height). Returns the ways it took heights from.
+        /// </summary>
+        HashSet<long> EaseOntoNodes(RoadWay way, List<double2> samples, double[] heights, bool[] bridge, List<BridgeSpan> spans, HashSet<long> skip, bool tube, out HashSet<long> tubesToFollow)
+        {
+            HashSet<long> eased = null;
+            tubesToFollow = null;
+            if (nodeWays.Count == 0) return null;
+            var anchors = new List<(int i, double delta)>();
+            foreach (var (node, i) in NodeSamples(way, samples))
+            {
+                if (!nodeWays.TryGetValue(node, out var list)) continue;
+                if (anchors.Count > 0 && anchors[anchors.Count - 1].i == i) continue;
+                bool onSpan = false;
+                if (bridge[i]) foreach (var sp in spans) if (i > sp.I0 && i < sp.I1) onSpan = true;
+                if (onSpan) continue;
+                foreach (var (other, sample) in list)
+                {
+                    if (other == way.Id || (skip != null && skip.Contains(other)) || !graded.TryGetValue(other, out var og) || og.Regrade || sample >= og.Heights.Length) continue;
+                    if (!tube && og.Tunnel == TunnelKind.Tube) { (tubesToFollow ??= new HashSet<long>()).Add(other); continue; }
+                    anchors.Add((i, og.Heights[sample] - heights[i]));
+                    (eased ??= new HashSet<long>()).Add(other);
+                    break;
+                }
+            }
+            if (anchors.Count == 0) return eased;
+            int n = heights.Length;
+            double Len(double delta) => math.max(FadeJ, math.ceil(math.abs(delta) / (NodeEaseGrade * ProfileGrader.SampleStep)));
+            var corr = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                int b = 0;
+                while (b < anchors.Count && anchors[b].i < i) b++;
+                if (b < anchors.Count && anchors[b].i == i) { corr[i] = anchors[b].delta; continue; }
+                bool hasA = b > 0, hasB = b < anchors.Count;
+                if (hasA && hasB)
+                {
+                    var (ia, da) = anchors[b - 1]; var (ib, db) = anchors[b];
+                    if (ib - ia <= Len(da) + Len(db))
+                    {
+                        double t = (i - ia) / (double)(ib - ia); t = t * t * (3 - 2 * t);
+                        corr[i] = da + (db - da) * t;
+                    }
+                    else corr[i] = da * EaseFade(i - ia, Len(da)) + db * EaseFade(ib - i, Len(db));
+                }
+                else if (hasA) corr[i] = anchors[b - 1].delta * EaseFade(i - anchors[b - 1].i, Len(anchors[b - 1].delta));
+                else corr[i] = anchors[b].delta * EaseFade(anchors[b].i - i, Len(anchors[b].delta));
+            }
+            for (int i = 0; i < n; i++) heights[i] += corr[i];
+            return eased;
+        }
+
+        static double RawLength(RoadWay w)
+        {
+            double l = 0;
+            if (w.Nodes != null) for (int i = 1; i < w.Nodes.Count; i++) l += math.length(w.Nodes[i].Minus(w.Nodes[i - 1]));
+            return l;
+        }
+
+        /// <summary>Distances from a way's end over which <see cref="EndGround"/> fits the ground it pins the end to.</summary>
+        const double EndFitFrom = 10, EndFitTo = 30;
+
+        /// <summary>A line through (x, y) pairs, read at x = 0 (NaN with fewer than three pairs).</summary>
+        static double FitAtZero(List<double2> xy)
+        {
+            if (xy.Count < 3) return double.NaN;
+            double sx = 0, sy = 0, sxx = 0, sxy = 0;
+            foreach (var p in xy) { sx += p.x; sy += p.y; sxx += p.x * p.x; sxy += p.x * p.y; }
+            double m = xy.Count, den = m * sxx - sx * sx;
+            if (math.abs(den) < 1e-9) return sy / m;
+            double b = (m * sxy - sx * sy) / den;
+            return (sy - b * sx) / m;
+        }
+
+        /// <summary>
+        /// The ground a way's ends are pinned to (ProfileGrader.SmoothRoadHeights pinEnds): a line through the ground 10–30 m in
+        /// from each end, read at the end, instead of the one DTM sample there. A way often ends at a tunnel portal, where the
+        /// DTM sample runs up the rock face over the mouth, or on a bridge abutment's slope; the fitted ground keeps the trend.
+        /// Ways shorter than 40 m keep their raw ends.
+        /// </summary>
+        static void EndGround(double[] ground, double[] along)
+        {
+            int n = ground.Length;
+            if (n < 2 || along[n - 1] < 2 * EndFitTo) return;
+            var xy = new List<double2>(8);
+            for (int i = 0; i < n && along[i] <= EndFitTo; i++) if (along[i] >= EndFitFrom) xy.Add(new double2(along[i], ground[i]));
+            double a = FitAtZero(xy);
+            xy.Clear();
+            double L = along[n - 1];
+            for (int i = n - 1; i >= 0 && L - along[i] <= EndFitTo; i--) if (L - along[i] >= EndFitFrom) xy.Add(new double2(L - along[i], ground[i]));
+            double b = FitAtZero(xy);
+            if (!double.IsNaN(a)) ground[0] = math.max(MinGradeGround, a);
+            if (!double.IsNaN(b)) ground[n - 1] = math.max(MinGradeGround, b);
+        }
+
+        /// <summary>
+        /// A short way (under 60 m, too short for <see cref="EndGround"/>) that ends at a tunnel portal takes its other end's ground
+        /// all along: the portal's DTM sample is on the rock face (a 9 m connector between a gorge bridge and a portal at Trolljuvet
+        /// climbed 10 m, and the tunnel followed it).
+        /// </summary>
+        static void PortalEnds(RoadWay way, double[] ground, double[] along, HashSet<long> portalNodes)
+        {
+            int n = ground.Length;
+            if (n < 2 || portalNodes.Count == 0 || along[n - 1] >= 2 * EndFitTo) return;
+            bool p0 = portalNodes.Contains(NodeKey(way.Nodes[0])), p1 = portalNodes.Contains(NodeKey(way.Nodes[way.Nodes.Count - 1]));
+            if (p0 == p1) return;
+            double other = p0 ? ground[n - 1] : ground[0];
+            for (int i = 0; i < n; i++) ground[i] = other;   // flat: the samples next to the portal are on the rock face too
+        }
+
+        /// <summary>
+        /// The ground outside a tube's portal: a line through the ground 10–30 m out along the tube's end direction (where the road
+        /// comes in), read at the portal; +∞ when that ground is not loaded or the tube is too short to have a direction.
+        /// </summary>
+        static double OutsideGround(List<double2> samples, bool start, Func<Utm33, float> ground, Func<Utm33, bool> known)
+        {
+            int n = samples.Count;
+            if (n < 2) return double.PositiveInfinity;
+            double2 end = start ? samples[0] : samples[n - 1], inner = start ? samples[1] : samples[n - 2];
+            double2 dir = math.normalizesafe(end - inner);
+            var xy = new List<double2>(5);
+            for (double d = EndFitFrom; d <= EndFitTo + 1e-6; d += 5)
+            {
+                var q = end + dir * d;
+                var u = new Utm33(q.x, q.y);
+                if (known != null && !known(u)) return double.PositiveInfinity;
+                xy.Add(new double2(d, ground(u)));
+            }
+            double v = FitAtZero(xy);
+            return double.IsNaN(v) ? double.PositiveInfinity : v;
         }
 
         /// <summary>Samples over ground that is not loaded take the nearest loaded sample's ground (left alone if there is none).</summary>
@@ -432,31 +765,6 @@ namespace Rally.Roads
         }
 
         /// <summary>
-        /// The grade of a way with bridges: the raw heights already bridged bank to bank. A tagged bridge is usually its own
-        /// short way: it is graded with 60 m of the ground straight on beyond both ends (as the roads it joins are), or its
-        /// ends would sit in the valley.
-        /// </summary>
-        static double[] GradeBridgeWay(double[] raw, List<double2> samples, Func<Utm33, float> ground, bool tagged)
-        {
-            int n = samples.Count, ext = tagged && n >= 2 ? 12 : 0;
-            if (ext == 0) return ProfileGrader.SmoothRoadHeights(raw, ProfileGrader.SampleStep);
-            var all = new double[n + 2 * ext];
-            double2 d0 = math.normalizesafe(samples[0] - samples[1]), d1 = math.normalizesafe(samples[n - 1] - samples[n - 2]);
-            for (int k = 0; k < ext; k++)
-            {
-                var a = samples[0] + d0 * ProfileGrader.SampleStep * (ext - k);
-                var b = samples[n - 1] + d1 * ProfileGrader.SampleStep * (k + 1);
-                all[k] = ground(new Utm33(a.x, a.y));
-                all[ext + n + k] = ground(new Utm33(b.x, b.y));
-            }
-            Array.Copy(raw, 0, all, ext, n);
-            var smooth = ProfileGrader.SmoothRoadHeights(all, ProfileGrader.SampleStep);
-            var outH = new double[n];
-            Array.Copy(smooth, ext, outH, 0, n);
-            return outH;
-        }
-
-        /// <summary>
         /// Split a graded way into junction-to-junction links (both directions). Junctions are the raw OSM
         /// nodes shared with another way; their graded sample is the nearest point, because Chaikin keeps
         /// pinned nodes in place but Resample's arithmetic is not bit-exact.
@@ -476,7 +784,7 @@ namespace Rally.Roads
                 nodes[NodeKey(way.Nodes[i])] = way.Nodes[i];
                 from = best;
             }
-            bool barred = IsBarred(way.Tags);
+            bool barred = IsBarred(way.Tags), tunnel = g.Tunnel == TunnelKind.Tube;
             byte cls = ClassOf(kind);
             for (int c = 0; c + 1 < cuts.Count; c++)
             {
@@ -501,10 +809,10 @@ namespace Rally.Roads
                 int pavedCount = 0;
                 for (int i = ia; i <= ib; i++) if (pavedAt[i]) pavedCount++;
                 bool paved = pavedCount * 2 >= ib - ia + 1;   // a link carries its majority material
-                var fwd = new RoadLink { Id = way.Id, From = a, To = b, Length = length, Curvature = turn / (length / 100f), Climb = math.abs(hs[hs.Length - 1] - hs[0]) / length, Paved = paved, Barred = barred, RoadClass = cls, Points = pts, Heights = hs };
+                var fwd = new RoadLink { Id = way.Id, From = a, To = b, Length = length, Curvature = turn / (length / 100f), Climb = math.abs(hs[hs.Length - 1] - hs[0]) / length, Paved = paved, Barred = barred, Tunnel = tunnel, RoadClass = cls, Points = pts, Heights = hs };
                 var backPts = new List<double2>(pts); backPts.Reverse();
                 var backHs = (float[])hs.Clone(); System.Array.Reverse(backHs);
-                var back = new RoadLink { Id = way.Id, From = b, To = a, Length = length, Curvature = fwd.Curvature, Climb = fwd.Climb, Paved = paved, Barred = barred, RoadClass = cls, Points = backPts, Heights = backHs };
+                var back = new RoadLink { Id = way.Id, From = b, To = a, Length = length, Curvature = fwd.Curvature, Climb = fwd.Climb, Paved = paved, Barred = barred, Tunnel = tunnel, RoadClass = cls, Points = backPts, Heights = backHs };
                 Outgoing(a).Add(fwd); Outgoing(b).Add(back);
                 linkRefs[lk] = (fwd, back, 1);
                 tileLinks.Add(lk);
@@ -563,23 +871,25 @@ namespace Rally.Roads
         /// T-junctions, crossings) its height is eased onto that road over ±FadeJ samples (60 m), so roads
         /// meet without a step and the carve never has two heights for one spot.
         /// </summary>
-        void EaseOntoJunctions(long wayId, List<double2> samples, double[] heights, bool[] covered, bool[] bridge, List<BridgeSpan> spans)
+        void EaseOntoJunctions(long wayId, List<double2> samples, double[] heights, bool[] covered, bool[] bridge, List<BridgeSpan> spans, bool tube)
         {
             if (buckets.Count == 0) return;   // not SegmentCount: that is only summed when the tile is done, and ways of the same tile must ease onto each other too
             // A deck between its abutments never takes another road's height (that road passes under it), and a deck more
             // than PassOver above or below this way's grade is a road passing over or under it, not a junction.
+            // Likewise a tube between its portals: it passes under whatever is over it and meets roads only at its ends.
             bool OnSpan(int i)
             {
+                if (tube) return i > 0 && i < samples.Count - 1;
                 if (bridge == null || !bridge[i]) return false;
                 foreach (var sp in spans) if (i > sp.I0 && i < sp.I1) return true;
                 return false;
             }
-            bool PassesOver(in RoadHit q, int i) => q.Bridge && math.abs(q.RoadY - heights[i]) > PassOver;
+            bool PassesOver(in RoadHit q, int i) => (q.Bridge || q.Tunnel) && math.abs(q.RoadY - heights[i]) > PassOver;
             int lastHit = -FadeJ;
             for (int i = 0; i < samples.Count; i++)
             {
                 if (i - lastHit < 4 || OnSpan(i)) continue;   // one anchor per 20 m of shared road
-                if (!Nearest(new Utm33(samples[i].x, samples[i].y), 4, out var q) || q.Distance > 2.5 || q.Id == wayId || PassesOver(q, i)) continue;
+                if (!Nearest(new Utm33(samples[i].x, samples[i].y), 4, RoadLayer.Any, wayId, out var q) || q.Distance > 2.5 || PassesOver(q, i) || (q.Tunnel && !tube)) continue;
                 double delta = q.RoadY - heights[i];
                 lastHit = i;
                 if (math.abs(delta) < 0.02) continue;
@@ -602,8 +912,8 @@ namespace Rally.Roads
             for (int i = 0; i < samples.Count; i++)
             {
                 if (i > 0) at[i] = at[i - 1] + math.distance(samples[i], samples[i - 1]);
-                if (!OnSpan(i) && Nearest(new Utm33(samples[i].x, samples[i].y), 30, out var q) && q.Id != wayId && !PassesOver(q, i) && q.Distance <= RoadConstants.FlatHalf(q.Half) + RoadConstants.CarveApron + JunctionFlat)
-                { heights[i] = q.RoadY; conformed[i] = true; any = true; covered[i] = q.Distance <= RoadConstants.FlatHalf(q.Half) && !q.Bridge; }   // a deck's ribbon does not reach back over the land: the road meeting it draws its own up to the abutment
+                if (!OnSpan(i) && Nearest(new Utm33(samples[i].x, samples[i].y), 30, RoadLayer.Any, wayId, out var q) && !PassesOver(q, i) && (tube || !q.Tunnel) && q.Distance <= RoadConstants.FlatHalf(q.Half) + RoadConstants.CarveApron + JunctionFlat)
+                { heights[i] = q.RoadY; conformed[i] = true; any = true; covered[i] = q.Distance <= RoadConstants.FlatHalf(q.Half) && !q.Bridge && !q.Tunnel; }   // a deck's / tunnel's ribbon does not reach back over the land: the road meeting it draws its own up to the abutment / portal
             }
             if (!any) return;
             var own = (double[])heights.Clone();
@@ -629,6 +939,7 @@ namespace Rally.Roads
             foreach (var (bk, seg) in owned)
             {
                 if (seg.Bridge) BridgeSegmentCount--;
+                if (seg.Tunnel) TunnelSegmentCount--;
                 if (!buckets.TryGetValue(bk, out var list)) continue;
                 list.Remove(seg);
                 if (list.Count == 0) buckets.Remove(bk);
@@ -636,7 +947,7 @@ namespace Rally.Roads
             SegmentCount -= owned.Count;
             byTile.Remove(key);
             surfaceByTile.Remove(key);
-            foreach (var id in waysByTile[key]) if (graded.TryGetValue(id, out var g) && --g.Refs <= 0) graded.Remove(id);
+            foreach (var id in waysByTile[key]) if (graded.TryGetValue(id, out var g) && --g.Refs <= 0) { graded.Remove(id); UnregisterNodes(id, g); }
             waysByTile.Remove(key);
             foreach (var lk in linksByTile[key])
             {
@@ -653,7 +964,14 @@ namespace Rally.Roads
         public bool Nearest(Utm33 p, double limit, out RoadHit hit) => Nearest(p, limit, RoadLayer.Any, out hit);
 
         /// <summary><see cref="Nearest(Utm33, double, out RoadHit)"/> over the roads on the ground or the bridge decks only.</summary>
-        public bool Nearest(Utm33 p, double limit, RoadLayer layer, out RoadHit hit)
+        public bool Nearest(Utm33 p, double limit, RoadLayer layer, out RoadHit hit) => Nearest(p, limit, layer, 0, out hit);
+
+        /// <summary>
+        /// <see cref="Nearest(Utm33, double, RoadLayer, out RoadHit)"/> ignoring way <paramref name="exclude"/> (0: none). A way graded
+        /// again still has its old segments in the buckets: its junction easing must look past them, or the old copy of itself
+        /// hid the road it meets and the regraded way came out differently from a first grading (load-order seams).
+        /// </summary>
+        bool Nearest(Utm33 p, double limit, RoadLayer layer, long exclude, out RoadHit hit)
         {
             var q = new double2(p.E, p.N);
             int bx = (int)math.floor(q.x / Cell), bz = (int)math.floor(q.y / Cell), r = (int)math.ceil(limit / Cell);
@@ -668,7 +986,8 @@ namespace Rally.Roads
                     for (int i = 0; i < list.Count; i++)
                     {
                         var seg = list[i];
-                        if ((layer == RoadLayer.Ground && seg.Bridge) || (layer == RoadLayer.Deck && !seg.Bridge)) continue;
+                        if (exclude != 0 && seg.Id == exclude) continue;
+                        if ((layer == RoadLayer.Ground && (seg.Bridge || seg.Tunnel)) || (layer == RoadLayer.Deck && !seg.Bridge) || (layer == RoadLayer.Tunnel && !seg.Tunnel)) continue;
                         double2 ab = seg.B - seg.A;
                         double l2 = math.lengthsq(ab); if (l2 == 0) l2 = 1;
                         double t = math.clamp(math.dot(q - seg.A, ab) / l2, 0, 1);
@@ -687,7 +1006,7 @@ namespace Rally.Roads
             hit = new RoadHit
             {
                 Id = best.Id, Distance = bestD, Point = point, Tangent = dir, RoadY = (float)math.lerp(best.Ya, best.Yb, bestT),
-                Half = best.Lanes.Half, Cut = best.Lanes.Cut, Surface = best.Paved ? Surface.Asphalt : Surface.Gravel, Side = side >= 0 ? 1 : -1, Bridge = best.Bridge,
+                Half = best.Lanes.Half, Cut = best.Lanes.Cut, Surface = best.Paved ? Surface.Asphalt : Surface.Gravel, Side = side >= 0 ? 1 : -1, Bridge = best.Bridge, Tunnel = best.Tunnel,
             };
             return true;
         }
@@ -696,6 +1015,7 @@ namespace Rally.Roads
         /// Carve input for a tile: every segment whose reach touches the bounds, tile-local, ROAD_LIFT + CarveLift added (roads.js
         /// carvePolylines; the lift puts the terrain at the ribbon edge). A bridge span is a CarveSegment.DeckOnly out to the
         /// deck's half width: it carves nothing, wins the cells nearer to it than to the approach roads and marks its footprint.
+        /// A tunnel segment is a CarveSegment.TunnelOnly out to the tube's outer wall: the mountain over it stays.
         /// </summary>
         public void CollectCarveSegments(Bounds25833 bounds, Utm33 origin, List<CarveSegment> output)
         {
@@ -714,10 +1034,25 @@ namespace Rally.Roads
                         {
                             A = (float2)(seg.A - new double2(origin.E, origin.N)), B = (float2)(seg.B - new double2(origin.E, origin.N)),
                             Ha = seg.Ya + RoadConstants.RoadLift + RoadConstants.CarveLift, Hb = seg.Yb + RoadConstants.RoadLift + RoadConstants.CarveLift,
-                            HalfWidth = seg.Bridge ? RoadConstants.DeckHalf(seg.Lanes.Half) : flat, Shoulder = seg.Bridge ? RoadConstants.MaxEarthwork : shoulder,
-                            Flags = seg.Bridge ? CarveSegment.DeckOnly : 0u,
+                            HalfWidth = seg.Bridge ? RoadConstants.DeckHalf(seg.Lanes.Half) : seg.Tunnel ? RoadConstants.TunnelHalf(seg.Lanes.Half) + RoadConstants.TunnelWallThick : flat,
+                            Shoulder = seg.Bridge || seg.Tunnel ? RoadConstants.MaxEarthwork : shoulder,
+                            Flags = seg.Bridge ? CarveSegment.DeckOnly : seg.Tunnel ? CarveSegment.TunnelOnly : 0u,
                         });
                     }
+                }
+        }
+
+        /// <summary>Every tunnel segment in the buckets within <paramref name="radius"/> of a point (TileWorld: the terrain's portal holes).</summary>
+        public void TunnelSegmentsNear(Utm33 p, double radius, List<TunnelPiece> output)
+        {
+            if (TunnelSegmentCount == 0) return;
+            int r = (int)math.ceil(radius / Cell), bx = (int)math.floor(p.E / Cell), bz = (int)math.floor(p.N / Cell);
+            for (int dj = -r; dj <= r; dj++)
+                for (int di = -r; di <= r; di++)
+                {
+                    if (!buckets.TryGetValue(Key(bx + di, bz + dj), out var list)) continue;
+                    foreach (var seg in list)
+                        if (seg.Tunnel) output.Add(new TunnelPiece { A = seg.A, B = seg.B, Ya = seg.Ya, Yb = seg.Yb, Half = seg.Lanes.Half, PortalA = seg.PortalA, PortalB = seg.PortalB });
                 }
         }
 

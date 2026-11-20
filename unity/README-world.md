@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-20 (house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-20 (road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -100,7 +100,7 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   loaded, and the lakes / rivers other tiles already built (`TileWorld.InMappedWater`). Each core is widened by one 5 m
   sample to the abutments on the banks; piers every ~30 m on spans over 24 m.
 - **Profile** (`RoadGraph.SetTile`): the raw ground over a span is the straight line between the banks before the usual
-  grading (a tagged way is graded with 60 m of ground beyond its ends), junction easing never moves a span's interior and
+  grading (pinned ends since 2026-11-20, so a tagged way's ends stay on its banks), junction easing never moves a span's interior and
   ignores a deck more than `PassOver` (2.5 m) above or below, then `Bridges.ApplyProfile`: a Hermite cubic between the
   abutments with the approach grades, a 2 % arch (≤ 1 m), and where needed a lift to 2.5 m over the water (over the sea
   plane at least) or 0.8 m over dry ground, ramped out over 15–90 m and tapered to nothing at the way's own ends.
@@ -120,8 +120,62 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   the DTM's sea cells used to be drawn under the 0.45 m sea plane (183 of 4143 live road points at Sand).
 - `PreviewShots -previewLook "LAT,LON;…"` shoots each spot across the nearest road from both sides, low down and along it.
 - Known limits: a way is graded once, with the water known then (its own tile's OSM water and tiles already built);
-  `HeightAt` without a reference height answers the deck (a camera or sign under a bridge sees the deck); the deck is
+  `HeightAt` without a reference height answers the deck (a camera or sign under a bridge sees the deck); a road under an
+  overpass is carved under the deck (layer rule, see Tunnels); no extra clearance over a road below is enforced (the DTM's
+  embankments give it); the deck is
   concrete whatever `bridge:structure` says; pace notes do not call bridges.
+
+### Tunnels (2026-11-20)
+`Roads/Tunnels.cs`, `Roads/TunnelMesh.cs`, `Resources/Tunnel/Tunnel.shader`; car / camera side in `TileWorld` and `CameraRig`.
+- **Which ways:** `tunnel=yes` (any value but `no`, `culvert`, `building_passage`, `avalanche_protector`) is a tube end to
+  end; `avalanche_protector` (rasoverbygg) is an open road with a gallery roof; `building_passage` stays an open road (the
+  house over it is already left out by the road clearance rule); tunnels are no longer `Barred` (stages may use them,
+  `RoadWalk.Score` × 0.15).
+- **Profile:** a tube is the straight line between its two portals, under the sea (DTM 0) at least 40 m down or as deep
+  as an 8 % descent from both portals reaches (`Tunnels.Profile`). Ways are graded major first, longer first within a
+  class, tubes last, so a portal takes the height of the road outside it (graded on its own bed). A tube graded before
+  its road is graded again onto it (`FollowAtNodes`). The DTM at a portal node runs up the rock face: a tube's own portal
+  height is read from the ground 10–30 m outside it (unless that falls away: a gorge, a fjord), a road's ends from the
+  ground 10–30 m inside (`EndGround`), and a way under 60 m that ends at a portal takes its other end's ground.
+- **Carve:** tube segments are `CarveSegment.TunnelOnly` (out to the wall's outside, reach + 10 m): like a deck they win
+  cells by "nearest wins" and leave them natural, so the mountain stays and the approach's cutting ends at the portal. A
+  layer segment (deck or tunnel) only takes a cell from a ground road within `RoadConstants.PassOver` (2.5 m) of its height
+  (CarveJob, Carve.compute with two more scratch textures; layer segments are carved last): a road under an overpass or
+  over a tunnel is carved as usual.
+- **Car and camera:** `TileWorld.TunnelAt` (`ILayeredGround`): inside a tube's plan out to its walls' outside, with the
+  asker below the crown + 1 m (`ReferenceY`; NaN = inside, so a car placed or reset in a tunnel lands on its floor) and
+  not past a portal (the bisector with the road outside), `HeightAt` is the tunnel floor (ribbon, then the terrace height
+  out to the wall), `SurfaceAt` the road's, `WaterAt` dry; above the roof the mountain. The walls and portal faces are a
+  `MeshCollider` on layer Buildings. The chase camera is pulled back into the tube when it leaves its plan and kept 0.5 m
+  off the walls and under the arch (`CameraRig.KeepInTunnel`).
+- **Drawn:** `TunnelMesh` per tile (segment by its middle's tile): floor under the ribbon, walls 4.2 m, an elliptic arch
+  (crown 7.5 m on a two-lane road), the shell's outside, a lamp every 24 m, at each portal a 2.5 m collar and a concrete
+  face; galleries a roof on a mountain-side wall and valley-side pillars. `Rally/Tunnel` lights faces by how far inside
+  they are (vertex alpha, `Tunnels.InsideWeight`: 0 at a portal, 0.9 from 40 m in) with the lamp light instead of the sun
+  (which reached the inside beyond the 200 m shadow distance); the ribbon does the same through its UV1.y.
+- **Terrain holes:** the clipmap is one height per point, so it runs down across a portal. `TileWorld.UpdateTunnelHoles`
+  sends up to 48 tube pieces near the camera (where the rock over them is less than a cell's height above the crown, plus
+  8 m out of each portal over the road) as `_TunnelA/_TunnelB`; `TerrainClipmap.shader TunnelClip` discards terrain pixels
+  inside a piece between 0.25 m over its floor and 1 m over its crown in every pass (so light gets in at the mouth too).
+- **Querying a tunnel** (for the road arrow, finish banner, anything drawn on the road): `world.TunnelAt(xz, out spot)` (or
+  `(ground as ILayeredGround).TunnelAt`) with `ReferenceY` NaN (or the asker's height) gives `Floor` (the drivable surface),
+  `Roof` (the arch's inside at that lateral offset), `Crown`, `Centre`/`Tangent` (world xz), `Lateral` and `Half` (wall face).
+  Anything placed with `HeightAt` and NaN in a tube's plan sits on its floor (the stage line's `Y`); `RoadSample.Tunnel` /
+  `RoadHit.Tunnel` / `RoadLink.Tunnel` and `RoadLayer.Tunnel` mark tunnel roads. Keep markers under `Roof` − their height.
+- `PreviewShots -previewPoses "NAME|LAT,LON,UP|LAT,LON,UP;…"` (camera poses over the game's ground; logs the ground along
+  the sight line, T = in a tunnel) and `-previewCarAt "NAME|LAT,LON,YAWDEG"` (car reset there, chase shot).
+- Known limits: the profile is straight (real tunnels have a crest); no headlights; the sea depth is assumed (the DTM has no
+  bathymetry); signs and animals may stand in tunnels; a lake over a tunnel is not checked.
+
+### Ways meeting at a node (2026-11-20)
+- The grade's running mean no longer shrinks at a way's end (`ProfileGrader.SmoothRoadHeights` `pinEnds`: odd
+  reflection about the end): an end stays at its (fitted) ground. The shrinking window had pulled ends 10 m above and
+  below the ground on steep hillsides: a 20 m step where two ways met end to end at Sauda.
+- `RoadGraph.nodeWays` registers every graded way's OSM nodes; a way graded later takes an earlier way's height at every
+  node they share (`EaseOntoNodes`, offsets interpolated between nodes, faded over ≥ 60 m at ≤ 8 % added grade), whatever
+  tile either was graded in (the bucket easing only saw roads registered near the junction). A way graded again makes the
+  ways that followed it follow again where the joint height changed; `Rebuild` keeps a tile's gradings while it is set
+  again, so tiles setting each other again settle. Junction easing looks past the regraded way's own old segments.
 
 ## How far ahead tiles and overlays are fetched (2026-11-18)
 

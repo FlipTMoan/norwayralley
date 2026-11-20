@@ -65,6 +65,30 @@ namespace Rally.Core
         /// <summary>Deck top for a graded road height (no lift): the carved road's terrace height, EdgeTuck under the ribbon edge.</summary>
         public static float DeckTop(float roadY) => roadY + RoadLift + CarveLift;
 
+        /// <summary>
+        /// A road on another level (a bridge deck, a tunnel) more than this above or below a road on the ground passes over or
+        /// under it: they do not meet (no junction easing) and neither takes the other's ground in the carve or for the car.
+        /// </summary>
+        public const float PassOver = 2.5f;
+        /// <summary>
+        /// Road tunnels (<c>tunnel=yes</c>): the tube's inside reaches <see cref="TunnelSideRoom"/> beyond the shoulder, the
+        /// wall stands <see cref="TunnelWall"/> m up from the road and the roof arches <see cref="TunnelArch"/> × the half width
+        /// above that; the walls are <see cref="TunnelWallThick"/> thick. Two-lane: 14.5 m wide inside, crown 7.5 m.
+        /// </summary>
+        public const float TunnelSideRoom = 0.5f, TunnelWall = 4.2f, TunnelArch = 0.45f, TunnelWallThick = 0.6f;
+        /// <summary>Half width of a tunnel's inside (to the wall face) for a carriageway half width.</summary>
+        public static float TunnelHalf(float half) => FlatHalf(half) + TunnelSideRoom;
+        /// <summary>Height of the tunnel roof's crown above the graded road (no lift).</summary>
+        public static float TunnelCrown(float half) => TunnelWall + TunnelArch * TunnelHalf(half);
+        /// <summary>
+        /// The roof's inside height above the graded road at <paramref name="d"/> m from the centre line: the wall up to
+        /// <see cref="TunnelWall"/>, then an elliptic arch to the crown.
+        /// </summary>
+        public static float TunnelRoofAt(float d, float half)
+        {
+            float w = TunnelHalf(half), t = math.saturate(math.abs(d) / w);
+            return TunnelWall + TunnelArch * w * math.sqrt(math.max(0f, 1f - t * t));
+        }
         /// <summary>Half width of the flat part: carriageway plus shoulder (corridor.js:38 flatHalf).</summary>
         public static float FlatHalf(float half) => half + Shoulder;
 

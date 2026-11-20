@@ -18,7 +18,7 @@ namespace Rally.Roads
     /// finer terrain cut through it in steps.
     /// UVs: u = −1 at the left skirt, 0..1 across the carriageway, 2 at the right skirt (markings in the
     /// material by u), v = metres along / 4; UV1.x = the carriageway half width (Rally/Road draws markings on two-lane
-    /// asphalt only). Sub-mesh 0 is tarmac, 1 gravel.
+    /// asphalt only); UV1.y how far inside a road tunnel (<see cref="Tunnels.InsideWeight"/>: lamp light, not the sun). Sub-mesh 0 is tarmac, 1 gravel.
     /// </summary>
     public static class RibbonMesh
     {
@@ -67,7 +67,7 @@ namespace Rally.Roads
                         verts.Add(new Vertex
                         {
                             Pos = new float3((float)(p.x - origin.E), y, (float)(p.y - origin.N)),
-                            Normal = new float3(0, 1, 0), UV = new float2(u, s[i].S / 4f), UV1 = new float2(half, 0),
+                            Normal = new float3(0, 1, 0), UV = new float2(u, s[i].S / 4f), UV1 = new float2(half, Tunnels.InsideWeight(s[i], line.WayLength)),
                         });
                     }
                     if (i < s.Count - 1 && !(s[i].Covered && s[i + 1].Covered) && Owns(own, (s[i].P + s[i + 1].P) * 0.5))   // inside a junction the major road's ribbon is the surface

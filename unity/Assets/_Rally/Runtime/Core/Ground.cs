@@ -34,6 +34,28 @@ namespace Rally.Core
     public interface ILayeredGround
     {
         float ReferenceY { get; set; }
+        /// <summary>
+        /// The road tunnel at a world XZ, if the point is inside a tube's plan (out to its wall face) and the asker
+        /// (<see cref="ReferenceY"/>; NaN counts as inside) is below its roof: then <see cref="HeightAt"/> answers the tunnel
+        /// floor there, not the mountain above. False outside tunnels (and in avalanche galleries, which are open roads).
+        /// </summary>
+        bool TunnelAt(float2 xz, out TunnelSpot spot);
+    }
+
+    /// <summary><see cref="ILayeredGround.TunnelAt"/> as a delegate (the camera rig gets it from the world).</summary>
+    public delegate bool TunnelQuery(float2 xz, out TunnelSpot spot);
+
+    /// <summary>A point in a road tunnel (<see cref="ILayeredGround.TunnelAt"/>), world heights (FloatingOrigin-relative XZ).</summary>
+    public struct TunnelSpot
+    {
+        /// <summary>The drivable surface at the point (what IGround.HeightAt answers there for a car in the tube).</summary>
+        public float Floor;
+        /// <summary>The roof's inside at the point (lower towards the walls: the arch) and at the crown.</summary>
+        public float Roof, Crown;
+        /// <summary>Nearest point on the tunnel's centre line (world XZ) and the unit direction along the way.</summary>
+        public float2 Centre, Tangent;
+        /// <summary>Signed distance from the centre line (+ on the left of <see cref="Tangent"/>) and the half width to the wall face.</summary>
+        public float Lateral, Half;
     }
 
     /// <summary>

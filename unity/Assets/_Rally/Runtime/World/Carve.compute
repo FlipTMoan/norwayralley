@@ -10,9 +10,13 @@
 // resets the slice to the base heights and the scratch best-distance texture to +inf, later batches
 // keep refining, so an arbitrary number of segments still gives "nearest of all wins".
 //
-// flags (CarveSegment.Flags) 1: a bridge span. It wins texels by distance like a road, but leaves them at the base
-// height (nothing under a bridge is carved; an approach's end cap stops where the deck is nearer) and marks only its
-// footprint (|d| <= halfWidth) 0.5 on the mask, so no tree grows through the deck.
+// flags (CarveSegment.Flags) 1: a bridge span, 2: a road tunnel ("layer" segments). The nearest layer segment wins a
+// texel when it is nearer than the nearest ground road that claims it AND within PASS_OVER of that road's height (a road
+// under a bridge or over a tunnel is carved as usual); it leaves the texel at the base height (nothing under a bridge or
+// over a tunnel is carved; an approach's end cap stops at the abutment / portal) and marks its footprint (|d| <= halfWidth)
+// 0.5 on the mask — a deck always, a tunnel where the rock over it is thin — so no tree grows through it.
+// Across batches the ground winner's road height (_BestY) and the layer winner's distance (_LayerD) are kept in scratch
+// textures; TileWorld.Carve puts the layer segments last, so the ground roads are complete when the layer ones decide.
 //
 // Texel (x, y) = HeightGrid[row = y, col = x] = tile-local position (x, y) * _CellM from the south-west corner.
 #pragma kernel Carve
@@ -31,7 +35,9 @@ struct CarveSegment            // mirrors Rally.World.CarveSegment (36 bytes)
 Texture2DArray<float> _Base;              // untouched DTM, one slice per tile
 RWTexture2DArray<float> _Heights;         // carved result, same slice index
 RWTexture2DArray<float> _Mask;            // 1 on the flat band, 0.5 on the blend, 0 untouched (scatter avoidance)
-RWTexture2D<float> _BestD;                // scratch, N x N, distance of the segment that wrote the texel so far
+RWTexture2D<float> _BestD;                // scratch, N x N, distance of the nearest ground road that claimed the texel so far
+RWTexture2D<float> _BestY;                // scratch, its road height there
+RWTexture2D<float> _LayerD;               // scratch, distance of the nearest layer segment so far
 StructuredBuffer<CarveSegment> _Segments;
 int _SegmentCount;
 int _Slice;
@@ -42,6 +48,8 @@ float _CellM;
 #define FILL_RUN 2.0          // RoadConstants.FillRun
 #define CUT_RUN 1.25          // RoadConstants.CutRun
 #define MAX_EARTHWORK 10.0    // RoadConstants.MaxEarthwork
+#define PASS_OVER 2.5         // RoadConstants.PassOver
+#define TUNNEL_MASK_COVER 10.0 // CarveSegment.TunnelMaskCover
 
 float Smoothstep01(float t) { t = saturate(t); return t * t * (3.0 - 2.0 * t); }
 float EarthworkWidth(float roadY, float ground, float shoulder)
@@ -60,8 +68,13 @@ void Carve(uint3 id : SV_DispatchThreadID)
     float2 p = float2(id.xy) * _CellM;
 
     float bestD = _First ? 1e30 : _BestD[id.xy];
+    float bestY = _First ? 0.0 : _BestY[id.xy];
+    float layD = _First ? 1e30 : _LayerD[id.xy];
     float h = _First ? ground : _Heights[texel];
     float mask = _First ? 0.0 : _Mask[texel];
+    float layY = 0.0, layFlat = 0.0;
+    uint layFlags = 0u;
+    bool layNew = false;
 
     int count = min(_SegmentCount, MAX_SEGMENTS);
     for (int s = 0; s < count; s++)
@@ -74,16 +87,30 @@ void Carve(uint3 id : SV_DispatchThreadID)
         float len2 = dot(ab, ab);
         float t = len2 > 1e-12 ? saturate(dot(p - seg.a, ab) / len2) : 0.0;
         float d = distance(p, seg.a + ab * t);
-        if (d > reach || d >= bestD) continue;
-        if ((seg.flags & 1u) != 0) { bestD = d; h = ground; mask = d <= seg.halfWidth ? 0.5 : 0.0; continue; }   // bridge span
+        if (d > reach) continue;
         float roadY = lerp(seg.ha, seg.hb, t);
+        if ((seg.flags & 3u) != 0)                             // bridge span / tunnel: decided after the loop
+        {
+            if (d < layD) { layD = d; layY = roadY; layFlat = seg.halfWidth; layFlags = seg.flags; layNew = true; }
+            continue;
+        }
+        if (d >= bestD) continue;
         float w = EarthworkWidth(roadY, ground, seg.shoulder);
         if (d > seg.halfWidth + w) continue;
         bestD = d;
+        bestY = roadY;
         if (d <= seg.halfWidth) { h = roadY; mask = 1.0; }
         else { h = lerp(roadY, ground, Smoothstep01((d - seg.halfWidth) / w)); mask = 0.5; }
     }
+    if (layNew && layD < bestD && (bestD >= 1e29 || abs(layY - bestY) < PASS_OVER))
+    {
+        h = ground;
+        bool footprint = layD <= layFlat && ((layFlags & 1u) != 0 || ground - layY < TUNNEL_MASK_COVER);
+        mask = footprint ? 0.5 : 0.0;
+    }
     _BestD[id.xy] = bestD;
+    _BestY[id.xy] = bestY;
+    _LayerD[id.xy] = layD;
     _Heights[texel] = h;
     _Mask[texel] = mask;
 }

@@ -89,6 +89,8 @@ namespace Rally.Gameplay
         SignLayer signs;
         readonly Dictionary<TileKey, GameObject> ribbons = new Dictionary<TileKey, GameObject>();
         readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> bridgeObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
+        readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> tunnelObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
+        Material tunnelMaterial;
         readonly Queue<TileResult> results = new Queue<TileResult>();
         TileResult activeOverlay;
         FlatGround naturalGround;            // the uncarved DTM as an IGround, for StageRoute.AssignRoadY
@@ -414,8 +416,11 @@ namespace Rally.Gameplay
                 yield return null;
                 // Neighbours cut from a grading this tile replaced (a way graded again now that its ground is in): set them
                 // again, redraw their ribbon and bridges, carve again — or two gradings of one road meet at the border.
-                foreach (var d in roads.TakeDirtyTiles())
+                // Setting one again can flag more (a way that took its height from a regraded one follows it): until settled.
+                var dirtyTiles = new Queue<TileKey>(roads.TakeDirtyTiles());
+                for (int guard = 0; dirtyTiles.Count > 0 && guard < 64; guard++)
                 {
+                    var d = dirtyTiles.Dequeue();
                     if (world == null || !world.Tiles.ContainsKey(d)) continue;
                     t0 = FrameProbe.Start();
                     var again = roads.Rebuild(d);
@@ -427,6 +432,7 @@ namespace Rally.Gameplay
                         world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
                         RallyLog.Info($"overlay: {d} roads set again (a way it shares with {key} was graded again)");
                     }
+                    foreach (var m in roads.TakeDirtyTiles()) if (!dirtyTiles.Contains(m)) dirtyTiles.Enqueue(m);
                     FrameProbe.Stop(".ov.rebuild", t0);
                     yield return null;
                 }
@@ -521,10 +527,11 @@ namespace Rally.Gameplay
             ribbons[key] = go;
         }
 
-        /// <summary>Deck, rails and piers of the tile's bridge spans: house material (vertex colours, shadows), rails and piers solid on layer Buildings.</summary>
+        /// <summary>Deck, rails and piers of the tile's bridge spans: house material (vertex colours, shadows), rails and piers solid on layer Buildings. Its tunnels too (<see cref="BuildTunnels"/>).</summary>
         void BuildBridges(TileKey key, List<RoadPolyline> lines)
         {
             DropBridges(key);
+            BuildTunnels(key, lines);
             var draw = BridgeMesh.Build(lines, key.Origin, p => world.BaseHeightAt(p), out var solid, key.Bounds);
             if (draw == null) return;
             var go = new GameObject("Bridges " + key) { layer = RallyLayers.Buildings, isStatic = true };
@@ -548,8 +555,47 @@ namespace Rally.Gameplay
             RallyLog.Info($"overlay: {key} bridges: {count} spans{spans}");
         }
 
+        /// <summary>Tubes, portals, lamps and avalanche galleries of the tile's runs (TunnelMesh, Rally/Tunnel shader); walls and portal faces solid on layer Buildings.</summary>
+        void BuildTunnels(TileKey key, List<RoadPolyline> lines)
+        {
+            var draw = TunnelMesh.Build(lines, key.Origin, p => world.BaseHeightAt(p), out var solid, key.Bounds);
+            if (draw == null) return;
+            if (tunnelMaterial == null)
+            {
+                var shader = Resources.Load<Shader>("Tunnel/Tunnel");
+                tunnelMaterial = shader != null ? new Material(shader) { name = "Tunnel" } : world.Style?.BuildingMaterial;
+            }
+            var go = new GameObject("Tunnels " + key) { layer = RallyLayers.Buildings, isStatic = true };
+            go.transform.SetParent(world.Root, false);
+            go.transform.position = FloatingOrigin.ToWorld(key.Origin, 0);
+            go.AddComponent<MeshFilter>().sharedMesh = draw;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = tunnelMaterial;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; mr.receiveShadows = true;
+            if (solid != null) go.AddComponent<MeshCollider>().sharedMesh = solid;
+            tunnelObjects[key] = (go, draw, solid);
+            int portals = 0, tube = 0, gallery = 0;
+            foreach (var line in lines)
+                for (int i = 0; i < line.Samples.Count; i++)
+                {
+                    var q = line.Samples[i];
+                    if (q.Portal && q.Tunnel && RibbonMesh.Owns(key.Bounds, q.P)) portals++;
+                    if (i + 1 < line.Samples.Count && RibbonMesh.Owns(key.Bounds, (q.P + line.Samples[i + 1].P) * 0.5))
+                    {
+                        if (q.Tunnel && line.Samples[i + 1].Tunnel) tube++;
+                        else if (q.Gallery && line.Samples[i + 1].Gallery) gallery++;
+                    }
+                }
+            RallyLog.Info($"overlay: {key} tunnels: {tube * 5} m of tube, {portals} portals, {gallery * 5} m of avalanche gallery");
+        }
+
         void DropBridges(TileKey key)
         {
+            if (tunnelObjects.TryGetValue(key, out var tn))
+            {
+                Destroy(tn.go); Destroy(tn.draw); if (tn.solid != null) Destroy(tn.solid);
+                tunnelObjects.Remove(key);
+            }
             if (!bridgeObjects.TryGetValue(key, out var b)) return;
             Destroy(b.go); Destroy(b.draw); if (b.solid != null) Destroy(b.solid);
             bridgeObjects.Remove(key);
@@ -739,6 +785,7 @@ namespace Rally.Gameplay
             if (Rig == null) return;
             Rig.Target = car.transform;
             Rig.GroundHeight = world.HeightAt;
+            Rig.Tunnel = world.TunnelAt;
             Rig.SeatEye = (Vector3)car.Spec.Eye;
         }
 
@@ -1474,6 +1521,7 @@ namespace Rally.Gameplay
             foreach (var go in ribbons.Values) Destroy(go);
             ribbons.Clear();
             foreach (var key in new List<TileKey>(bridgeObjects.Keys)) DropBridges(key);
+            foreach (var key in new List<TileKey>(tunnelObjects.Keys)) DropBridges(key);
             results.Clear(); activeOverlay = null;
             foreach (var v in actorViews.Values) Destroy(v.gameObject);
             actorViews.Clear();

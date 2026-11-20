@@ -151,23 +151,23 @@ get a bridge where they cross water; deck + rails + piers by BridgeMesh, car rid
 NOT handled: `tunnel=yes` ways are only kept out of random stages (RoadGraph.IsBarred) but are graded and carved like
 any road, i.e. a trench or a road draped over the mountain where the real road goes inside it; OSRM routes and free
 drive can still follow them.
-- [ ] Tunnels: a way tagged `tunnel=yes|building_passage|avalanche_protector` (not `culvert`, `no`) is graded as a straight
+- [x] Tunnels: a way tagged `tunnel=yes|building_passage|avalanche_protector` (not `culvert`, `no`) is graded as a straight
       gentle profile between its two portals (no terrain following), the terrain above is NOT carved (the mountain stays),
       the portals get a cut into the slope + a concrete portal face, and the tube is drawn (walls, roof, road ribbon inside,
       lamps along the roof, darker lighting / exposure inside). The car drives on the tunnel floor, the mountain above is
       not ground for it (ILayeredGround reference height, as for bridges), and the tube walls are solid (section C rules).
       Camera: the chase camera stays inside the tube (no clipping into the mountain). Long tunnels (Lærdal 24.5 km) work.
       `avalanche_protector` (rasoverbygg): an open-sided gallery roof instead of a full tube.
-- [ ] Tunnels in stages: OSRM routes and endless/free drive may go through tunnels now that they exist (keep random
+- [x] Tunnels in stages: OSRM routes and endless/free drive may go through tunnels now that they exist (keep random
       stage picks preferring open roads); pace notes and the road arrow work inside.
-- [ ] Bridges: check that every tagged bridge is generated, not only over water: over roads (overpasses), railways,
+- [x] Bridges: check that every tagged bridge is generated, not only over water: over roads (overpasses), railways,
       valleys / gorges, and long viaducts; road under a bridge passes under its deck (no carve conflict); bridges on
       `layer=*` ways. Fix what is missing (piers in valleys, railings, deck materials by `bridge:structure` if cheap).
-- [ ] Tests: a tunnel through a ridge (terrain above unchanged, floor height follows the portal profile, the car drives
+- [x] Tests: a tunnel through a ridge (terrain above unchanged, floor height follows the portal profile, the car drives
       through and is inside the tube), portals at load-order permutations / tile borders, an overpass bridge over another
       road (both drivable), a valley bridge. Before/after shots at real places (e.g. a short Vestland road tunnel, an
       E39 / Rv overpass, Atlanterhavsvegen's Storseisundbrua), bench cost, WebDev in Chrome.
-- [ ] Docs, help text (tunnels), CHANGES. Done after C+G (needs the collision rules), before D+F unless the user says otherwise.
+- [x] Docs, help text (tunnels), CHANGES. Done after C+G (needs the collision rules), before D+F unless the user says otherwise.
 
 ## Next (separate plan)
 - Landmarks, photo camera and photo album: tasks/plan_20261120_landmarks.md (after A–H).
@@ -332,3 +332,54 @@ drive can still follow them.
 - **Open:** clipmap reach 4096 m < fog horizon 5.6 km (8th ring + 12×12 table would cover it); `LandcoverSplat.Build` and
   sign placement could be stepped too; 8–20 s editor stalls with a busy GPU unexplained (not in our sections); compute
   carve dispatch cost under GPU contention.
+
+### J. Tunnels and bridges from the map + the junction-step bug (done 2026-11-20)
+- **Checked first:** survey true (tunnels graded + carved on the mountain: Nestunnelen's road ran 20 m up over the rock,
+  Trolljuvet's 20 m over its ridge). Plan items judged differently: `building_passage` stays an open road (the house over it
+  is already dropped by the 8 m road clearance, a tube would stand alone in the street); no deck materials by
+  `bridge:structure`; bridges over roads / valleys / `layer=*` were already generated (tag rule) — what was wrong was the
+  carve under an overpass (the deck's claim left the road under it natural where the deck's centre line was nearer).
+- **Junction steps — cause:** (1) `SmoothRoadHeights` shrank its window at a way's end, pulling the end towards the way's
+  inside by slope × window: on the Sauda hillside one way ended 10 m above, the next 10 m below the ground at their shared
+  node (synthetic repro: 447.1 / 419.4 m, a 28 m step); (2) junction easing only saw segments registered near the
+  junction, but a way is graded once, in the first tile holding any of it (often one without the junction). **Fix:** ends
+  pinned (odd reflection) to the ground fitted 10–30 m in (`EndGround`), a node registry (`nodeWays`, `EaseOntoNodes`:
+  later ways take earlier ways' heights at shared OSM nodes in any tile), followers re-graded when a joint changes
+  (`FollowAtNodes`), `Rebuild` keeps the tile's gradings, easing looks past a regraded way's own old segments, longer ways
+  first within a class. Found on the way: a 32-round rebuild ping-pong at Svandalsflona (fixed: 5 rebuilds now).
+- **Tunnels — what changed:** `Roads/Tunnels.cs` (kinds, straight portal-to-portal profile, subsea dip), `TunnelMesh.cs`
+  (tube, arch, lamps, collar + portal face, gallery roof/wall/pillars, wall collider), `Resources/Tunnel/Tunnel.shader`
+  (lamp-lit inside by vertex alpha), `RoadGraph` (Tunnel/Portal flags, tubes graded last and following their roads, portal
+  height from outside, short connectors at portals, `TunnelSegmentsNear`, `RoadLayer.Tunnel`, links not barred),
+  `CarveJob`/`Carve.compute`/`Carver`/`TileAtlas` (`TunnelOnly`; layer claims only within PassOver of a ground road's
+  height: overpass fix; two scratch textures), `TileWorld` (`InTunnel`/`TunnelAt`, floor in HeightAt/SurfaceAt/WaterAt,
+  `UpdateTunnelHoles`), `TerrainClipmap.shader` (`TunnelClip` in all passes, box early-out), `Road.shader` (UV1.y lamp
+  light), `RibbonMesh`, `CameraRig.KeepInTunnel`, `GameController` (build/drop tunnels, dirty tiles until settled),
+  `RoadWalk` (tunnels × 0.15), `Ground.cs` (`TunnelSpot`, `ILayeredGround.TunnelAt`), `RoadConstants` (tunnel dims, PassOver).
+- **Places (live, before → after, `scratchpad/tunnels/{before,after}_*`):** Nestunnelen Rv520 (portal: road climbing 20 m
+  over the rock → portal with the far end visible; chase inside the tube), Trolljuv bru + Åkrafjordvegen tunnel (gorge
+  bridge on piers; road over the ridge → tunnel; first try showed a 10 m step at a 9 m connector and terrain in the mouth,
+  both fixed), Svandalsflona E134 (gallery roof + tunnel; chase in a curved tube), Forusbeen overpass, Storseisundbrua.
+- **Bench** (live Nestunnelen, glide 90 km/h, 90 s, compute path, GPU shared 13–40 % with other processes): streaming
+  work per frame avg 3.24 → 3.27–3.33 ms, p95 3.98 → 4.4, p99 11.5 → 15, max 657 → 57 ms; frame median 7.94 → 8.2 ms;
+  frame avg 15.5 → 19.8–23 ms ruled by 0.7–1.8 s GPU waits at the vegetation cull readback (present before too, not
+  separable from the shared GPU; terrain hole loop now skipped outside the holes' bounding box).
+- **Tests:** EditMode `TunnelTests` (tags; profile incl. subsea; ridge: mountain uncarved, floor = portal line, car ground /
+  crest / beside, no step at portals; car drives through on the floor; mesh + holes only near portals; tunnel across a tile
+  border in 4 load orders incl. settle checks; overpass carved + both drivable; valley bridge), `WayJoinTests` (end-to-end
+  in 4 orders, road ending on another, regrade followed) — on the old code 5 of 6 join tests and the overpass test fail;
+  PlayMode `TunnelPlayTests` (reset in a tunnel lands on the floor; 100 km/h sideways into the wall stays inside).
+  EditMode 247/247, PlayMode 25/25.
+- **For D+F (road arrow, finish banner):** `world.TunnelAt(xz, out TunnelSpot spot)` (ILayeredGround; ReferenceY NaN =
+  "inside") → `Floor` (drivable surface), `Roof` (arch inside at that lateral offset), `Crown`, `Centre`, `Tangent`,
+  `Lateral`, `Half`. `HeightAt` with NaN in a tube's plan is the floor, so the stage line's `Y` and anything placed with it
+  is in the tube (but `StageRoute.RoadY` from `AssignRoadY` uses the natural ground: the mountain — use `Y`). Keep anything
+  drawn under `Roof` − its height; the tube is lamp-lit (an emissive or Rally/Road-like material reads best).
+- **Open:** a dark terrain patch still shows deep in the Svandalsflona tube from the gallery (thin cover in flat alpine
+  ground; not resolved); tube profile is straight (no crest), sea depth assumed (no bathymetry); signs / animals may stand
+  in tunnels; no clearance over a road under a bridge beyond what the DTM embankments give; the after run at Storseisund
+  started the car on the sea because its start roads were late (Overpass mirror failures, start 20 s timeout — not
+  reproduced in the before run).
+- **WebDev (WebGL 2, CPU carve) in Chrome**, `?drive=59.64314,6.319` on port 8093: loads, start screen with the car in
+  Nestunnelen behind it, START ENGINE → chase view in the lamp-lit tube with the far portal open, HUD shown, no console
+  errors (`scratchpad/tunnels/webdev_nestunnelen_chase.jpg`). The HUD surface tag read GRAVEL there (not checked further).

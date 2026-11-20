@@ -24,9 +24,9 @@ namespace Rally.Roads
             Rail = new Color32(0xc4, 0xc7, 0xc6, 255), Post = new Color32(0x77, 0x79, 0x7a, 255);
 
         [StructLayout(LayoutKind.Sequential)]
-        struct Vertex { public float3 Pos; public float3 Normal; public Color32 Color; }
+        internal struct Vertex { public float3 Pos; public float3 Normal; public Color32 Color; }
 
-        sealed class Buf
+        internal sealed class Buf
         {
             public readonly List<Vertex> V = new List<Vertex>(4096);
             public readonly List<int> I = new List<int>(8192);
@@ -160,7 +160,7 @@ namespace Rally.Roads
             return draw.V.Count > 0 ? ToMesh(draw, "Bridges") : null;
         }
 
-        static Mesh ToMesh(Buf b, string name)
+        internal static Mesh ToMesh(Buf b, string name)
         {
             var data = Mesh.AllocateWritableMeshData(1);
             var md = data[0];

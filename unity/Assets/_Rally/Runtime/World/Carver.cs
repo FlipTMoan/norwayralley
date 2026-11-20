@@ -43,7 +43,7 @@ namespace Rally.World
         readonly GraphicsBuffer[] ring = new GraphicsBuffer[Ring];
         int next;
         static readonly int BaseId = Shader.PropertyToID("_Base"), HeightsId = Shader.PropertyToID("_Heights"), MaskId = Shader.PropertyToID("_Mask"),
-            BestDId = Shader.PropertyToID("_BestD"), SegmentsId = Shader.PropertyToID("_Segments"), CountId = Shader.PropertyToID("_SegmentCount"),
+            BestDId = Shader.PropertyToID("_BestD"), BestYId = Shader.PropertyToID("_BestY"), LayerDId = Shader.PropertyToID("_LayerD"), SegmentsId = Shader.PropertyToID("_Segments"), CountId = Shader.PropertyToID("_SegmentCount"),
             SliceId = Shader.PropertyToID("_Slice"), NId = Shader.PropertyToID("_N"), FirstId = Shader.PropertyToID("_First"), CellId = Shader.PropertyToID("_CellM");
 
         public bool CpuSynchronous => false;
@@ -62,6 +62,8 @@ namespace Rally.World
             shader.SetTexture(kernel, HeightsId, atlas.Heights);
             shader.SetTexture(kernel, MaskId, atlas.Mask);
             shader.SetTexture(kernel, BestDId, atlas.BestD);
+            shader.SetTexture(kernel, BestYId, atlas.BestY);
+            shader.SetTexture(kernel, LayerDId, atlas.LayerD);
             shader.SetInt(SliceId, tile.Slice);
             shader.SetInt(NId, atlas.N);
             shader.SetFloat(CellId, tile.Key.CellM);

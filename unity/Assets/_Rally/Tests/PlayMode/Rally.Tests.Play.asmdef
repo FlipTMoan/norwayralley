@@ -10,6 +10,7 @@
     "Rally.Vehicle",
     "Rally.Track",
     "Unity.Mathematics",
+    "Unity.Collections",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner",
     "Unity.InputSystem",

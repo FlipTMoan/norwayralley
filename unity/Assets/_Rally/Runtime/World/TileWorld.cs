@@ -54,7 +54,7 @@ namespace Rally.World
         public event Action<TerrainTile> TileReady, TileDisposing;
 
         readonly ICarver carver;
-        readonly List<CarveSegment> segs = new List<CarveSegment>(4096);
+        readonly List<CarveSegment> segs = new List<CarveSegment>(4096), layerScratch = new List<CarveSegment>(256);
         NativeArray<CarveSegment> segsNative;
         /// <summary>
         /// Coarse tiles whose forest must be scattered again after a carve, one per frame (<see cref="ScatterNext"/>).
@@ -199,6 +199,7 @@ namespace Rally.World
             AdvanceFades(dt);
             if (camera != null)
             {
+                UpdateTunnelHoles((float3)camera.transform.position);
                 Clipmap?.Render((float3)camera.transform.position);
                 t0 = FrameProbe.Start();
                 Vegetation?.Render(camera);
@@ -207,6 +208,90 @@ namespace Rally.World
         }
 
         public void FetchFailed(TileKey key) => Scheduler.Fail(key);
+
+        // ---- tunnel holes in the terrain ---------------------------------------------------------------
+
+        /// <summary>Tunnel pieces the terrain shader cuts its holes for (TerrainClipmap.shader TunnelClip: MAX_TUNNEL_HOLES).</summary>
+        public const int MaxTunnelHoles = 48;
+        /// <summary>Radius around the camera in which tunnel pieces are looked at for <see cref="UpdateTunnelHoles"/>.</summary>
+        public const double TunnelHoleRadius = 1500;
+        /// <summary>A hole reaches this far past each end of its piece, so the terrain's wall at a portal is cut on both sides of the portal plane.</summary>
+        public const float TunnelHoleOverlap = 2.5f;
+        /// <summary>How far out of a portal the terrain is cut over the road (inside width only, where the approach's carve is flat).</summary>
+        public const float PortalHoleOut = 8f;
+        static readonly int TunnelCountId = Shader.PropertyToID("_TunnelCount"), TunnelAId = Shader.PropertyToID("_TunnelA"), TunnelBId = Shader.PropertyToID("_TunnelB"), TunnelBoxId = Shader.PropertyToID("_TunnelBox");
+        readonly Vector4[] tunnelA = new Vector4[MaxTunnelHoles], tunnelB = new Vector4[MaxTunnelHoles];
+        readonly List<TunnelPiece> tunnelPieces = new List<TunnelPiece>(256);
+        readonly List<(float d, Vector4 a, Vector4 b)> tunnelHoles = new List<(float, Vector4, Vector4)>(64);
+        float3 tunnelHoleCam = new float3(float.MaxValue);
+        float tunnelHoleTime = -1f;
+        int tunnelHoleCount = -1, tunnelHoleSegs = -1;
+        /// <summary>The holes cut now (bench / tests).</summary>
+        public int TunnelHoleCount => math.max(0, tunnelHoleCount);
+
+        /// <summary>
+        /// The clipmap is one height per point, so where a road enters a mountain its surface runs down the portal and across the
+        /// tube, and where the rock over a tube is thin it cuts through the tube. The terrain shader discards its pixels inside a
+        /// tube's plan (to the outside of the walls) between the tunnel floor and a metre above the crown; that only matters where
+        /// the natural ground is lower than that, so only those pieces near the camera are sent (nearest first). Refreshed when
+        /// the camera has moved 20 m, twice a second, or when tunnels were added or dropped.
+        /// </summary>
+        public void UpdateTunnelHoles(float3 camera)
+        {
+            int segCount = Roads?.TunnelSegmentCount ?? 0;
+            float now = Time.realtimeSinceStartup;
+            if (segCount == tunnelHoleSegs && math.distancesq(camera, tunnelHoleCam) < 400f && now - tunnelHoleTime < 0.5f) return;
+            tunnelHoleSegs = segCount; tunnelHoleCam = camera; tunnelHoleTime = now;
+            tunnelHoles.Clear();
+            if (segCount > 0)
+            {
+                tunnelPieces.Clear();
+                var cam = FloatingOrigin.ToUtm(camera);
+                Roads.TunnelSegmentsNear(cam, TunnelHoleRadius, tunnelPieces);
+                foreach (var piece in tunnelPieces)
+                {
+                    float crown = RoadConstants.TunnelCrown(piece.Half), half = RoadConstants.TunnelHalf(piece.Half) + RoadConstants.TunnelWallThick;
+                    double2 dir = math.normalizesafe(piece.B - piece.A), nrm = new double2(-dir.y, dir.x), mid = (piece.A + piece.B) / 2;
+                    float top = math.max(piece.Ya, piece.Yb) + crown + 1f;
+                    float G(double2 q) => BaseHeightAt(new Utm33(q.x, q.y));
+                    float low = math.min(math.min(G(piece.A), G(mid)), math.min(G(piece.B), math.min(G(mid + nrm * half), G(mid - nrm * half))));
+                    // Deep under the rock nothing of the terrain is inside the tube. The drawn terrain is the carved one, bilinear over
+                    // up to 8 m cells: near a portal it slopes from the road's carve up to the rock through the tube even where the
+                    // natural ground at the piece is above the crown, so a piece is cut until the rock is a cell's height over it.
+                    if (low >= top + RoadConstants.TunnelWall * 2) continue;
+                    var a = FloatingOrigin.ToWorldXZ(new Utm33(piece.A.x, piece.A.y));
+                    var b = FloatingOrigin.ToWorldXZ(new Utm33(piece.B.x, piece.B.y));
+                    float d = math.distance(camera.xz, (a + b) / 2);
+                    tunnelHoles.Add((d, new Vector4(a.x, a.y, b.x, b.y), new Vector4(piece.Ya + RoadConstants.RoadLift, piece.Yb + RoadConstants.RoadLift, half, crown + 1f)));
+                    // Out of a portal the terrain's step from the approach's carve to the rock is up to an 8 m cell wide on the coarse
+                    // grid: cut it over the road (the inside width, flat at the portal's floor) out to PortalHoleOut.
+                    for (int end = 0; end < 2; end++)
+                    {
+                        if (!(end == 0 ? piece.PortalA : piece.PortalB)) continue;
+                        float2 p = end == 0 ? a : b, outward = math.normalizesafe(end == 0 ? a - b : b - a);
+                        float2 q = p + outward * PortalHoleOut;
+                        float y = (end == 0 ? piece.Ya : piece.Yb) + RoadConstants.RoadLift;
+                        tunnelHoles.Add((d, new Vector4(p.x, p.y, q.x, q.y), new Vector4(y, y, RoadConstants.TunnelHalf(piece.Half), crown + 1f)));
+                    }
+                }
+                tunnelHoles.Sort((x, y) => x.d.CompareTo(y.d));
+            }
+            int n = math.min(MaxTunnelHoles, tunnelHoles.Count);
+            for (int i = 0; i < n; i++) { tunnelA[i] = tunnelHoles[i].a; tunnelB[i] = tunnelHoles[i].b; }
+            if (n == 0 && tunnelHoleCount == 0) return;
+            tunnelHoleCount = n;
+            Shader.SetGlobalVectorArray(TunnelAId, tunnelA);
+            Shader.SetGlobalVectorArray(TunnelBId, tunnelB);
+            Shader.SetGlobalFloat(TunnelCountId, n);
+            var box = new Vector4(float.MaxValue, float.MaxValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < n; i++)
+            {
+                float r = tunnelB[i].z + TunnelHoleOverlap;
+                box.x = math.min(box.x, math.min(tunnelA[i].x, tunnelA[i].z) - r); box.y = math.min(box.y, math.min(tunnelA[i].y, tunnelA[i].w) - r);
+                box.z = math.max(box.z, math.max(tunnelA[i].x, tunnelA[i].z) + r); box.w = math.max(box.w, math.max(tunnelA[i].y, tunnelA[i].w) + r);
+            }
+            Shader.SetGlobalVector(TunnelBoxId, box);
+        }
 
         /// <summary>
         /// Bend a new tile's DTM edges onto the neighbours of its kind that are already in (see <see cref="StitchCoarse"/>):
@@ -483,10 +568,15 @@ namespace Rally.World
                 for (int i = 0; i < roadSegs; i++)
                 {
                     var c = segs[i];
-                    if ((c.Flags & CarveSegment.DeckOnly) != 0) continue;   // a bridge span's mask is its deck, no more
+                    if ((c.Flags & CarveSegment.Layer) != 0) continue;   // a bridge span's / tunnel's claim is its own, no more
                     c.HalfWidth += tile.Key.CellM * 1.5f; c.Ha -= RoadConstants.CarveMargin; c.Hb -= RoadConstants.CarveMargin;
                     segs[i] = c;
                 }
+            // Layer segments (bridge spans, tunnels) last: the compute carve runs in batches and decides a layer segment against
+            // the ground roads found so far (Carve.compute), so those must all be in first.
+            layerScratch.Clear();
+            for (int i = 0; i < segs.Count; i++) if ((segs[i].Flags & CarveSegment.Layer) != 0) layerScratch.Add(segs[i]);
+            if (layerScratch.Count > 0) { segs.RemoveAll(c => (c.Flags & CarveSegment.Layer) != 0); segs.AddRange(layerScratch); }
             if (segs.Count > segsNative.Length) { segsNative.Dispose(); segsNative = new NativeArray<CarveSegment>(math.ceilpow2(segs.Count), Allocator.Persistent); }
             for (int i = 0; i < segs.Count; i++) segsNative[i] = segs[i];
             tile.Carve(carver, segsNative, segs.Count);
@@ -547,6 +637,7 @@ namespace Rally.World
             Root.position -= new Vector3((float)delta.x, 0, (float)delta.y);
             PropColliders?.Shift(new float3(-(float)delta.x, 0, -(float)delta.y));
             tablesDirty = true;
+            tunnelHoleSegs = -1;   // the holes are in world coordinates: send them again
         }
 
         // ---- IGround -----------------------------------------------------------------------------------
@@ -606,14 +697,53 @@ namespace Rally.World
         }
 
         /// <summary>
-        /// The nearest road on the ground, unless a bridge deck is nearer (and within its carve reach): the carve gives such a
-        /// cell to the bridge and leaves it natural (CarveJob), so the approach road's end cap does not reach under the deck.
+        /// The nearest road on the ground, unless a bridge deck or a tunnel at about its height is nearer (and within its carve
+        /// reach): the carve gives such a cell to the bridge / tunnel and leaves it natural (CarveJob), so the approach road's end
+        /// cap does not reach under the deck or into the mountain over a portal. A deck or tunnel more than PassOver above or
+        /// below the road passes over / under it and takes nothing from it (the carve's rule too).
         /// </summary>
         bool GroundRoad(Utm33 p, double limit, out RoadHit q)
         {
             if (Roads == null || !Roads.Nearest(p, limit, RoadLayer.Ground, out q)) { q = default; return false; }
-            return Roads.BridgeSegmentCount == 0 || !Roads.Nearest(p, q.Distance, RoadLayer.Deck, out var b)
-                   || b.Distance >= q.Distance || b.Distance > RoadConstants.DeckHalf(b.Half) + RoadConstants.MaxEarthwork;
+            if (Roads.BridgeSegmentCount > 0 && Roads.Nearest(p, q.Distance, RoadLayer.Deck, out var b) && b.Distance < q.Distance
+                && b.Distance <= RoadConstants.DeckHalf(b.Half) + RoadConstants.MaxEarthwork && math.abs(b.RoadY - q.RoadY) < RoadConstants.PassOver) return false;
+            if (Roads.TunnelSegmentCount > 0 && Roads.Nearest(p, q.Distance, RoadLayer.Tunnel, out var t) && t.Distance < q.Distance
+                && t.Distance <= RoadConstants.TunnelHalf(t.Half) + RoadConstants.TunnelWallThick + RoadConstants.MaxEarthwork && math.abs(t.RoadY - q.RoadY) < RoadConstants.PassOver) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// The road tunnel the asker is in at a point: within the tube's plan out to the outside of its walls (a car rubbing the
+        /// wall keeps the floor under its wheels), below its roof (<see cref="ReferenceY"/>; NaN — the car being placed, the
+        /// camera, a sign post — counts as inside), and not past a portal (where the road outside at the same height is nearer:
+        /// the bisector, as for bridge decks). The mountain over a tunnel is the ground for an asker above the roof.
+        /// </summary>
+        bool InTunnel(Utm33 p, out RoadHit t)
+        {
+            t = default;
+            if (Roads == null || Roads.TunnelSegmentCount == 0) return false;
+            if (!Roads.Nearest(p, 16, RoadLayer.Tunnel, out t) || t.Distance > RoadConstants.TunnelHalf(t.Half) + RoadConstants.TunnelWallThick) return false;
+            if (!float.IsNaN(ReferenceY) && ReferenceY > t.RoadY + RoadConstants.TunnelCrown(t.Half) + 1f) return false;
+            return !(Roads.Nearest(p, t.Distance, RoadLayer.Ground, out var g) && g.Distance < t.Distance && math.abs(g.RoadY - t.RoadY) < RoadConstants.PassOver);
+        }
+
+        /// <summary>The tunnel floor at a lateral distance: the ribbon on the carriageway and shoulder, the carved terrace height out to the wall.</summary>
+        static float TunnelFloor(in RoadHit t) => t.RoadY + RoadConstants.RoadLift + math.max(RoadConstants.SurfaceLift((float)t.Distance, t.Half), RoadConstants.CarveLift);
+
+        /// <summary>ILayeredGround.TunnelAt: see <see cref="InTunnel"/>; heights and the centre point in world space.</summary>
+        public bool TunnelAt(float2 xz, out TunnelSpot spot)
+        {
+            spot = default;
+            if (!InTunnel(FloatingOrigin.ToUtm(xz), out var t)) return false;
+            float d = (float)t.Distance;
+            spot.Floor = TunnelFloor(t);
+            spot.Roof = t.RoadY + RoadConstants.TunnelRoofAt(d, t.Half);
+            spot.Crown = t.RoadY + RoadConstants.TunnelCrown(t.Half);
+            spot.Centre = FloatingOrigin.ToWorldXZ(new Utm33(t.Point.x, t.Point.y));
+            spot.Tangent = (float2)t.Tangent;
+            spot.Lateral = d * t.Side;
+            spot.Half = RoadConstants.TunnelHalf(t.Half);
+            return true;
         }
 
         /// <summary>
@@ -624,6 +754,7 @@ namespace Rally.World
         public float HeightAt(float2 xz)
         {
             var p = FloatingOrigin.ToUtm(xz);
+            if (InTunnel(p, out var tn)) return TunnelFloor(tn);
             if (OnDeck(p, out var b))
             {
                 float bd = (float)b.Distance;
@@ -647,6 +778,7 @@ namespace Rally.World
         public Surface SurfaceAt(float2 xz)
         {
             var p = FloatingOrigin.ToUtm(xz);
+            if (InTunnel(p, out var tn)) return tn.Distance <= tn.Half + RoadConstants.Shoulder ? tn.Surface : Surface.Offroad;
             if (OnDeck(p, out var b)) return b.Surface;
             if (GroundRoad(p, 24, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return q.Surface;
             return WaterAt(xz).Depth > 0.3f ? Surface.Water : Surface.Offroad;
@@ -661,7 +793,7 @@ namespace Rally.World
             // under the 0.45 m sea plane — water drag that grows with depth × speed², up to 16 m/s², and no splash to show
             // for it: the "car suddenly brakes" of 2026-11-19.
             // On a bridge deck the car is dry; under it, in the river, it is not.
-            if (OnDeck(p, out _)) return WaterSample.Dry;
+            if (OnDeck(p, out _) || InTunnel(p, out _)) return WaterSample.Dry;
             if (GroundRoad(p, 12, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return WaterSample.Dry;
             var t = TileFor(TileKind.Coarse, p);
             return Water.WaterAt(t != null ? ((TileView)t.UserData).Water : null, p, CarvedHeightAt(p));
