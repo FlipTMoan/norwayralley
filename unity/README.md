@@ -84,7 +84,7 @@ with the ScriptedDriver and the console gets a `bench:` line every 10 s (frame t
 debug window (F10 / F3) shows the same frame-time numbers while you play.
 
 The Leaflet map tiles, PeerJS and the geodata services (Kartverket WCS, NIBIO SR16, Overpass,
-NVDB, OSRM) are fetched live and cached in IndexedDB (`rally-cache`, the same database the JS game
+NVDB, OSRM) are fetched live (the map's place search asks Kartverket's stedsnavn API directly, uncached) and cached in IndexedDB (`rally-cache`, the same database the JS game
 uses, 10 GB LRU). In the editor the same cache lives under `Application.persistentDataPath/rally-cache`.
 
 ### WebGPU or WebGL 2?
@@ -160,7 +160,7 @@ unity/
   Assets/_Rally/Plugins/WebGL/        idb.jslib (IndexedDB), dom.jslib (URL, localStorage, clipboard, map overlay), peer.jslib (PeerJS rooms)
   Assets/_Rally/Editor/BuildWeb.cs    the web build + Player Settings
   Assets/_Rally/Tests/EditMode/       pure tests (Rally.Tests.Edit)
-  Assets/WebGLTemplates/Rally/        index.html: loader, canvas, Leaflet route map overlay, PeerJS, attribution footer
+  Assets/WebGLTemplates/Rally/        index.html: loader, canvas, Leaflet route map overlay (+ place search), PeerJS, attribution footer
   ProjectSettings/TagManager.asset    layers 8 Buildings, 9 Trees, 10 Props, 11 Water, 12 Actors, 13 Car; tags Car, Actor
 ```
 
@@ -260,7 +260,9 @@ overlays. Keep it in step with the controls table below.
 | `←` / `→` (start screen) | Choose the car (gamepad: d-pad) |
 
 Mouse and touch: the **MAP** button (and PICK A ROUTE ON THE MAP on the start screen) opens the Leaflet route
-map in the web build; pins snap to the nearest road of the chosen profile within 1 km, GENERATE ROUTE and
+map in the web build. Type a town or place name in the START or FINISH box (Kartverket's place-name register; towns
+and villages first, shown as "Hovden — tettsted, Bykle"; ↑ ↓ Enter Esc) or click the map (start, then finish);
+pins snap to the nearest road of the chosen profile within 1 km, GENERATE ROUTE and
 FREE DRIVE HERE load the stage and update the address bar so it can be shared. The start screen also has
 GEARBOX and SLIDING (0–3) toggles, saved in the browser, and the local cache size with CLEAR. On phones and
 narrow screens ◀ ▶ BRAKE GAS DRIFT buttons appear. Gamepad: triggers throttle/brake, left stick steers,

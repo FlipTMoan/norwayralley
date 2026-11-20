@@ -27,6 +27,8 @@ namespace Rally.World
         public bool HasHeights, CpuInSync = true;
         public uint GpuVersion;
         public ulong HoleMask;                   // coarse tiles: fine tiles that cover them (TileScheduler.HoleMask)
+        public float ReadyAt;                    // Time.realtimeSinceStartup when its ground was shown (TileWorld lead statistics)
+        public float Fade = 1f;                  // fine tiles: 0 → 1 over TileWorld.FineFadeSeconds after they arrive (blend weight towards the coarse ground)
         public object UserData;                  // roads/water/buildings views attach their per-tile state here
         bool disposed;
         int pendingReadbacks;
@@ -40,11 +42,15 @@ namespace Rally.World
             Mask = new NativeArray<byte>(atlas.N * atlas.N, Allocator.Persistent, NativeArrayOptions.ClearMemory);
         }
 
-        /// <summary>The fetched DTM arrives: keep it as the base, start the carved grid equal to it, upload both slices.</summary>
-        public void SetBase(NativeArray<float> dtm)
+        /// <summary>
+        /// The fetched DTM arrives: keep it as the base (after <paramref name="prepare"/> — TileWorld bends its edges onto the
+        /// neighbours'), start the carved grid equal to it, upload both slices.
+        /// </summary>
+        public void SetBase(NativeArray<float> dtm, Action<NativeArray<float>> prepare = null)
         {
             dtm.CopyTo(Base);
-            dtm.CopyTo(Grid.Heights);
+            prepare?.Invoke(Base);
+            Base.CopyTo(Grid.Heights);
             Atlas.UploadSlice(Atlas.Base, Base, Slice);
             HasHeights = true;
             UploadHeights();

@@ -106,11 +106,34 @@ namespace Rally.Roads
             /// <summary>Both ends on a bridge span.</summary>
             public bool Bridge;
         }
-        sealed class GradedWay { public List<double2> Points; public double[] Heights; public bool[] Covered, Bridge, Pier; public int Refs; }
+        sealed class GradedWay { public List<double2> Points; public double[] Heights; public bool[] Covered, Bridge, Pier, Unknown; public int Refs; }
 
         readonly Dictionary<long, List<Seg>> buckets = new Dictionary<long, List<Seg>>();
         readonly Dictionary<TileKey, List<(long bucket, Seg seg)>> byTile = new Dictionary<TileKey, List<(long, Seg)>>();
         readonly Dictionary<TileKey, List<long>> waysByTile = new Dictionary<TileKey, List<long>>();
+        /// <summary>What each tile was set with, so a tile can be set again (<see cref="Rebuild"/>).</summary>
+        readonly Dictionary<TileKey, (RoadGraphData data, Func<Utm33, float> ground, IReadOnlyList<RoadSurfaceLine> surfaces, Func<double2, bool> wet, Func<Utm33, bool> known)> inputs
+            = new Dictionary<TileKey, (RoadGraphData, Func<Utm33, float>, IReadOnlyList<RoadSurfaceLine>, Func<double2, bool>, Func<Utm33, bool>)>();
+        readonly HashSet<TileKey> dirty = new HashSet<TileKey>();
+
+        /// <summary>
+        /// Tiles whose segments and runs were cut from a grading that a later tile has replaced (a way graded again once ground
+        /// that was missing came in): they must be set again (<see cref="Rebuild"/>) and their ribbon and carve redone, or
+        /// two gradings of one road meet at the border and the carve takes either (load-order seams up to 20 m, 2026-11-20).
+        /// </summary>
+        public List<TileKey> TakeDirtyTiles()
+        {
+            var list = new List<TileKey>(dirty);
+            dirty.Clear();
+            return list;
+        }
+
+        /// <summary>Set a tile again from what it was set with (null when it is not registered).</summary>
+        public List<RoadPolyline> Rebuild(TileKey key)
+        {
+            if (!inputs.TryGetValue(key, out var a)) return null;
+            return SetTile(key, a.data, a.ground, a.surfaces, a.wet, a.known);
+        }
         readonly Dictionary<long, GradedWay> graded = new Dictionary<long, GradedWay>();
         // Junction graph (RoadLink): node key → outgoing links; links shared by overlapping tiles are ref-counted.
         readonly Dictionary<long, List<RoadLink>> links = new Dictionary<long, List<RoadLink>>();
@@ -179,12 +202,30 @@ namespace Rally.Roads
         /// (the pieces share the boundary sample), so each RoadPolyline, its segments and its links have one material.
         /// Bridges (<see cref="Bridges"/>): a way tagged <c>bridge=*</c> is a span end to end, any other way is one wherever
         /// it crosses <paramref name="wet"/> water (optional; no water rule without it).
+        /// <paramref name="known"/> (optional) tells where the ground is loaded: a way reaches far beyond the tile, and where no
+        /// tile is in yet the ground reads 0 (the sea) — a mountain road was graded down to sea level there and carved a trench
+        /// up to 340 m deep along it when that tile came in (seam survey 2026-11-20). Unknown samples take the nearest known
+        /// sample's ground instead, and a later tile whose padded area holds samples that were unknown grades the way again.
         /// </summary>
-        public List<RoadPolyline> SetTile(TileKey key, RoadGraphData data, Func<Utm33, float> coarseGround, IReadOnlyList<RoadSurfaceLine> surfaces = null, Func<double2, bool> wet = null)
+        public List<RoadPolyline> SetTile(TileKey key, RoadGraphData data, Func<Utm33, float> coarseGround, IReadOnlyList<RoadSurfaceLine> surfaces = null, Func<double2, bool> wet = null, Func<Utm33, bool> known = null)
+        {
+            var lines = new List<RoadPolyline>();
+            var steps = SetTileSteps(lines, key, data, coarseGround, surfaces, wet, known);
+            while (steps.MoveNext()) { }
+            return lines;
+        }
+
+        /// <summary>
+        /// <see cref="SetTile"/> in steps: it pauses between ways whenever the frame's streaming budget is spent
+        /// (<see cref="WorkBudget"/>; a dense tile graded for 330 ms in one frame). The tile is registered from the start, so
+        /// <see cref="RemoveTile"/> in between removes what is in; the caller then stops stepping. Runs go into <paramref name="lines"/>.
+        /// </summary>
+        public System.Collections.IEnumerator SetTileSteps(List<RoadPolyline> lines, TileKey key, RoadGraphData data, Func<Utm33, float> coarseGround, IReadOnlyList<RoadSurfaceLine> surfaces = null, Func<double2, bool> wet = null, Func<Utm33, bool> known = null)
         {
             RemoveTile(key);
-            var lines = new List<RoadPolyline>();
-            if (data == null || data.Ways == null) return lines;
+            inputs[key] = (data, coarseGround, surfaces, wet, known);
+            dirty.Remove(key);
+            if (data == null || data.Ways == null) { complete.Add(key); yield break; }
             var surfaceIndex = surfaces != null && surfaces.Count > 0 ? new RoadSurfaceIndex(surfaces) : null;
             var stats = new SurfaceStats { NvdbLines = surfaces?.Count ?? 0 };
             var b = key.Bounds;
@@ -200,6 +241,10 @@ namespace Rally.Roads
             var owned = new List<(long, Seg)>();
             var ways = new List<long>();
             var tileLinks = new List<long>();
+            byTile[key] = owned;
+            waysByTile[key] = ways;
+            linksByTile[key] = tileLinks;
+            surfaceByTile[key] = stats;
             // Major roads first: a way is graded once and later ways ease onto the roads already graded
             // (EaseOntoJunctions), so at a junction the main road keeps its profile and the side road ramps to it.
             foreach (var way in System.Linq.Enumerable.OrderBy(data.Ways, w => w.Tags != null && w.Tags.TryGetValue("highway", out var hk) ? ClassOf(hk) : 9))
@@ -211,16 +256,36 @@ namespace Rally.Roads
                 bool any = false;
                 foreach (var p in raw) if (Inside(p)) { any = true; break; }
                 if (!any) continue;
-                if (!graded.TryGetValue(way.Id, out var g))
+                bool Stale(GradedWay old)
                 {
+                    if (old.Unknown == null || known == null) return false;
+                    for (int i = 0; i < old.Points.Count; i++)
+                        if (old.Unknown[i] && Inside(old.Points[i]) && known(new Utm33(old.Points[i].x, old.Points[i].y))) return true;
+                    return false;
+                }
+                if (!graded.TryGetValue(way.Id, out var g) || Stale(g))
+                {
+                    int refs = g?.Refs ?? 0;
+                    if (g != null)   // graded again: every other tile cut from the old grading must be set again
+                        foreach (var kv in waysByTile)
+                            if (!kv.Key.Equals(key) && kv.Value.Contains(way.Id)) dirty.Add(kv.Key);
+                    long tg = FrameProbe.Start();
                     var pinned = new HashSet<int>();
                     for (int i = 0; i < way.Nodes.Count; i++) if (nodeCount[NodeKey(way.Nodes[i])] > 1) pinned.Add(i);
                     var samples = ProfileGrader.ResampleEven(ProfileGrader.SmoothThrough(raw, pinned, SmoothRounds), ProfileGrader.SampleStep);
                     int n = samples.Count;
                     var ground = new double[n];
                     for (int i = 0; i < n; i++) ground[i] = math.max(MinGradeGround, coarseGround(new Utm33(samples[i].x, samples[i].y)));
+                    bool[] unknown = null;
+                    if (known != null)
+                    {
+                        for (int i = 0; i < n; i++) if (!known(new Utm33(samples[i].x, samples[i].y))) (unknown ??= new bool[n])[i] = true;
+                        if (unknown != null) HoldKnownGround(ground, unknown);
+                    }
+                    FrameProbe.Stop(".grade.ground", tg); tg = FrameProbe.Start();
                     var bridge = new bool[n]; var pier = new bool[n];
                     var spans = FindBridges(way, spec.Value, samples, coarseGround, wet, bridge, pier, out var along, out var wetAt);
+                    FrameProbe.Stop(".grade.bridges", tg); tg = FrameProbe.Start();
                     double[] heights;
                     if (spans.Count == 0) heights = ProfileGrader.SmoothRoadHeights(ground, ProfileGrader.SampleStep);
                     else
@@ -229,9 +294,11 @@ namespace Rally.Roads
                         heights = GradeBridgeWay(ground, samples, coarseGround, Bridges.IsBridgeTag(way.Tags));
                     }
                     var covered = new bool[n];
+                    FrameProbe.Stop(".grade.smooth", tg); tg = FrameProbe.Start();
                     EaseOntoJunctions(way.Id, samples, heights, covered, bridge, spans);
+                    FrameProbe.Stop(".grade.ease", tg);
                     if (spans.Count > 0) Bridges.ApplyProfile(samples, along, heights, spans, wetAt, p => coarseGround(new Utm33(p.x, p.y)));
-                    g = new GradedWay { Points = samples, Heights = heights, Covered = covered, Bridge = bridge, Pier = pier };
+                    g = new GradedWay { Points = samples, Heights = heights, Covered = covered, Bridge = bridge, Pier = pier, Unknown = unknown, Refs = refs };
                     graded[way.Id] = g;
                 }
                 g.Refs++;
@@ -268,6 +335,7 @@ namespace Rally.Roads
                             if (!buckets.TryGetValue(bk, out var list)) buckets[bk] = list = new List<Seg>();
                             list.Add(seg);
                             owned.Add((bk, seg));
+                            SegmentCount++;
                             float m = run[k + 1].S - run[k].S;
                             if (runPaved) stats.AsphaltM += m; else stats.GravelM += m;
                             switch (runSource[k + 1])
@@ -285,7 +353,9 @@ namespace Rally.Roads
                 for (int i = 0; i < g.Points.Count; i++)
                 {
                     var p = g.Points[i];
-                    if (!Inside(p)) { Flush(); s = 0; continue; }
+                    // S is the distance along the whole way, so the runs two tiles cut from it carry the same V (RibbonMesh).
+                    if (i > 0) s += (float)math.distance(p, g.Points[i - 1]);
+                    if (!Inside(p)) { Flush(); continue; }
                     if (run.Count == 0) runPaved = paved[i];
                     else if (paved[i] != runPaved)
                     {
@@ -295,18 +365,30 @@ namespace Rally.Roads
                         run.Add(last); runSource.Add(lastSource);
                         runPaved = paved[i];
                     }
-                    if (run.Count > 0) s += (float)math.distance(p, run[run.Count - 1].P);
                     run.Add(new RoadSample { P = p, RoadY = (float)g.Heights[i], S = s, Covered = g.Covered[i], Bridge = g.Bridge[i], Pier = g.Pier[i] });
                     runSource.Add(source[i]);
                 }
                 Flush();
+                if (byTile.TryGetValue(key, out var still) && still == owned) surfaceByTile[key] = stats;
+                if (!WorkBudget.Left) yield return null;
             }
-            byTile[key] = owned;
-            waysByTile[key] = ways;
-            linksByTile[key] = tileLinks;
-            surfaceByTile[key] = stats;
-            SegmentCount += owned.Count;
-            return lines;
+            if (byTile.TryGetValue(key, out var mine) && mine == owned) complete.Add(key);
+        }
+
+        /// <summary>Samples over ground that is not loaded take the nearest loaded sample's ground (left alone if there is none).</summary>
+        static void HoldKnownGround(double[] ground, bool[] unknown)
+        {
+            int n = ground.Length;
+            var next = new int[n];
+            for (int i = n - 1, k = -1; i >= 0; i--) { if (!unknown[i]) k = i; next[i] = k; }
+            if (next[0] < 0) return;   // nothing known along the way
+            var src = (double[])ground.Clone();
+            for (int i = 0, last = -1; i < n; i++)
+            {
+                if (!unknown[i]) { last = i; continue; }
+                int a = last, b = next[i];
+                ground[i] = src[a < 0 ? b : b < 0 ? a : (i - a <= b - i ? a : b)];
+            }
         }
 
         /// <summary>Runs of one material shorter than <paramref name="min"/> samples take the material before them (or after, at the start).</summary>
@@ -448,7 +530,9 @@ namespace Rally.Roads
         }
 
         /// <summary>True once a tile's road answer has been registered (even an empty one): the endless start waits for these.</summary>
-        public bool HasTile(TileKey key) => byTile.ContainsKey(key);
+        /// <summary>The tile's roads are all in (graded to the end: <see cref="SetTileSteps"/> registers a tile when it starts).</summary>
+        public bool HasTile(TileKey key) => complete.Contains(key);
+        readonly HashSet<TileKey> complete = new HashSet<TileKey>();
 
         /// <summary>
         /// The junction-to-junction link nearest to a point within <paramref name="limit"/> m (barred links skipped),
@@ -538,6 +622,9 @@ namespace Rally.Roads
 
         public void RemoveTile(TileKey key)
         {
+            complete.Remove(key);
+            inputs.Remove(key);
+            dirty.Remove(key);
             if (!byTile.TryGetValue(key, out var owned)) return;
             foreach (var (bk, seg) in owned)
             {

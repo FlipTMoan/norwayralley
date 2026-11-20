@@ -90,6 +90,7 @@ namespace Rally.Gameplay
         readonly Dictionary<TileKey, GameObject> ribbons = new Dictionary<TileKey, GameObject>();
         readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> bridgeObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
         readonly Queue<TileResult> results = new Queue<TileResult>();
+        TileResult activeOverlay;
         FlatGround naturalGround;            // the uncarved DTM as an IGround, for StageRoute.AssignRoadY
 
         // Track
@@ -133,6 +134,8 @@ namespace Rally.Gameplay
             public TileKey Key;
             public Func<bool> Apply;
             public float Since;
+            /// <summary>An overlay between its steps (not one waiting to start): it continues before anything else.</summary>
+            public bool Stepping;
         }
 
         #endregion
@@ -317,6 +320,8 @@ namespace Rally.Gameplay
             var signTask = signSource != null ? signSource.FetchSigns(key.Bounds, ct) : Task.FromResult<SignSet>(null);
             RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null; SignSet signSet = null;
             var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
+            float waitSince = -1f;
+            System.Collections.IEnumerator steps = null;
             RallyLog.Info($"overlay: {key} asking OSM roads + features and NIBIO SR16 forest");
             try { roadData = await roadTask; RallyLog.Info($"overlay: {key} roads {roadData?.Ways.Count ?? 0} ways after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} roads failed: {e.Message}"); }
             try
@@ -334,35 +339,114 @@ namespace Rally.Gameplay
             }
             catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB signs failed: {e.Message}"); }
             try { cover = await coverTask; RallyLog.Info(cover != null ? $"overlay: {key} SR16 forest raster {cover.Width}×{cover.Height} cells (16 m) after {overlayWatch.ElapsedMilliseconds} ms" : $"overlay: {key} SR16 forest: none after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} SR16 failed: {e.Message}"); }
-            results.Enqueue(new TileResult
-            {
-                Key = key,
-                Apply = () =>
+            var overlay = new TileResult { Key = key };
+            overlay.Apply = () =>
                 {
                     if (world == null || !world.Tiles.ContainsKey(key)) return true;
                     if (!world.Scheduler.IsReady(key)) return false;    // the DTM result is still ahead in the queue
-                    if (roadData != null)
+                    // The roads are graded on the ground they run over, also in the neighbours (the runs reach TilePad into them,
+                    // the ways further): wait for the neighbours' DTMs that are on their way, at most NeighbourWait seconds.
+                    if (waitSince < 0f) waitSince = Time.realtimeSinceStartup;
+                    if (steps == null)
                     {
-                        // Water for the bridge rule: this tile's OSM lakes and rivers, the sea in the DTM, the water other tiles built.
-                        var water = new WaterProbe(features, p => world.BaseHeightAt(p), p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)), world.InMappedWater);
-                        var lines = roads.SetTile(key, roadData, p => world.BaseHeightAt(p), surfaces, water.Wet);
-                        RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
-                        var b = key.Bounds;
-                        world.RecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
-                        BuildRibbon(key, lines);
-                        if (signSet != null) PlaceSigns(key, signSet);
+                        if (roadData != null && Time.realtimeSinceStartup - waitSince < NeighbourWait && NeighbourPending(key)) return false;
+                        steps = OverlaySteps(key, roadData, features, cover, surfaces, signSet, overlayWatch);
+                        overlay.Stepping = true;
                     }
-                    if (features != null || cover != null) world.OnTileFeatures(key, cover, features);
-                    RallyLog.Info($"overlay: {key} applied: roads {(roadData != null ? "carved + ribbon" : "missing")}, forest {(cover != null ? "tinted + trees" : "missing")}, houses and water {(features != null ? "built" : "missing")}, after {overlayWatch.ElapsedMilliseconds} ms");
-                    return true;
-                },
-            });
+                    // One step per call (roads, ribbon, bridges, signs, splat, water, houses, their collider, carve): the queue
+                    // runs more of them in the same frame while the streaming budget lasts, else next frame.
+                    return !steps.MoveNext();
+                };
+            results.Enqueue(overlay);
             if (roadData == null && !ct.IsCancellationRequested)
             {
                 RallyLog.Info($"overlay: {key} has no road data, asking again in {CircuitBreaker.RetryMs / 1000} s");
                 await Task.Delay(TimeSpan.FromMilliseconds(CircuitBreaker.RetryMs), ct);
                 if (world != null && world.Tiles.ContainsKey(key)) await FetchFeatures(key, ct);
             }
+        }
+
+        /// <summary>
+        /// A coarse tile's overlay in steps, so no frame does all of it (it was grading, re-carving up to nine tiles, ribbon,
+        /// bridges and their collider, signs, splat, water, houses and their collider, all in one frame): the re-carves go to
+        /// TileWorld's queue, everything else is one step per MoveNext.
+        /// </summary>
+        System.Collections.IEnumerator OverlaySteps(TileKey key, RoadGraphData roadData, Features features, CoverRaster cover, List<RoadSurfaceLine> surfaces, SignSet signSet, System.Diagnostics.Stopwatch overlayWatch)
+        {
+            if (roadData != null)
+            {
+                // Water for the bridge rule: this tile's OSM lakes and rivers, the sea in the DTM, the water other tiles built.
+                long t0 = FrameProbe.Start();
+                var water = new WaterProbe(features, p => world.BaseHeightAt(p), p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)), world.InMappedWater);
+                var lines = new List<RoadPolyline>();
+                var grade = roads.SetTileSteps(lines, key, roadData, p => world.BaseHeightAt(p), surfaces, water.Wet, p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)));
+                for (;;)
+                {
+                    bool more = grade.MoveNext();
+                    FrameProbe.Stop(".ov.roads", t0);
+                    if (!more) break;
+                    yield return null;
+                    if (!world.Tiles.ContainsKey(key)) yield break;
+                    t0 = FrameProbe.Start();
+                }
+                t0 = FrameProbe.Start();
+                RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
+                var b = key.Bounds;
+                world.QueueRecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
+                FrameProbe.Stop(".ov.roads", t0);
+                yield return null;
+                if (!world.Tiles.ContainsKey(key)) yield break;
+                t0 = FrameProbe.Start();
+                BuildRibbon(key, lines);
+                FrameProbe.Stop(".ov.ribbon", t0);
+                yield return null;
+                if (!world.Tiles.ContainsKey(key)) yield break;
+                t0 = FrameProbe.Start();
+                BuildBridges(key, lines);
+                FrameProbe.Stop(".ov.bridges", t0);
+                yield return null;
+                if (!world.Tiles.ContainsKey(key)) yield break;
+                t0 = FrameProbe.Start();
+                if (signSet != null) PlaceSigns(key, signSet);
+                FrameProbe.Stop(".ov.signs", t0);
+                yield return null;
+                // Neighbours cut from a grading this tile replaced (a way graded again now that its ground is in): set them
+                // again, redraw their ribbon and bridges, carve again — or two gradings of one road meet at the border.
+                foreach (var d in roads.TakeDirtyTiles())
+                {
+                    if (world == null || !world.Tiles.ContainsKey(d)) continue;
+                    t0 = FrameProbe.Start();
+                    var again = roads.Rebuild(d);
+                    if (again != null)
+                    {
+                        BuildRibbon(d, again);
+                        BuildBridges(d, again);
+                        var db = d.Bounds;
+                        world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
+                        RallyLog.Info($"overlay: {d} roads set again (a way it shares with {key} was graded again)");
+                    }
+                    FrameProbe.Stop(".ov.rebuild", t0);
+                    yield return null;
+                }
+            }
+            if (features != null || cover != null)
+            {
+                var fs = world.OnTileFeaturesSteps(key, cover, features);
+                while (fs.MoveNext()) yield return null;
+            }
+            RallyLog.Info($"overlay: {key} applied: roads {(roadData != null ? "carved + ribbon" : "missing")}, forest {(cover != null ? "tinted + trees" : "missing")}, houses and water {(features != null ? "built" : "missing")}, after {overlayWatch.ElapsedMilliseconds} ms");
+        }
+
+        /// <summary>How long a coarse tile's roads wait for the neighbours' ground (<see cref="NeighbourPending"/>) before they are graded anyway.</summary>
+        const float NeighbourWait = 10f;
+
+        /// <summary>A coarse neighbour of the tile is wanted by the scheduler but its DTM is not in yet.</summary>
+        bool NeighbourPending(TileKey key)
+        {
+            for (int dj = -1; dj <= 1; dj++)
+                for (int di = -1; di <= 1; di++)
+                    if ((di != 0 || dj != 0) && world.Scheduler.TryGetState(new TileKey(TileKind.Coarse, key.I + di, key.J + dj), out var st) && st != TileState.Ready) return true;
+            return false;
         }
 
         /// <summary>The tile's NVDB plates (and made-up 362s where the limit changes without one) onto the shoulders of its roads.</summary>
@@ -377,13 +461,37 @@ namespace Rally.Gameplay
             RallyLog.Info($"overlay: {key} signs: {placed} plates on {posts.Count} posts ({made.Count} speed-limit changes without a plate), {skipped} without a design, {offRoad} away from the roads");
         }
 
-        /// <summary>At most one tile result per frame (one carve / upload), oldest first; a held fine tile goes to the back.</summary>
+        /// <summary>
+        /// Tile results oldest first while the frame's streaming budget lasts (<see cref="WorkBudget"/>), at least one; a
+        /// result that is not done (a fine tile held near the car, an overlay between its steps) goes to the back.
+        /// </summary>
+        void ApplyTileResults()
+        {
+            // An overlay that has started stepping goes on first, to the end: it went to the back of the queue after every
+            // step before, and the start tile's 389 ways took minutes to grade (half-carved terrain and no ribbon meanwhile).
+            while (activeOverlay != null)
+            {
+                long t0 = FrameProbe.Start();
+                bool done = activeOverlay.Apply();
+                FrameProbe.Stop("apply.coarse", t0);
+                if (done) activeOverlay = null;
+                if (!WorkBudget.Left) return;
+            }
+            for (int n = results.Count; n > 0 && results.Count > 0; n--)
+            {
+                ApplyOneTileResult();
+                if (!WorkBudget.Left) return;
+            }
+        }
+
         void ApplyOneTileResult()
         {
             if (results.Count == 0) return;
             var r = results.Dequeue();
             if (r.Since == 0f) r.Since = Time.time;
+            long t0 = FrameProbe.Start();
             bool done = r.Apply();
+            FrameProbe.Stop(r.Key.Kind == TileKind.Fine ? "apply.fine" : "apply.coarse", t0);
             if (!done && r.Key.Kind == TileKind.Fine && Time.time - r.Since > 3f)
             {
                 // Held only because the car is close: 3 s are up, let the fine tile snap in.
@@ -392,15 +500,16 @@ namespace Rally.Gameplay
                 done = r.Apply();
                 FineTileHoldDistance = keep;
             }
-            if (!done) results.Enqueue(r);
+            if (done) return;
+            if (r.Stepping && activeOverlay == null) activeOverlay = r;
+            else results.Enqueue(r);
         }
 
-        /// <summary>The road surface of a tile: RibbonMesh over the carved ground, materials tarmac / gravel; and its bridges (BridgeMesh).</summary>
+        /// <summary>The road surface of a tile: RibbonMesh over the carved ground, materials tarmac / gravel (its bridges: <see cref="BuildBridges"/>).</summary>
         void BuildRibbon(TileKey key, List<RoadPolyline> lines)
         {
             if (ribbons.TryGetValue(key, out var old)) { Destroy(old); ribbons.Remove(key); }
-            BuildBridges(key, lines);
-            var mesh = RibbonMesh.Build(lines, key.Origin);
+            var mesh = RibbonMesh.Build(lines, key.Origin, key.Bounds);
             if (mesh == null) return;
             var go = new GameObject("Ribbon " + key);
             go.transform.SetParent(world.Root, false);
@@ -414,7 +523,7 @@ namespace Rally.Gameplay
         void BuildBridges(TileKey key, List<RoadPolyline> lines)
         {
             DropBridges(key);
-            var draw = BridgeMesh.Build(lines, key.Origin, p => world.BaseHeightAt(p), out var solid);
+            var draw = BridgeMesh.Build(lines, key.Origin, p => world.BaseHeightAt(p), out var solid, key.Bounds);
             if (draw == null) return;
             var go = new GameObject("Bridges " + key) { layer = RallyLayers.Buildings, isStatic = true };
             go.transform.SetParent(world.Root, false);
@@ -505,6 +614,7 @@ namespace Rally.Gameplay
                         : new RoutePose { XZ = float2.zero, Y = world.HeightAt(float2.zero), Yaw = 0f };
                     route = new RoadNetworkRoute(roads, start);
                     flow.FreeDrive = true;
+                    if (pose.HasValue) { var ll = Proj.ToLatLon(pose.Value.Position); RallyLog.Info(FormattableString.Invariant($"free drive: starts at {ll.Lat:0.00000},{ll.Lon:0.00000}, {math.length(pose.Value.Position.Minus(anchor)):0} m from the pin")); }
                     break;
                 }
             }
@@ -518,6 +628,24 @@ namespace Rally.Gameplay
             turns = PaceNotes.FindTurns(stage.Samples);
             route = stage;
             if (car != null) car.Route = stage;   // never SetRoute here: that would put the car back on the start line
+        }
+
+        /// <summary>A normal stage prefetches the line this far ahead of the car (endless stages prefetch the next sector).</summary>
+        const float StagePrefetch = 2500f;
+        float prefetchAt = float.NegativeInfinity;
+
+        /// <summary>
+        /// A normal (OSRM / demo) stage: the stage line from the car to <see cref="StagePrefetch"/> ahead into the scheduler's
+        /// prefetch path, renewed every 200 m — the coarse tiles under it and the 1 m tiles along it load behind the ring,
+        /// so a road that turns away from the straight-ahead lead point is ready too (it used to be prefetched in endless mode only).
+        /// </summary>
+        void PrefetchStage(float carS)
+        {
+            if (stage == null || math.abs(carS - prefetchAt) < 200f) return;
+            prefetchAt = carS;
+            prefetchPath.Clear();
+            for (float s = carS; s <= math.min(stage.Length, carS + StagePrefetch); s += 40f) prefetchPath.Add(FloatingOrigin.ToUtm(stage.SampleAtDistance(s).XZ));
+            world.Scheduler.SetPrefetchPath(prefetchPath);
         }
 
         /// <summary>The walk's newest sector: its links' graded points onto the stage line, and the tiles under them into the prefetch path.</summary>
@@ -693,6 +821,9 @@ namespace Rally.Gameplay
 
         void Update()
         {
+            FrameProbe.EndFrame(Time.unscaledDeltaTime);
+            WorkBudget.BeginFrame();
+            WorkBudget.Scale(flow.Phase == Phase.Loading || flow.Phase == Phase.Intro || flow.Phase == Phase.Countdown, frames.AvgMs);
             HandleKeys();
             frames.Record(Time.unscaledDeltaTime);
             if (bench) Bench();
@@ -700,14 +831,18 @@ namespace Rally.Gameplay
             fps = math.lerp(fps, 1f / math.max(1e-4f, Time.unscaledDeltaTime), 0.05f);
             if (world == null) return;
             float dt = Time.deltaTime;
-            ApplyOneTileResult();
+            ApplyTileResults();
             // The scheduler is fed the car's position and velocity every frame: its led point (LEAD 2800 m) keeps
             // the loaded ring ahead of a fast car, exactly stream.js. Before the car exists the start is the focus.
             float3 carPos = car != null ? (float3)car.transform.position : float3.zero;
             double2 velocity = car != null ? (double2)car.State.Vel : double2.zero;
             if (MainCamera != null) world.Scheduler.SetHorizon(TileScheduler.HorizonFor(RenderSettings.fog ? RenderSettings.fogDensity : 0f, MainCamera.farClipPlane));
+            long tWorld = FrameProbe.Start();
             world.Update(carPos, velocity, MainCamera, dt);
+            FrameProbe.Stop("world.update", tWorld);
+            long tSigns = FrameProbe.Start();
             signs?.Update(FloatingOrigin.ToUtm(carPos), carPos);
+            FrameProbe.Stop("signs.update", tSigns);
             if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
 
             if (flow.Phase == Phase.Intro && Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame) StartEngine();
@@ -715,6 +850,7 @@ namespace Rally.Gameplay
             ref var s = ref car.State;
             var q = route.Nearest(s.Pos.xz, 120f);
             float carS = q.S;
+            if (walk == null) PrefetchStage(carS);
 
             actors.Update(dt, carS, s.Pos.xz, s.Speed, CarSim.CarRadius);
             if (s.WaterDepth > 0.05f && s.Speed > 2f) world.Wake?.Add(s.Pos.xz, 0.3f);
@@ -1273,7 +1409,7 @@ namespace Rally.Gameplay
             foreach (var go in ribbons.Values) Destroy(go);
             ribbons.Clear();
             foreach (var key in new List<TileKey>(bridgeObjects.Keys)) DropBridges(key);
-            results.Clear();
+            results.Clear(); activeOverlay = null;
             foreach (var v in actorViews.Values) Destroy(v.gameObject);
             actorViews.Clear();
             actors = null;
@@ -1282,7 +1418,7 @@ namespace Rally.Gameplay
             signs?.Dispose(); signs = null;
             world.Dispose();
             world = null; roads = null; stage = null; route = null; walk = null; edges = null; turns = null;
-            stagePoints.Clear(); sectorEnds.Clear(); prefetchPath.Clear(); lastSector = 0;
+            stagePoints.Clear(); sectorEnds.Clear(); prefetchPath.Clear(); lastSector = 0; prefetchAt = float.NegativeInfinity;
         }
 
         /// <summary>multiplayer.js spawnOffset: slot 0 on the line, pairs every 6 m back, so nobody spawns inside anybody.</summary>

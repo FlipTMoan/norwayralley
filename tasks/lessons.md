@@ -178,3 +178,31 @@
   defect before blaming the change). Fixed only for decks (`!q.Bridge`); other end-to-end way joints probably still have it (not checked).
 - `git stash push -u -- <runtime paths>` (keeping the new editor tool) gave clean baseline benches and road surveys at
   HEAD without a worktree; the stash must hold the new `.meta` files too, or Unity deletes/regenerates GUIDs.
+
+## 2026-11-20 — route map search: check the DOM state before typing into a Unity page
+- A click on the HUD MAP button did not open the map (Unity UI clicks in the hidden automation tab are unreliable), and
+  the "Bergen" typed next went to the game: G switched the gearbox, N scouted a new stage. Before `type` in a Unity web
+  page, assert the target with JS (`map-overlay` has `open`, `document.activeElement.id` is the box); PICK A ROUTE ON
+  THE MAP on the start screen opened it reliably.
+
+## 2026-11-20 — tile seams and streaming hitches: survey first, and benchmark on a quiet GPU
+- A border survey (`PreviewShots -previewSeams`) found four different seam causes in one run that the plan had lumped
+  together: per-tile DEM resampling (edges 0.75 m apart), a carve that collected segments by a narrower reach than it
+  carved with, house pads taken from the parent tile only, and roads graded on ground that was not loaded (a 340 m
+  trench). A "recarve everything now" diagnostic told stale carves (fixed by it) from wrong segment choice (not fixed by
+  it). Rule: add a diagnostic that separates timing from logic before fixing a seam.
+- Chrome's GPU process sat at ~90 % GPU during the benches: 0.3–0.5 s waits showed up wherever the frame first touched
+  the GPU (a compute dispatch, a buffer SetData) and looked like streaming hitches. Check `nvidia-smi` before a bench,
+  and record the measured main-thread work per frame (FrameProbe `Work`, GPU waits named `.gpu…`) next to frame times.
+- The ScriptedDriver got stuck in Sauda's streets after 0–600 m, so a "120 s drive" streamed nothing new; read the
+  "m driven" line. For streaming benches move the car along the line at a fixed speed (`-previewGlide`).
+- Each Unity launch of a bench batch recompiles: editing runtime code while a batch runs changes its later runs. Keep the
+  next changes as patch scripts and apply them between batches.
+- The editor's UnityTls rejects router.project-osrm.org (cert verify error 35) while curl works: pre-seed the file cache
+  (key = the exact OsrmRouter URL, sha1 file name, meta lines key/kind/size/at/text) to drive OSRM stages in the editor.
+- Splitting work into steps changed the meaning of a flag: `HasTile` (registered) had meant "roads all in". When a
+  method becomes incremental, grep every reader of the state it sets at the start and decide which ones need "done".
+- A queue that sends an unfinished multi-step job to the back multiplies its latency by the queue length: let a started
+  job run to the end first. Measure time-to-ready of the start tile, not only frame times.
+- A cache entry replaced for one consumer (a way graded again) must invalidate everything cut from the old entry; a test
+  that permutes arrival orders (6 orders, compare the final world) found the 20 m seam that one-order tests never saw.

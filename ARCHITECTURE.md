@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-20 (Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-20 (Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -209,6 +209,30 @@ flowchart TB
 Car art: `unity/Assets/_Rally/Art/Cars/<name>/` with a `LICENSE.txt` each
 (CC BY 4.0 models only; list in `unity/docs/car-models.md`).
 
+### Unity streaming: tile seams and the frame budget (2026-11-20)
+
+Every tile is its own Kartverket request, so neighbours disagreed on their common edge (coarse 0.75 m on average, up to
+33 m at cliffs) and the 1 m tiles stood up to 10 m off the 8 m ground at their outline. Now a new tile takes its loaded
+neighbours' edges and corners (`TileWorld.Stitch`), a fine tile blends into the coarse ground over 16 m at a bare outline
+and fades in over 0.5 s (`TerrainGround.hlsl FineWeight`; `TileWorld.FineWeight` is the CPU twin the car drives on), the
+carve collects what it carves on both sides of an edge, a ribbon stretch is drawn by one tile, and roads over ground not
+loaded yet are graded again once it is in. Streaming work runs in pieces within 5 ms per frame (`Core/WorkBudget`; the
+web build has one C# thread, so pieces, not jobs):
+
+```mermaid
+flowchart LR
+  F[fetch task<br/>DEM · Overpass · SR16 · NVDB] -->|decode, resample in 32-row bands| Q[results queue]
+  Q -->|while budget lasts| D[OnTileData<br/>stitch · upload · carve]
+  Q -->|one step per call| O[overlay steps<br/>grade ways · ribbon · bridges · signs · splat · water · houses · collider]
+  O --> RQ[re-carve queue<br/>nearest tile first]
+  RQ -->|TileWorld.Update, budget| C[carve]
+  P[prefetch path<br/>endless: next sector · stage: 2.5 km ahead] --> S[TileScheduler]
+  S --> F
+```
+
+`FrameProbe` (Core) times every frame and attributes slow ones; `PreviewShots -previewGlide -previewDrive` and
+`-previewSeams` are the measuring tools.
+
 ### Unity bridges (2026-11-20)
 
 ```mermaid
@@ -225,6 +249,30 @@ flowchart LR
   N --> TW[TileWorld HeightAt / WaterAt / SurfaceAt<br/>deck if ReferenceY ≥ deck − 1 m]
   CAR[CarController sets ReferenceY] --> TW
 ```
+
+### Unity route map: place search (2026-11-20)
+
+The START / FINISH boxes live in the web template (`unity/Assets/WebGLTemplates/Rally/index.html`, `window.rallyMap`);
+C# is unchanged: a chosen place is sent as the same `pick` event as a map click.
+
+```mermaid
+sequenceDiagram
+  participant U as Player
+  participant T as index.html (rallyMap)
+  participant K as Kartverket stedsnavn API
+  participant C as GameController.OnMapEvent
+  U->>T: types "Hovden" (300 ms debounce, stale fetch aborted)
+  T->>K: /navn?sok=Hovden*&treffPerSide=500 (fuzzy=true only if nothing found)
+  K-->>T: names (type, municipality, point)
+  T->>T: rank: By/Tettsted → small settlements → kommune → rest; dedupe; Norway only; 12 rows
+  U->>T: ↑↓ Enter or click "Hovden — tettsted, Bykle"
+  T->>T: pin + pan/zoom (fit both pins)
+  T->>C: SendMessage('Map','OnMapEvent',{ev:'pick',which,lat,lon})
+  C->>T: OSRM /nearest → MapSetPin (snapped) + MapStatus
+```
+
+Keys typed in a box are stopped in a window capture listener registered before Unity loads, so G / M / R / N / H / Esc
+do not reach the game; Esc closes the list, then the map.
 
 ### Unity car chooser (2026-11-20)
 

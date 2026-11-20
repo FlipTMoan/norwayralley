@@ -18,7 +18,22 @@ namespace Rally.World
     /// </summary>
     public sealed class TileWorld : IGround, ILayeredGround, IDisposable
     {
-        public const int CoarseSlices = 96, FineSlices = 32, SplatRes = 128;   // 96: view ring to just past the horizon + drop hysteresis (TileScheduler.DropRadius); ~0.7 MB GPU per slice
+        public const int CoarseSlices = 96, FineSlices = 32, SplatRes = 128;
+        /// <summary>
+        /// Every tile's DTM is its own WCS request, resampled from its own lat/lon raster, so two neighbours disagree on the
+        /// samples of their common edge (seam survey 2026-11-20: coarse edges 0.75 m apart on average, up to 33 m at cliffs;
+        /// fine edges 5 cm, up to 1.4 m). A new tile takes the edge of each neighbour of its kind that is already in, exactly,
+        /// and the difference fades out over this many samples inside (32 m coarse, 16 m fine).
+        /// </summary>
+        public const int StitchCoarse = 4, StitchFine = 16;
+        /// <summary>
+        /// Width (m) of the band inside a fine tile's outline over which the 1 m ground blends into the 8 m ground where no
+        /// fine neighbour continues it (heights, carve mask, verge tone: TerrainGround.hlsl FineWeight). The two DTMs differ by
+        /// decimetres to metres and the coarse carve is widened and sunk, which was a hard step and a lit line.
+        /// </summary>
+        public const float FineBlendM = 16f;
+        /// <summary>A fine tile fades in over this long instead of popping (only where a clipmap draws it; tests see it at once).</summary>
+        public const float FineFadeSeconds = 0.5f;   // 96: view ring to just past the horizon + drop hysteresis (TileScheduler.DropRadius); ~0.7 MB GPU per slice
         public readonly TileScheduler Scheduler = new TileScheduler();
         public readonly Dictionary<TileKey, TerrainTile> Tiles = new Dictionary<TileKey, TerrainTile>();
         public readonly TileAtlas CoarseAtlas, FineAtlas;
@@ -49,10 +64,32 @@ namespace Rally.World
         /// </summary>
         readonly List<TerrainTile> scatterQueue = new List<TerrainTile>();
         public int ScatterPending => scatterQueue.Count;
+        /// <summary>
+        /// Tiles to carve again because new roads or pads reach them (<see cref="QueueRecarveWithin"/>): a coarse overlay used
+        /// to re-carve up to nine coarse tiles and every fine tile around in its own frame. Now the nearest to the car go first,
+        /// one at a time while the frame's streaming budget lasts (<see cref="WorkBudget"/>).
+        /// </summary>
+        readonly List<TerrainTile> recarveQueue = new List<TerrainTile>();
+        public int RecarvePending => recarveQueue.Count;
         NativeArray<Color32> splatScratch, splat2Scratch, coverScratch;
+        readonly float[] fineFade = new float[FineSlices];
+        bool fadesDirty = true;
+        static readonly int FineFadeId = Shader.PropertyToID("_FineFade");
         readonly List<Utm33> roadPoints = new List<Utm33>(2048);
         GameObject sea;
         Utm33 lastTableFocus;
+        TileKey carFine, carCoarse;
+
+        /// <summary>
+        /// Streaming lead, for the bench: fine tiles on the car's way (wanted by the scheduler) that were ready when the car
+        /// entered them, how long before (s), and those it entered before they were ready; coarse tiles entered before ready.
+        /// </summary>
+        public int FineEntered, FineLate, CoarseLate;
+        public float FineLeadMin = float.PositiveInfinity;
+        public double FineLeadSum;
+        public void ResetLead() { FineEntered = FineLate = CoarseLate = 0; FineLeadMin = float.PositiveInfinity; FineLeadSum = 0; }
+        public string LeadReport() => FineEntered + FineLate == 0 ? "no fine tile entered"
+            : FormattableString.Invariant($"fine tiles entered {FineEntered + FineLate}: {FineLate} before ready; ready ones {FineLeadSum / math.max(1, FineEntered):0.0} s ahead on average, {(FineEntered > 0 ? FineLeadMin : 0):0.0} s at least; coarse tiles entered before ready {CoarseLate}");
         bool tablesDirty = true;
 
         /// <summary>Per-tile scene state kept in TerrainTile.UserData.</summary>
@@ -126,6 +163,7 @@ namespace Rally.World
             if (view.Buildings?.Mesh != null) RallyObjects.Destroy(view.Buildings.Mesh);
             Vegetation?.ClearTile(tile);
             scatterQueue.Remove(tile);
+            recarveQueue.Remove(tile);
             Tiles.Remove(key);
             tile.Dispose();
             tablesDirty = true;
@@ -142,6 +180,7 @@ namespace Rally.World
             Roads?.PointsNear(TileScheduler.LedPoint(focus, velocity), 550, roadPoints);
             Scheduler.Update(focus, velocity, roadPoints);
             if (Scheduler.TryDequeue(out var key)) TileNeeded?.Invoke(key);
+            CountLead(focus);
             var c = TileKey.At(TileKind.Coarse, focus);
             if (tablesDirty || !TileKey.At(TileKind.Fine, lastTableFocus).Equals(TileKey.At(TileKind.Fine, focus)) || !TileKey.At(TileKind.Coarse, lastTableFocus).Equals(c))
             {
@@ -151,15 +190,146 @@ namespace Rally.World
             if (sea != null) sea.transform.position = new Vector3(carWorld.x, Water.SeaLevel, carWorld.z);
             Wake?.Update(carWorld.xz, dt);
             TreeColliders?.Update(carWorld);
+            long t0 = FrameProbe.Start();
+            RecarveQueued(focus);
+            FrameProbe.Stop(".recarve", t0);
+            t0 = FrameProbe.Start();
             ScatterNext();
+            FrameProbe.Stop(".scatter", t0);
+            AdvanceFades(dt);
             if (camera != null)
             {
                 Clipmap?.Render((float3)camera.transform.position);
+                t0 = FrameProbe.Start();
                 Vegetation?.Render(camera);
+                FrameProbe.Stop(".veg.render", t0);
             }
         }
 
         public void FetchFailed(TileKey key) => Scheduler.Fail(key);
+
+        /// <summary>
+        /// Bend a new tile's DTM edges onto the neighbours of its kind that are already in (see <see cref="StitchCoarse"/>):
+        /// a correction that equals the difference on each such edge and fades out inside by a cosine. Where two stitched edges
+        /// meet at a corner the Coons term keeps both exact. A tile that touches one only at a corner (the diagonal neighbour,
+        /// no edge neighbour on either side of that corner) takes its corner sample too, so every two loaded tiles agree on every
+        /// point they share and two edge neighbours never disagree at a corner (the mean is a fallback that cannot happen).
+        /// </summary>
+        void Stitch(TileKey key, NativeArray<float> h)
+        {
+            int n = TileScheduler.Samples, f = key.Kind == TileKind.Coarse ? StitchCoarse : StitchFine;
+            float[] Edge(int di, int dj)
+            {
+                if (!Tiles.TryGetValue(new TileKey(key.Kind, key.I + di, key.J + dj), out var nb) || !nb.HasHeights) return null;
+                var d = new float[n];
+                for (int k = 0; k < n; k++)
+                {
+                    // Own edge sample k and the neighbour's sample on the same point (row-major, row = north).
+                    int own = di < 0 ? k * n : di > 0 ? k * n + n - 1 : dj < 0 ? k : (n - 1) * n + k;
+                    int other = di < 0 ? k * n + n - 1 : di > 0 ? k * n : dj < 0 ? (n - 1) * n + k : k;
+                    d[k] = nb.Base[other] - h[own];
+                }
+                return d;
+            }
+            float[] w = Edge(-1, 0), e = Edge(1, 0), s = Edge(0, -1), no = Edge(0, 1);
+            // Diagonal neighbours: the difference at the shared corner (NaN when an edge neighbour already fixes that corner).
+            float Diag(int di, int dj, bool edgeFixed)
+            {
+                if (edgeFixed || !Tiles.TryGetValue(new TileKey(key.Kind, key.I + di, key.J + dj), out var nb) || !nb.HasHeights) return float.NaN;
+                int own = (dj < 0 ? 0 : n - 1) * n + (di < 0 ? 0 : n - 1), other = (dj < 0 ? n - 1 : 0) * n + (di < 0 ? n - 1 : 0);
+                return nb.Base[other] - h[own];
+            }
+            float dsw = Diag(-1, -1, w != null || s != null), dse = Diag(1, -1, e != null || s != null), dnw = Diag(-1, 1, w != null || no != null), dne = Diag(1, 1, e != null || no != null);
+            if (w == null && e == null && s == null && no == null && float.IsNaN(dsw) && float.IsNaN(dse) && float.IsNaN(dnw) && float.IsNaN(dne)) return;
+            var fall = new float[f];
+            for (int i = 0; i < f; i++) fall[i] = 0.5f * (1 + math.cos(math.PI * i / f));
+            float F(int i) => i < f ? fall[i] : 0f;
+            float Corner(float[] a, int ka, float[] b, int kb) => a != null && b != null ? 0.5f * (a[ka] + b[kb]) : 0f;
+            float sw = Corner(w, 0, s, 0), se = Corner(e, 0, s, n - 1), nw = Corner(w, n - 1, no, 0), ne = Corner(e, n - 1, no, n - 1);
+            for (int r = 0; r < n; r++)
+            {
+                float fs = F(r), fn = F(n - 1 - r);
+                bool band = fs > 0 || fn > 0;
+                for (int c = 0; c < n; c++)
+                {
+                    if (!band && c == f) c = n - f;   // away from the south / north band only the west / east bands change
+                    float fw = F(c), fe = F(n - 1 - c);
+                    if (fw == 0 && fe == 0 && !band) continue;
+                    float corr = 0;
+                    if (w != null) corr += fw * w[r];
+                    if (e != null) corr += fe * e[r];
+                    if (s != null) corr += fs * s[c];
+                    if (no != null) corr += fn * no[c];
+                    if (w != null && s != null) corr -= fw * fs * sw;
+                    if (e != null && s != null) corr -= fe * fs * se;
+                    if (w != null && no != null) corr -= fw * fn * nw;
+                    if (e != null && no != null) corr -= fe * fn * ne;
+                    if (!float.IsNaN(dsw)) corr += F(math.max(c, r)) * dsw;
+                    if (!float.IsNaN(dse)) corr += F(math.max(n - 1 - c, r)) * dse;
+                    if (!float.IsNaN(dnw)) corr += F(math.max(c, n - 1 - r)) * dnw;
+                    if (!float.IsNaN(dne)) corr += F(math.max(n - 1 - c, n - 1 - r)) * dne;
+                    h[r * n + c] += corr;
+                }
+            }
+        }
+
+        /// <summary>Fine tiles fading in: advance, and hand the shader each slice's fade (TerrainGround.hlsl _FineFade).</summary>
+        void AdvanceFades(float dt)
+        {
+            foreach (var t in Tiles.Values)
+            {
+                if (t.Key.Kind != TileKind.Fine || !t.HasHeights || t.Fade >= 1f) continue;
+                t.Fade = math.min(1f, t.Fade + dt / FineFadeSeconds);
+                fineFade[t.Slice] = t.Fade;
+                fadesDirty = true;
+            }
+            if (fadesDirty) { Shader.SetGlobalFloatArray(FineFadeId, fineFade); fadesDirty = false; }
+        }
+
+        /// <summary>The fade of the ready fine tile at (i, j), 0 where there is none.</summary>
+        float FineFadeAt(int i, int j) => Tiles.TryGetValue(new TileKey(TileKind.Fine, i, j), out var t) && t.HasHeights ? t.Fade : 0f;
+
+        static float Open(float fadeNeighbour, float d) => 1f - (1f - fadeNeighbour) * (1f - math.smoothstep(0f, FineBlendM, d));
+
+        /// <summary>
+        /// How much of the fine tile's ground shows at a point inside it (CPU twin of TerrainGround.hlsl FineWeight): its fade,
+        /// times, for each side and corner within <see cref="FineBlendM"/>, 1 where a fully faded-in neighbour continues it and
+        /// down to 0 at an outline with none. The product is the same seen from either tile of a shared edge.
+        /// </summary>
+        public float FineWeight(TerrainTile fine, Utm33 p)
+        {
+            float w = fine.Fade, s = TileScheduler.FineSize;
+            float lx = (float)(p.E - fine.Key.Origin.E), ly = (float)(p.N - fine.Key.Origin.N), hx = s - lx, hy = s - ly;
+            if (math.min(math.min(lx, ly), math.min(hx, hy)) >= FineBlendM) return w;
+            int sx = lx < FineBlendM ? -1 : hx < FineBlendM ? 1 : 0, sy = ly < FineBlendM ? -1 : hy < FineBlendM ? 1 : 0;
+            float dx = sx < 0 ? lx : hx, dy = sy < 0 ? ly : hy;
+            int i = fine.Key.I, j = fine.Key.J;
+            if (sx != 0) w *= Open(FineFadeAt(i + sx, j), dx);
+            if (sy != 0) w *= Open(FineFadeAt(i, j + sy), dy);
+            if (sx != 0 && sy != 0) w *= Open(FineFadeAt(i + sx, j + sy), math.sqrt(dx * dx + dy * dy));
+            return w;
+        }
+
+        void CountLead(Utm33 focus)
+        {
+            var fk = TileKey.At(TileKind.Fine, focus);
+            if (!fk.Equals(carFine))
+            {
+                carFine = fk;
+                if (Tiles.TryGetValue(fk, out var ft) && ft.HasHeights)
+                {
+                    float lead = Time.realtimeSinceStartup - ft.ReadyAt;
+                    FineEntered++; FineLeadSum += lead; FineLeadMin = math.min(FineLeadMin, lead);
+                }
+                else if (Scheduler.Contains(fk)) { FineLate++; RallyLog.Info($"stream: the car entered {fk} before its 1 m ground was ready"); }
+            }
+            var ck = TileKey.At(TileKind.Coarse, focus);
+            if (!ck.Equals(carCoarse))
+            {
+                carCoarse = ck;
+                if (!(Tiles.TryGetValue(ck, out var ct) && ct.HasHeights)) { CoarseLate++; RallyLog.Info($"stream: the car entered {ck} before its ground was ready"); }
+            }
+        }
 
         /// <summary>
         /// A tile's DTM arrived: upload the heights, carve the roads and show it — the clipmap draws the tile
@@ -174,14 +344,18 @@ namespace Rally.World
             tile.Latitude = latitude;
             tile.TreeLine = LandcoverSplat.TreeLine(latitude) + (Style != null ? Style.TreeLineOffset : 0);
             tile.SnowLine = LandcoverSplat.SnowLine(latitude) + (Style != null ? Style.SnowLineOffset : 0);
-            tile.SetBase(dtm);
+            long t0 = FrameProbe.Start();
+            tile.SetBase(dtm, b => Stitch(key, b));
+            if (key.Kind == TileKind.Fine) { tile.Fade = Clipmap != null ? 0f : 1f; fineFade[tile.Slice] = tile.Fade; fadesDirty = true; }
+            FrameProbe.Stop(".tile.upload", t0);
             var worldOrigin = FloatingOrigin.ToWorld(key.Origin, 0);
             view.Root = new GameObject(key.ToString());
             view.Root.transform.SetParent(Root, false);
             view.Root.transform.position = worldOrigin;
-            if (key.Kind == TileKind.Coarse && (cover != null || features != null)) BuildFeatures(tile, view, cover, features);
+            if (key.Kind == TileKind.Coarse && (cover != null || features != null)) BuildFeaturesNow(tile, view, cover, features);
             else Carve(tile);
             Scheduler.MarkReady(key);
+            tile.ReadyAt = Time.realtimeSinceStartup;
             if (key.Kind == TileKind.Coarse) tile.HoleMask = Scheduler.HoleMask(key.I, key.J);
             tablesDirty = true;
             TileReady?.Invoke(tile);
@@ -193,15 +367,37 @@ namespace Rally.World
         /// </summary>
         public void OnTileFeatures(TileKey key, CoverRaster cover, Features features)
         {
-            if (key.Kind != TileKind.Coarse || !Tiles.TryGetValue(key, out var tile) || !tile.HasHeights) return;
-            BuildFeatures(tile, (TileView)tile.UserData, cover, features);
+            var steps = OnTileFeaturesSteps(key, cover, features);
+            while (steps.MoveNext()) { }
         }
 
-        void BuildFeatures(TerrainTile tile, TileView view, CoverRaster cover, Features features)
+        /// <summary>
+        /// <see cref="OnTileFeatures"/> one step per MoveNext (splat, water, houses, their collider, carve), so the driver can
+        /// spread a tile's overlay over frames. Stops by itself when the tile is dropped in between.
+        /// </summary>
+        public System.Collections.IEnumerator OnTileFeaturesSteps(TileKey key, CoverRaster cover, Features features)
+        {
+            if (key.Kind != TileKind.Coarse || !Tiles.TryGetValue(key, out var tile) || !tile.HasHeights) yield break;
+            var steps = BuildFeatures(tile, (TileView)tile.UserData, cover, features);
+            while (steps.MoveNext())
+            {
+                yield return null;
+                if (!Tiles.TryGetValue(key, out var live) || live != tile) yield break;
+            }
+        }
+
+        void BuildFeaturesNow(TerrainTile tile, TileView view, CoverRaster cover, Features features)
+        {
+            var steps = BuildFeatures(tile, view, cover, features);
+            while (steps.MoveNext()) { }
+        }
+
+        System.Collections.IEnumerator BuildFeatures(TerrainTile tile, TileView view, CoverRaster cover, Features features)
         {
             var key = tile.Key;
             var worldOrigin = FloatingOrigin.ToWorld(key.Origin, 0);
             view.Features = features; view.Cover = cover;
+            long t0 = FrameProbe.Start();
             LandcoverSplat.Build(cover, features, tile.Grid, tile.Latitude, SplatRes, splatScratch, splat2Scratch, coverScratch);
             float budget = LandcoverSplat.Budget(coverScratch, SplatRes, (i, j) => Roads != null && Roads.Nearest(key.Origin + new double2((i + 0.5) * 64, (j + 0.5) * 64), 260, out _),
                 VegetationRenderer.Capacity, Vegetation != null ? Vegetation.Density : 1f);
@@ -210,38 +406,75 @@ namespace Rally.World
             CoarseAtlas.UploadSlice(CoarseAtlas.Splat2, splat2Scratch, tile.Slice);
             CoarseAtlas.UploadSlice(CoarseAtlas.Cover, coverScratch, tile.Slice);
             if (!CoarseAtlas.Compute) { if (tile.Cover.IsCreated) tile.Cover.Dispose(); tile.Cover = new NativeArray<Color32>(coverScratch, Allocator.Persistent); }
+            FrameProbe.Stop(".ov.splat", t0);
+            yield return null;
+            t0 = FrameProbe.Start();
             view.Water = Water.Build(features, key, p => tile.SampleBase(p));
             if (view.Water.Count > 0 && Style != null)
             {
                 Water.BuildMeshes(view.Water, p => tile.SampleBase(p), out var lakes, out var rivers);
                 Water.CreateTileObject(view.Water, lakes, rivers, Style.LakeMaterial, Style.RiverMaterial, view.Root.transform, worldOrigin);
             }
+            FrameProbe.Stop(".ov.water", t0);
+            yield return null;
+            t0 = FrameProbe.Start();
             ulong seed = ((ulong)(uint)key.I << 32) ^ (uint)key.J ^ 0x9E3779B97F4A7C15UL;
             if (view.Buildings?.Mesh != null) RallyObjects.Destroy(view.Buildings.Mesh);
             view.Buildings = Buildings.Build(features, key, p => tile.SampleBase(p), p => tile.Slope(p), Roads, seed);
-            if (Style != null) Buildings.CreateTileObject(view.Buildings, Style.BuildingMaterial, view.Root.transform, worldOrigin);
+            FrameProbe.Stop(".ov.buildings", t0);
+            yield return null;
+            t0 = FrameProbe.Start();
+            if (Style != null) Buildings.CreateTileObject(view.Buildings, Style.BuildingMaterial, view.Root.transform, worldOrigin);   // the MeshCollider bakes here
+            FrameProbe.Stop(".ov.collider", t0);
+            yield return null;
             view.FeaturesIn = true;
             Carve(tile);
+            // The new pads also reach the fine tiles inside this tile and, near its border, the neighbours: carve those again.
+            if (view.Buildings != null && view.Buildings.Pads.Count > 0)
+                foreach (var t in Tiles.Values)
+                {
+                    if (t == tile || !t.HasHeights || t.Key.RectDistance(key.Origin + new double2(key.SizeM / 2, key.SizeM / 2)) > key.SizeM) continue;
+                    var off = (float2)key.Origin.Minus(t.Key.Origin);
+                    foreach (var pad in view.Buildings.Pads)
+                    {
+                        var p = pad; p.A += off; p.B += off;
+                        if (PadReaches(p, t.Key.SizeM)) { if (!recarveQueue.Contains(t)) recarveQueue.Add(t); break; }
+                    }
+                }
         }
+
+        /// <summary>A pad (segment in a tile's local metres) reaches into a tile of this size.</summary>
+        static bool PadReaches(in CarveSegment p, float size)
+            => math.max(p.A.x, p.B.x) + p.Reach >= 0 && math.max(p.A.y, p.B.y) + p.Reach >= 0 && math.min(p.A.x, p.B.x) - p.Reach <= size && math.min(p.A.y, p.B.y) - p.Reach <= size;
 
         /// <summary>Carve roads and building pads into a tile (from its base), then refresh the CPU copy and the forest.</summary>
         public void Carve(TerrainTile tile)
         {
+            long t0 = FrameProbe.Start();
+            recarveQueue.Remove(tile);   // carved now with everything there is
             segs.Clear();
-            Roads?.CollectCarveSegments(tile.Key.Bounds, tile.Key.Origin, segs);
+            // A coarse tile widens its road segments by CoarseWiden (below): collect them by the widened reach too, or a road
+            // 15–27 m outside the tile carved its neighbour but not it — a step at the shared edge (seam survey 2026-11-20).
+            var b = tile.Key.Bounds;
+            float widen = tile.Key.Kind == TileKind.Coarse ? tile.Key.CellM * 1.5f : 0f;
+            Roads?.CollectCarveSegments(new Bounds25833(b.MinE - widen, b.MinN - widen, b.MaxE + widen, b.MaxN + widen), tile.Key.Origin, segs);
             int roadSegs = segs.Count;
-            // Pads come from the coarse tile that owns the house; a fine tile takes them from its coarse parent.
+            // Pads come from the coarse tiles that own the houses: the tile's own (a fine tile's parent) and the neighbours,
+            // whose pads can reach across the border (each tile must carve the same pads on a shared edge).
             var coarseKey = tile.Key.Kind == TileKind.Coarse ? tile.Key : TileKey.At(TileKind.Coarse, tile.Key.Origin);
-            if (Tiles.TryGetValue(coarseKey, out var coarse) && ((TileView)coarse.UserData).Buildings != null)
-            {
-                var off = (float2)coarseKey.Origin.Minus(tile.Key.Origin);
-                foreach (var pad in ((TileView)coarse.UserData).Buildings.Pads)
+            for (int dj = -1; dj <= 1; dj++)
+                for (int di = -1; di <= 1; di++)
                 {
-                    var p = pad; p.A += off; p.B += off;
-                    if (p.A.x + p.Reach < 0 || p.A.y + p.Reach < 0 || p.A.x - p.Reach > tile.Key.SizeM || p.A.y - p.Reach > tile.Key.SizeM) continue;
-                    segs.Add(p);
+                    var ck = new TileKey(TileKind.Coarse, coarseKey.I + di, coarseKey.J + dj);
+                    if (!Tiles.TryGetValue(ck, out var coarse) || ((TileView)coarse.UserData).Buildings == null) continue;
+                    var off = (float2)ck.Origin.Minus(tile.Key.Origin);
+                    foreach (var pad in ((TileView)coarse.UserData).Buildings.Pads)
+                    {
+                        var p = pad; p.A += off; p.B += off;
+                        if (!PadReaches(p, tile.Key.SizeM)) continue;
+                        segs.Add(p);
+                    }
                 }
-            }
             // The 8 m coarse grid is drawn with bilinear weights: a texel up to one diagonal cell (11.3 m) from a point on
             // the ribbon pulls the terrain there. Widen the coarse flat band by that much and sink it by CarveMargin, so a
             // coarse-only stretch of road (no 1 m tile yet) does not poke through the ribbon either (on steep side roads near
@@ -258,6 +491,7 @@ namespace Rally.World
             for (int i = 0; i < segs.Count; i++) segsNative[i] = segs[i];
             tile.Carve(carver, segsNative, segs.Count);
             if (!carver.CpuSynchronous) tile.SyncCpu();
+            FrameProbe.Stop(tile.Key.Kind == TileKind.Coarse ? ".carve.coarse" : ".carve.fine", t0);
             if (Vegetation != null && tile.Key.Kind == TileKind.Coarse && ((TileView)tile.UserData).FeaturesIn && !scatterQueue.Contains(tile)) scatterQueue.Add(tile);
         }
 
@@ -270,7 +504,31 @@ namespace Rally.World
             if (Tiles.TryGetValue(tile.Key, out var live) && live == tile) Vegetation?.ScatterTile(tile);
         }
 
-        /// <summary>fine.js recarveWithin: new roads arrived for a tile → every ready tile overlapping the box carves again.</summary>
+        /// <summary>Queue every ready tile overlapping the box for a carve (<see cref="recarveQueue"/>).</summary>
+        public void QueueRecarveWithin(Bounds25833 box)
+        {
+            foreach (var t in Tiles.Values)
+            {
+                if (!t.HasHeights || recarveQueue.Contains(t)) continue;
+                var b = t.Key.Bounds;
+                if (b.MaxE < box.MinE || b.MinE > box.MaxE || b.MaxN < box.MinN || b.MinN > box.MaxN) continue;
+                recarveQueue.Add(t);
+            }
+        }
+
+        /// <summary>Carve queued tiles, nearest to the car first: at least one per frame, more while the streaming budget lasts.</summary>
+        void RecarveQueued(Utm33 focus)
+        {
+            while (recarveQueue.Count > 0)
+            {
+                int best = 0; double bestD = double.MaxValue;
+                for (int i = 0; i < recarveQueue.Count; i++) { double d = recarveQueue[i].Key.RectDistance(focus); if (d < bestD) { bestD = d; best = i; } }
+                Carve(recarveQueue[best]);
+                if (!WorkBudget.Left) return;
+            }
+        }
+
+        /// <summary>fine.js recarveWithin: new roads arrived for a tile → every ready tile overlapping the box carves again, now.</summary>
         public void RecarveWithin(Bounds25833 box)
         {
             foreach (var kv in Tiles)
@@ -303,26 +561,37 @@ namespace Rally.World
             return null;
         }
 
-        /// <summary>Carved ground without the road ribbon (stream.js sample): fine tile first, then coarse, else 0 (the sea).</summary>
-        public float CarvedHeightAt(Utm33 p)
+        /// <summary>
+        /// The fine tile's value blended into the coarse one by <see cref="FineWeight"/> (TerrainGround.hlsl does the same), the
+        /// coarse value alone outside fine tiles, the fine value alone where the coarse tile is not in, else 0 (the sea).
+        /// </summary>
+        float Blended(Utm33 p, Func<TerrainTile, Utm33, float> value, float coarseScale = 1f)
         {
-            var t = TileFor(TileKind.Fine, p) ?? TileFor(TileKind.Coarse, p);
-            return t != null ? t.Grid.Sample(p) : 0f;
+            var f = TileFor(TileKind.Fine, p);
+            float w = f != null ? FineWeight(f, p) : 0f;
+            if (w >= 1f) return value(f, p);
+            var c = TileFor(TileKind.Coarse, p);
+            if (c == null) return f != null ? value(f, p) : 0f;
+            float vc = value(c, p) * coarseScale;
+            return f != null ? math.lerp(vc, value(f, p), w) : vc;
         }
 
-        /// <summary>The carve mask the clipmap reads (1 on a road's flat band), fine tile first; CPU path only.</summary>
-        public float CarveMaskAt(Utm33 p)
-        {
-            var t = TileFor(TileKind.Fine, p) ?? TileFor(TileKind.Coarse, p);
-            return t != null ? t.SampleMask(p) : 0f;
-        }
+        static readonly Func<TerrainTile, Utm33, float> CarvedOf = (t, p) => t.Grid.Sample(p), MaskOf = (t, p) => t.SampleMask(p), BaseOf = (t, p) => t.SampleBase(p);
 
-        /// <summary>Natural ground (stream.js sampleBase): the untouched DTM, fine first.</summary>
-        public float BaseHeightAt(Utm33 p)
-        {
-            var t = TileFor(TileKind.Fine, p) ?? TileFor(TileKind.Coarse, p);
-            return t != null ? t.SampleBase(p) : 0f;
-        }
+        /// <summary>Carved ground without the road ribbon (stream.js sample): fine tile blended into coarse (<see cref="Blended"/>), else 0 (the sea).</summary>
+        public float CarvedHeightAt(Utm33 p) => Blended(p, CarvedOf);
+
+        /// <summary>The carve mask the clipmap reads (1 on a road's flat band), fine blended into coarse; CPU path only.</summary>
+        public float CarveMaskAt(Utm33 p) => Blended(p, MaskOf);
+
+        /// <summary>
+        /// The verge tone the terrain shader paints (TerrainGround.hlsl GroundCover's mask): the fine tile's carve mask, else a
+        /// faint 0.35 × the coarse one (its flat band is widened, see <see cref="Carve"/>). CPU path only (the seam survey, tests).
+        /// </summary>
+        public float VergeMaskAt(Utm33 p) => Blended(p, MaskOf, 0.35f);
+
+        /// <summary>Natural ground (stream.js sampleBase): the untouched DTM, fine blended into coarse like the drawn ground.</summary>
+        public float BaseHeightAt(Utm33 p) => Blended(p, BaseOf);
 
         /// <summary>
         /// A bridge deck under a point (within its rails) that the asker is up on: <see cref="ReferenceY"/> unset, or not more

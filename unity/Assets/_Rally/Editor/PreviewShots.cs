@@ -33,7 +33,7 @@ namespace Rally.Editor
     /// <c>-previewTrees</c> adds the nearest birch and mountain birch from 30 m and 100 m, the densest birch stand near the car at eye
     /// height (15_birch_wood*) and a studio pair of both from 12 / 30 / 100 / 350 m at the LOD the renderer picks there (16_studio_birch_*).
     /// </summary>
-    public static class PreviewShots
+    public static partial class PreviewShots
     {
         const int W = 1280, H = 720;
         static string outDir, query, carId;
@@ -69,6 +69,10 @@ namespace Rally.Editor
             mud = Array.IndexOf(args, "-previewMud") >= 0;
             treeShots = Array.IndexOf(args, "-previewTrees") >= 0;
             lookSpots = Arg(args, "-previewLook");
+            seams = Array.IndexOf(args, "-previewSeams") >= 0;
+            glide = Array.IndexOf(args, "-previewGlide") >= 0;
+            if (float.TryParse(Arg(args, "-previewBudgetMs"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var budgetMs)) WorkBudget.BaseMs = WorkBudget.FrameMs = budgetMs;   // A/B of the streaming budget (inf: no slicing)
+            seamSpotsFile = Arg(args, "-previewSeamSpots");
             driveSecs = float.TryParse(Arg(args, "-previewDrive"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ds) ? ds : 0f;
             driveKmh = float.TryParse(Arg(args, "-previewDriveKmh"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dk) ? dk : 70f;
             GpuCaps.ForceNoCompute = noCompute;   // the WebGL 2 path: CPU scatter, RenderMeshInstanced
@@ -216,6 +220,7 @@ namespace Rally.Editor
                         if (rig != null) rig.enabled = true;
                         var carc = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
                         carc.Driver = new Rally.Vehicle.ScriptedDriver { TargetKmh = driveKmh };
+                        if (glide) { glideCar = carc; glideS = -1; glideDir = math.normalizesafe(((float3)carc.transform.forward).xz); HookGlide(true); }
                         game.StartEngine();
                         cam.targetTexture = benchRt;
                         step = 11;
@@ -316,6 +321,7 @@ namespace Rally.Editor
             float2 fwd = math.normalizesafe(((float3)car.forward).xz);
             float2 hillDir = HillDir(c, fwd);
             if (lookSpots != null) { LookShots(lookSpots); return; }
+            if (seams) { SeamReport(); return; }
             shots.Enqueue(("02_hillside", () => Look(c.xz - hillDir * 30, 4, c.xz + hillDir * 600, 0.45f)));
             shots.Enqueue(("03_overview", () => Look(c.xz - hillDir * 250, 120, c.xz + hillDir * 300, 0f)));
             shots.Enqueue(("04_forest_edge", () => Look(c.xz - fwd * 10, 2.5f, c.xz + fwd * 120, 0.15f)));
@@ -572,6 +578,8 @@ namespace Rally.Editor
         {
             benchArmed = true; benchStartFrame = lastFrame = Time.frameCount; benchStartT = lastT = Time.realtimeSinceStartupAsDouble;
             treeSum = 0; treeSamples = 0; batchSum = setPassSum = trisSum = 0; frameMs.Clear();
+            FrameProbe.Begin();   // every real frame (GameController calls EndFrame), slow ones with what ran in them
+            world?.ResetLead();
             gcStart = GC.GetAllocatedBytesForCurrentThread();   // C# runs on the main thread here
         }
 
@@ -580,8 +588,6 @@ namespace Rally.Editor
         {
             int f = Time.frameCount; double t = Time.realtimeSinceStartupAsDouble;
             if (f == lastFrame) return;
-            double per = (t - lastT) * 1000 / (f - lastFrame);
-            for (int i = lastFrame; i < f; i++) frameMs.Add(per);
             lastFrame = f; lastT = t;
             batchSum += UnityStats.drawCalls; setPassSum += UnityStats.setPassCalls; trisSum += UnityStats.triangles;
             treeSum += world?.Vegetation != null ? math.max(0, world.Vegetation.Drawn) : 0;
@@ -592,8 +598,10 @@ namespace Rally.Editor
         {
             if (!benchArmed) return;
             benchArmed = false;
+            FrameProbe.End();
             int frames = Time.frameCount - benchStartFrame;
             double secs = Time.realtimeSinceStartupAsDouble - benchStartT;
+            frameMs.Clear(); frameMs.AddRange(System.Linq.Enumerable.Select(FrameProbe.Frames, x => (double)x));
             frameMs.Sort();
             double p95 = frameMs.Count > 0 ? frameMs[Math.Min(frameMs.Count - 1, (int)Math.Ceiling(0.95 * frameMs.Count) - 1)] : 0;
             int n = math.max(1, treeSamples);
@@ -601,6 +609,17 @@ namespace Rally.Editor
             string line = $"{name,-16} {frames,7} {secs * 1000 / math.max(1, frames),7:0.00} {p95,7:0.00} {batchSum / n,8:0} {setPassSum / n,8:0} {trisSum / n / 1000,7:0} {treeSum / n,6} {gc,11}";
             File.AppendAllText(Path.Combine(outDir, "bench.txt"), line + "\n");
             Debug.Log("PreviewShots bench: " + line);
+            // Every real frame: the distribution, the slow frames with what ran in them, and the streaming lead.
+            var detail = new System.Text.StringBuilder($"#   {name}: {FrameProbe.Summary()}\n#   {name} streaming work per frame: {FrameProbe.Summary(FrameProbe.Work)}\n#   {name}: {world?.LeadReport()}\n");
+            var spikes = new List<string>(FrameProbe.Spikes);
+            spikes.Sort((a, b) => string.CompareOrdinal(b.PadLeft(8), a.PadLeft(8)));
+            for (int i = 0; i < math.min(15, spikes.Count); i++) detail.Append($"#   spike {spikes[i]}\n");
+            // The slowest frames by streaming work (not by GPU waits): what the streaming itself costs at worst.
+            float WorkOf(string line) { int k = line.LastIndexOf("work ", StringComparison.Ordinal); return k >= 0 && float.TryParse(line.Substring(k + 5), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f; }
+            spikes.Sort((a, b) => WorkOf(b).CompareTo(WorkOf(a)));
+            for (int i = 0; i < math.min(15, spikes.Count); i++) if (WorkOf(spikes[i]) > 10f) detail.Append($"#   work-spike {spikes[i]}\n");
+            File.AppendAllText(Path.Combine(outDir, "bench_detail.txt"), detail.ToString());
+            Debug.Log("PreviewShots bench detail:\n" + detail);
         }
 
         /// <summary>Camera at <paramref name="from"/> (height above the ground) looking at a target point (height above its ground).</summary>
@@ -774,11 +793,66 @@ namespace Rally.Editor
             Debug.Log("PreviewShots: saved " + path);
         }
 
+        // ---- -previewGlide: the car moves along the stage line (free drive: along the road under it) at exactly -previewDriveKmh,
+        // every frame, whatever the physics does — a drive that never gets stuck, so the streaming is what is measured. ----
+        static bool glide;
+        static Rally.Vehicle.CarController glideCar;
+        static float glideS;
+        static float2 glideDir;
+
+        /// <summary>Glide once per player-loop frame, before the scripts' Update (so GameController sees the new pose and velocity).</summary>
+        static void HookGlide(bool on)
+        {
+            var loop = UnityEngine.LowLevel.PlayerLoop.GetCurrentPlayerLoop();
+            for (int i = 0; i < loop.subSystemList.Length; i++)
+            {
+                if (loop.subSystemList[i].type != typeof(UnityEngine.PlayerLoop.Update)) continue;
+                var subs = new List<UnityEngine.LowLevel.PlayerLoopSystem>(loop.subSystemList[i].subSystemList);
+                subs.RemoveAll(x => x.type == typeof(PreviewShots));
+                if (on) subs.Insert(0, new UnityEngine.LowLevel.PlayerLoopSystem { type = typeof(PreviewShots), updateDelegate = Glide });
+                loop.subSystemList[i].subSystemList = subs.ToArray();
+            }
+            UnityEngine.LowLevel.PlayerLoop.SetPlayerLoop(loop);
+        }
+
+        static void Glide()
+        {
+            if (glideCar == null || game == null || game.Phase != Phase.Racing) return;
+            float v = driveKmh / 3.6f, dt = Time.deltaTime;
+            var route = (Rally.Track.IRoute)typeof(GameController).GetField("route", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(game);
+            float2 xz; float yaw;
+            if (route != null && !route.Free)
+            {
+                if (glideS < 0) glideS = route.Nearest(glideCar.State.Pos.xz, 200f).S;
+                glideS = math.min(glideS + v * dt, route.Length - 1f);
+                var p = route.SampleAtDistance(glideS);
+                xz = p.XZ; yaw = p.Yaw;
+            }
+            else
+            {
+                var from = glideCar.State.Pos.xz;
+                var pos = from + glideDir * v * dt;
+                if (world.Roads != null && world.Roads.Nearest(FloatingOrigin.ToUtm(pos), 40, out var q))
+                {
+                    var t = math.normalizesafe((float2)q.Tangent);
+                    if (math.dot(t, glideDir) < 0) t = -t;
+                    var on = FloatingOrigin.ToWorldXZ(new Utm33(q.Point.x, q.Point.y));
+                    if (math.distance(on, from) < v * dt * 0.3f) t = -t;   // a dead end: turn round
+                    glideDir = t; pos = on;
+                }
+                else glideDir = -glideDir;
+                xz = pos; yaw = math.atan2(glideDir.x, glideDir.y);
+            }
+            glideCar.ResetTo(xz, yaw);
+            glideCar.State.Vel = new float2(math.sin(yaw), math.cos(yaw)) * v;
+        }
+
         static void Fail(string why) { Debug.LogError("PreviewShots: " + why); Finish(1); }
 
         static void Finish(int code)
         {
             EditorApplication.update -= Tick;
+            HookGlide(false);
             ClearLineup();
             if (cam != null) cam.targetTexture = null;
             if (rt != null) rt.Release();

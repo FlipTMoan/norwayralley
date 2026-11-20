@@ -36,10 +36,28 @@ namespace Rally.Geo
                 return Json.Stringify(elements ?? new List<object>());
             });
 
-        public async Task<OsmChunk> FetchChunk(Bounds25833 bounds, CancellationToken ct)
+        string lastChunkKey;
+        Task<OsmChunk> lastChunk;
+
+        /// <summary>
+        /// The parsed chunk of a tile. FetchRoads and FetchFeatures of one tile are asked back to back: they share one fetch
+        /// and one parse (each parsed the whole answer on the main thread before). A failed or empty answer is asked again.
+        /// </summary>
+        public Task<OsmChunk> FetchChunk(Bounds25833 bounds, CancellationToken ct)
+        {
+            var key = OverpassQuery.CacheKey(LatLonBounds.Of(bounds));
+            if (key == lastChunkKey && lastChunk != null && (!lastChunk.IsCompleted || lastChunk.Status == TaskStatus.RanToCompletion && lastChunk.Result != null)) return lastChunk;
+            lastChunkKey = key;
+            return lastChunk = FetchChunkOnce(bounds, ct);
+        }
+
+        async Task<OsmChunk> FetchChunkOnce(Bounds25833 bounds, CancellationToken ct)
         {
             var json = await FetchElementsJson(LatLonBounds.Of(bounds), ct);
-            return json == null ? null : Parse(Json.Parse(json) as List<object>);
+            long t0 = FrameProbe.Start();
+            var chunk = json == null ? null : Parse(Json.Parse(json) as List<object>);
+            FrameProbe.Stop("osm.parse", t0);
+            return chunk;
         }
 
         public async Task<RoadGraphData> FetchRoads(Bounds25833 bounds, CancellationToken ct)

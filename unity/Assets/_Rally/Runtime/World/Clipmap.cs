@@ -200,6 +200,8 @@ namespace Rally.World
             Shader.SetGlobalTexture("_CoarseSlices", Coarse.Texture);
             Shader.SetGlobalTexture("_FineSlices", Fine.Texture);
             Shader.SetGlobalVector("_AtlasParams", new Vector4(coarseAtlas.N, TileScheduler.CoarseCell, TileScheduler.FineCell, coarseAtlas.SplatRes));
+            Shader.SetGlobalFloat("_FineBlend", TileWorld.FineBlendM);
+            Shader.SetGlobalFloatArray("_FineFade", new float[TileWorld.FineSlices]);   // sized once; TileWorld.AdvanceFades fills it
         }
 
         public void RebuildTables(Utm33 focus, Dictionary<TileKey, TerrainTile> tiles)

@@ -1,8 +1,50 @@
 # Changes
 
-_Updated 2026-11-20 (bridges over water in the Unity game)._
+_Updated 2026-11-20 (tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: no steps between tiles, and the landscape streams in without lags
+- **Shared edges** (`TileWorld.Stitch`): every tile's DTM is its own Kartverket request, and neighbours disagreed on their
+  common edge by 0.75 m on average (up to 33 m at cliffs; 1 m tiles 5 cm, up to 1.4 m). A new tile now takes the edges and
+  corners of the loaded neighbours of its kind and fades the difference out over 32 m (coarse) / 16 m (fine): shared edges
+  are identical, the middle of a tile is its own DTM.
+- **1 m ↔ 8 m tiles**: a 1 m tile blends into the 8 m ground over 16 m wherever no 1 m neighbour continues it (heights,
+  carve mask, verge tone) and fades in over 0.5 s instead of popping (`TerrainGround.hlsl FineWeight`; the car drives on
+  the same blend, `TileWorld.FineWeight`). The step at the outline was up to 10 m, now ≤ 4 cm.
+- **Carve seams**: a coarse tile collects road segments by the widened reach it carves them with (a road 15–27 m outside
+  carved only the neighbour: steps up to metres), takes its neighbours' house pads, and 1 m tiles are carved again when
+  their coarse tile's houses arrive.
+- **Roads graded on missing ground**: a way reaching into a tile that was not loaded yet was graded down to sea level there
+  (a 340 m deep trench appeared when that tile came in). Unknown ground now holds the nearest known ground, the way is
+  graded again once the tile is in, and a tile's roads wait (≤ 10 s) for the neighbours' ground.
+- **Ribbons**: each stretch of road is drawn by the tile that holds its middle (two tiles drew the same 120 m at every
+  border, with V restarting: z-fighting dashes); V runs along the whole way. Bridge spans likewise.
+- **Frame budget** (`Core/WorkBudget`, 5 ms per frame): DEM resample in bands on a projection lattice, tile results while
+  the budget lasts, a coarse overlay as steps (grading per way, ribbon, bridges, signs, splat, water, houses, their
+  collider), re-carves queued nearest first, one Overpass parse per tile, the compute carve's segment buffers in turn
+  (no GPU wait on a busy buffer). Normal stages prefetch the line 2.5 km ahead (endless stages already did).
+- **Load order**: a tile's roads count as in only once graded to the end (the free-drive start used half a tile), an
+  overlay that started runs to the end before others step, neighbours cut from a road graded again are set again, and
+  the streaming budget is 50 ms per frame while the car waits and a quarter of the frame at low frame rates.
+- **Measuring**: `FrameProbe` times every frame and attributes slow ones; `PreviewShots -previewSeams` (border survey and
+  shots), `-previewGlide` (drive along the line at an exact speed), `-previewBudgetMs`. Tests: `TileSeamTests`,
+  `StreamingBudgetTests`, PlayMode `StreamingTests`.
+
+### Unity: search place names for START and FINISH on the route map
+- Two search boxes above the Leaflet map (web template `index.html`): type a town or place, pick from the list, and the
+  pin goes there through the same `pick` event as a click, so it snaps to the nearest road within 1 km; the map pans
+  (fits both pins once both are set). Clicking the map still sets start, then finish, and clears that box's name.
+- Names from Kartverket's stedsnavn API (`ws.geonorge.no/stedsnavn/v1/navn`, CORS open, no key): prefix search, fuzzy
+  only when nothing matches (typos: "Lilehamer" → Lillehammer). The API has no type filter and puts islands, hills and
+  headlands first, so the list is ranked here: By/Tettsted, then smaller settlements (grend, bygdelag, bydel …), then
+  kommune, then the rest; exact and prefix matches first; one row per name + municipality; only places in a Norwegian
+  municipality inside the map's bounds (no Danish exonyms). Shown as "Hovden — tettsted, Bykle".
+- 300 ms debounce, stale requests aborted, 8 s timeout; ↑ ↓ Enter Esc (Esc closes the list, then the map); phone widths
+  stack the boxes, 16 px text on touch screens. Errors / offline show in the map status line.
+- Keys typed in the boxes no longer reach the game (G, M, R, N, H, Esc are game keys): a window capture listener
+  registered before Unity loads stops them. Help text, `unity/README.md`, `ARCHITECTURE.md` and the footer credits
+  (place names: Kartverket) updated.
 
 ### Unity: bridges where roads cross water
 - **Spans** (`Roads/Bridges.cs`, port of `legacy-js/src/bridges.js`): an OSM way tagged `bridge=*` (not `no` / `culvert`,

@@ -13,7 +13,25 @@ namespace Rally.World
     public sealed class WaterBodies
     {
         public sealed class Lake { public List<float2> Ring; public float Level; public float2 Min, Max; }
-        public sealed class River { public List<float2> Points; public float Half, Depth; }
+        public sealed class River
+        {
+            public List<float2> Points; public float Half, Depth;
+            float2 min, max; bool boxed;
+            /// <summary>
+            /// Within the river's box grown by its half width: the cheap reject before PolylineDist2. Every road sample's bridge
+            /// test asks every river of the tile (WaterProbe → InMappedWater): 270 ms of a tile's grading in the editor drives.
+            /// </summary>
+            public bool InBox(float2 q)
+            {
+                if (!boxed)
+                {
+                    min = new float2(float.MaxValue); max = new float2(float.MinValue);
+                    foreach (var p in Points) { min = math.min(min, p); max = math.max(max, p); }
+                    min -= Half; max += Half; boxed = true;
+                }
+                return q.x >= min.x && q.y >= min.y && q.x <= max.x && q.y <= max.y;
+            }
+        }
         public readonly List<Lake> Lakes = new List<Lake>();
         public readonly List<River> Rivers = new List<River>();
         public Utm33 Origin;
@@ -148,7 +166,7 @@ namespace Rally.World
             foreach (var lake in bodies.Lakes)
                 if (q.x >= lake.Min.x && q.x <= lake.Max.x && q.y >= lake.Min.y && q.y <= lake.Max.y && Geometry2D.PointInRing(q, lake.Ring)) return true;
             foreach (var river in bodies.Rivers)
-                if (Geometry2D.PolylineDist2(q, river.Points) <= river.Half * river.Half) return true;
+                if (river.InBox(q) && Geometry2D.PolylineDist2(q, river.Points) <= river.Half * river.Half) return true;
             return false;
         }
 
@@ -166,7 +184,7 @@ namespace Rally.World
                     if (Geometry2D.PointInRing(q, lake.Ring) && lake.Level - ground > depth) { depth = lake.Level - ground; surface = lake.Level; }
                 }
                 foreach (var river in bodies.Rivers)
-                    if (Geometry2D.PolylineDist2(q, river.Points) <= river.Half * river.Half && river.Depth > depth) { depth = river.Depth; surface = ground + river.Depth; }
+                    if (river.InBox(q) && Geometry2D.PolylineDist2(q, river.Points) <= river.Half * river.Half && river.Depth > depth) { depth = river.Depth; surface = ground + river.Depth; }
             }
             return new WaterSample(depth, surface);
         }

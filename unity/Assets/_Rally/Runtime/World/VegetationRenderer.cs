@@ -210,7 +210,10 @@ namespace Rally.World
             var rp = new RenderParams(firstMaterial) { layer = layer, receiveShadows = true, worldBounds = new Bounds(cam.transform.position, new Vector3(4000, 2000, 4000)) };
             if (gpu)
             {
+                long t0 = Rally.Core.FrameProbe.Start();
                 tileOrigins.SetData(originsCpu);
+                Rally.Core.FrameProbe.Stop(".gpu.veg.setdata", t0);
+                t0 = Rally.Core.FrameProbe.Start();
                 for (int p = 0; p < 6; p++) planeVecs[p] = new Vector4(planes[p].normal.x, planes[p].normal.y, planes[p].normal.z, planes[p].distance);
                 cs.SetVectorArray("_FrustumPlanes", planeVecs);
                 cs.SetVector("_CameraPos", cam.transform.position);
@@ -224,6 +227,7 @@ namespace Rally.World
                 cs.Dispatch(kCull, (slots * Capacity + 63) / 64, 1, 1);
                 cs.SetBuffer(kArgs, "_DrawCounts", drawCounts); cs.SetBuffer(kArgs, "_Args", args);
                 cs.Dispatch(kArgs, 1, 1, 1);
+                Rally.Core.FrameProbe.Stop(".gpu.veg.cull", t0);
                 for (int b = 0; b < Buckets; b++)
                 {
                     var mesh = MeshFor(b);

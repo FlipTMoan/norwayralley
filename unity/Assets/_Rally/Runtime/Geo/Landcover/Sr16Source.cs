@@ -40,8 +40,11 @@ namespace Rally.Geo
             cts.CancelAfter(TimeoutMs);
             var speciesTask = FetchPng(MapUrl("SRRTRESLAG", bounds, width, height), cts.Token);
             var densityTask = FetchPng(MapUrl("SRRKRONEDEK", bounds, width, height), cts.Token);
-            var species = Decode(await speciesTask, width, height);
-            var density = Decode(await densityTask, width, height);
+            var speciesPng = await speciesTask;
+            var densityPng = await densityTask;
+            long t0 = FrameProbe.Start();
+            var species = Decode(speciesPng, width, height);
+            var density = Decode(densityPng, width, height);
 
             var raster = new CoverRaster(width, height, bounds);
             for (int k = 0; k < species.Length; k++)
@@ -50,6 +53,7 @@ namespace Rally.Geo
                 raster.Trees[k] = (byte)Sr16Colours.ClassifySpecies(s.r, s.g, s.b, s.a);
                 raster.Crown[k] = (byte)Math.Round(Sr16Colours.ClassifyDensity(d.r, d.g, d.b, d.a) * 255);
             }
+            FrameProbe.Stop("sr16.decode", t0);
             return raster;
         }
 

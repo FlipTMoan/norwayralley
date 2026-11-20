@@ -25,6 +25,17 @@
     #map-overlay.open { display: flex; flex-direction: column; }
     #map-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; font-size: 13px; letter-spacing: .2em; }
     #map-head button { background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+    #map-search { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0 16px 8px; font-size: 13px; }
+    .place { flex: 1 1 260px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .place label { min-width: 62px; letter-spacing: .2em; color: var(--pin); font-weight: bold; }
+    .place-field { position: relative; flex: 1; min-width: 0; }
+    .place input { box-sizing: border-box; width: 100%; background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 6px 10px; font: inherit; }
+    .place input:focus { outline: none; border-color: var(--pin); }
+    .place ul { position: absolute; left: 0; right: 0; top: 100%; z-index: 1100; margin: 2px 0 0; padding: 0; list-style: none; max-height: min(50vh, 320px); overflow-y: auto; background: #111614; border: 1px solid #3a463f; border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); }
+    .place li { padding: 7px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .place li span { color: #a9b3ad; }
+    .place li[aria-selected="true"], .place li:hover { background: #26302b; color: var(--pin); }
+    @media (pointer: coarse) { .place input { font-size: 16px; } .place li { padding: 10px; } }
     #map { flex: 1; min-height: 0; margin: 0 16px; border: 1px solid #3a463f; }
     #map-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; font-size: 13px; }
     #map-foot select, #map-foot button { background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
@@ -54,6 +65,14 @@
       <span>NORGE · 2D ROUTE PICKER — PICK TWO POINTS</span>
       <button id="map-close" title="Close the map">✕</button>
     </div>
+    <div id="map-search">
+      <div class="place" style="--pin:#f0ce58"><label for="place-0">START</label>
+        <div class="place-field"><input id="place-0" type="search" placeholder="Search a town or place…" autocomplete="off" spellcheck="false" enterkeyhint="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="place-0-list"><ul id="place-0-list" role="listbox" hidden></ul></div>
+      </div>
+      <div class="place" style="--pin:#d34a31"><label for="place-1">FINISH</label>
+        <div class="place-field"><input id="place-1" type="search" placeholder="Search a town or place…" autocomplete="off" spellcheck="false" enterkeyhint="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="place-1-list"><ul id="place-1-list" role="listbox" hidden></ul></div>
+      </div>
+    </div>
     <div id="map"></div>
     <div id="map-foot">
       <label>ROUTE BY
@@ -66,13 +85,13 @@
       </label>
       <button id="map-free" disabled title="Stream the world around the start point and drive anywhere on the real roads">FREE DRIVE HERE</button>
       <button id="map-generate" class="primary" disabled>GENERATE ROUTE</button>
-      <div id="map-status">Click the map to set the START point, then the FINISH — each pin snaps to the nearest road within 1 km — or FREE DRIVE from the start.</div>
+      <div id="map-status">Search a place name above or click the map to set the START point, then the FINISH — each pin snaps to the nearest road within 1 km — or FREE DRIVE from the start.</div>
     </div>
   </div>
 
   <div id="footer">
     Terrain: Kartverket NHM DTM (CC BY 4.0) · Forest: SR16 © NIBIO (NLOD) · Map data © OpenStreetMap contributors (ODbL) ·
-    Road signs: data under NLOD from Statens vegvesen · Routing: OSRM · Outline: geoBoundaries (CC BY 4.0) · Made by Filip Tobias Moan © 2026
+    Road signs: data under NLOD from Statens vegvesen · Place names: Kartverket (CC BY 4.0) · Routing: OSRM · Outline: geoBoundaries (CC BY 4.0) · Made by Filip Tobias Moan © 2026
   </div>
 
   <script>
@@ -157,7 +176,7 @@
         if (!map) return;
         if (pins[which]) pins[which].setLatLng([lat, lon]);
         else pins[which] = L.marker([lat, lon], { icon: icon(which ? 'F' : 'S', which ? '#d34a31' : '#f0ce58'), draggable: true }).addTo(map)
-          .on('dragend', function (e) { var p = latLon(e.target.getLatLng()); send({ ev: 'pick', which: which, lat: p.lat, lon: p.lon }); });
+          .on('dragend', function (e) { var p = latLon(e.target.getLatLng()); boxes[which].input.value = ''; send({ ev: 'pick', which: which, lat: p.lat, lon: p.lon }); });
         buttons();
       }
       function ensure() {
@@ -168,6 +187,7 @@
         map.on('click', function (e) {
           var which = next;
           next = which === 0 ? 1 : 0;
+          boxes[which].input.value = '';
           setPin(which, e.latlng.lat, e.latlng.lng);
           send({ ev: 'pick', which: which, lat: e.latlng.lat, lon: e.latlng.lng });
         });
@@ -177,13 +197,145 @@
         };
         freeBtn.onclick = function () { send({ ev: 'free', start: latLon(pins[0].getLatLng()), profile: profileEl.value }); };
       }
+
+      // ---- Place search (Kartverket stedsnavn): START / FINISH boxes above the map --------
+      // A name picked here goes through the same 'pick' event as a click, so C# snaps it to a road.
+      var PLACES = 'https://ws.geonorge.no/stedsnavn/v1/navn';
+      // Towns and villages first, then parts of towns and small settlements, then municipalities; all else after.
+      var TIER = { 'By': 0, 'Tettsted': 0, 'Tettsteddel': 1, 'Bydel': 1, 'Tettbebyggelse': 1, 'Bygdelag (bygd)': 1, 'Grend': 1, 'Statistisk tettsted': 1, 'Hyttefelt': 1, 'Kommune': 2, 'Poststed': 2 };
+      var boxes = [0, 1].map(function (which) {
+        return { which: which, input: document.getElementById('place-' + which), list: document.getElementById('place-' + which + '-list'), items: [], active: -1, timer: 0, ctrl: null };
+      });
+
+      function placeQuery(q, fuzzy, signal) {
+        var u = new URLSearchParams({ sok: q.indexOf('*') < 0 ? q + '*' : q, fuzzy: fuzzy, utkoordsys: 4258, treffPerSide: 500,
+          filtrer: 'navn.skrivemåte,navn.navneobjekttype,navn.kommuner.kommunenavn,navn.representasjonspunkt' });
+        return fetch(PLACES + '?' + u, { signal: signal }).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        }).then(function (d) { return d.navn || []; });
+      }
+      // Settlements first, then exact / prefix matches, else the API's order; one row per name + municipality (+ type off the
+      // settlement tiers); only places in a Norwegian municipality on the map (NORWAY).
+      function rankPlaces(q, rows) {
+        var lq = q.replace(/\*/g, '').toLowerCase(), seen = {}, out = [];
+        rows.map(function (r, i) {
+          var type = (r.navneobjekttype || '').trim(), name = r['skrivemåte'] || '', ln = name.toLowerCase();
+          var tier = type in TIER ? TIER[type] : 3;
+          var kommune = (r.kommuner || []).map(function (k) { return k.kommunenavn; }).join(', ');
+          var pt = r.representasjonspunkt || {};
+          return { name: name, type: type.replace(/ \(.*\)$/, '').toLowerCase(), kommune: kommune, lat: pt.nord, lon: pt['øst'], tier: tier,
+            match: ln === lq ? 0 : ln.indexOf(lq) === 0 ? 1 : 2, i: i };
+        }).filter(function (p) { return p.name && p.kommune && L.latLngBounds(NORWAY).contains([p.lat, p.lon]); })   // no exonyms (Ålbæk), no Svalbard
+          .sort(function (a, b) { return a.tier - b.tier || a.match - b.match || a.i - b.i; })
+          .forEach(function (p) {
+            var key = p.name.toLowerCase() + '|' + p.kommune + '|' + (p.tier < 3 ? '' : p.type);
+            if (!seen[key] && out.length < 12) { seen[key] = true; out.push(p); }
+          });
+        return out;
+      }
+      function showList(box) {
+        box.list.textContent = '';
+        box.items.forEach(function (p, i) {
+          var li = document.createElement('li');
+          li.id = 'place-' + box.which + '-opt' + i;
+          li.setAttribute('role', 'option');
+          li.setAttribute('aria-selected', i === box.active ? 'true' : 'false');
+          li.appendChild(document.createTextNode(p.name));
+          var meta = document.createElement('span');
+          meta.textContent = ' — ' + p.type + ', ' + p.kommune;
+          li.appendChild(meta);
+          li.addEventListener('mousedown', function (e) { e.preventDefault(); });   // keep focus: no blur before the click
+          li.addEventListener('click', function () { choosePlace(box, i); });
+          box.list.appendChild(li);
+        });
+        var open = box.items.length > 0 && document.activeElement === box.input;
+        box.list.hidden = !open;
+        box.input.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (box.active >= 0 && open) { box.input.setAttribute('aria-activedescendant', 'place-' + box.which + '-opt' + box.active); box.list.children[box.active].scrollIntoView({ block: 'nearest' }); }
+        else box.input.removeAttribute('aria-activedescendant');
+      }
+      function hideList(box) { box.list.hidden = true; box.input.setAttribute('aria-expanded', 'false'); }
+      function searchPlaces(box) {
+        var q = box.input.value.trim();
+        if (box.ctrl) { box.ctrl.abort(); box.ctrl = null; }
+        if (q.length < 2) { box.items = []; box.active = -1; showList(box); return; }
+        var ctrl = new AbortController(), timedOut = false;
+        var timeout = setTimeout(function () { timedOut = true; ctrl.abort(); }, 8000);
+        box.ctrl = ctrl;
+        // Prefix search first; a typo finds nothing that way, so then ask again with fuzzy matching.
+        placeQuery(q, false, ctrl.signal).then(function (rows) { return rows.length ? rows : placeQuery(q, true, ctrl.signal); })
+          .then(function (rows) {
+            box.items = rankPlaces(q, rows);
+            box.active = box.items.length ? 0 : -1;
+            showList(box);
+            if (!box.items.length) api.status('No place called “' + q + '” found. Try another spelling, or click the map.');
+          }).catch(function (err) {
+            if (ctrl.signal.aborted && !timedOut) return;   // a newer search replaced this one
+            box.items = []; showList(box);
+            api.status('Place search failed (' + (timedOut ? 'no answer' : navigator.onLine === false ? 'offline' : err.message) + '). Click the map to set the pin instead.');
+          }).then(function () { clearTimeout(timeout); if (box.ctrl === ctrl) box.ctrl = null; });
+      }
+      function choosePlace(box, i) {
+        var p = box.items[i];
+        if (!p || !map) return;
+        box.input.value = p.name;
+        box.items = []; box.active = -1;
+        hideList(box);
+        box.input.blur();   // phones: the keyboard goes away so the map shows
+        var which = box.which;
+        next = which === 0 ? 1 : 0;
+        setPin(which, p.lat, p.lon);
+        if (pins[0] && pins[1]) map.fitBounds(L.latLngBounds([pins[0].getLatLng(), pins[1].getLatLng()]).pad(0.2), { maxZoom: 13 });
+        else map.setView([p.lat, p.lon], 13);
+        api.status((which ? 'Finish' : 'Start') + ': ' + p.name + ' — finding the nearest road…');
+        send({ ev: 'pick', which: which, lat: p.lat, lon: p.lon });
+      }
+      function placeKey(box, e) {
+        var n = box.items.length, open = !box.list.hidden;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          if (!n) return;
+          e.preventDefault();
+          box.active = open ? (box.active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n : Math.max(box.active, 0);
+          showList(box);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          clearTimeout(box.timer);
+          if (open && n) choosePlace(box, Math.max(box.active, 0));
+          else searchPlaces(box);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          if (open) hideList(box);
+          else { box.input.blur(); api.close(); send({ ev: 'close' }); }
+        }
+      }
+      boxes.forEach(function (box) {
+        box.input.addEventListener('input', function () { clearTimeout(box.timer); box.timer = setTimeout(function () { searchPlaces(box); }, 300); });
+        box.input.addEventListener('focus', function () { showList(box); });
+        box.input.addEventListener('blur', function () { hideList(box); });
+      });
+      // Keys typed in a search box belong to it, not to the game (G, M, R, N, H, Esc are game keys). This capture
+      // listener on window is registered before Unity loads, so it runs before Unity's own key listeners.
+      ['keydown', 'keypress', 'keyup'].forEach(function (type) {
+        window.addEventListener(type, function (e) {
+          var box = boxes[0].input === e.target ? boxes[0] : boxes[1].input === e.target ? boxes[1] : null;
+          if (!box) return;
+          e.stopImmediatePropagation();
+          if (type === 'keydown') placeKey(box, e);
+        }, true);
+      });
+
       var api = {
         open: function (options) {
           overlay.classList.add('open');
           ensure();
           options = options || {};
-          if (options.start) setPin(0, options.start.lat, options.start.lon);
-          if (options.finish) setPin(1, options.finish.lat, options.finish.lon);
+          [options.start, options.finish].forEach(function (p, which) {
+            if (!p) return;
+            // A place name stays only while its pin has not moved (a new stage, the car's position as the start).
+            if (!pins[which] || pins[which].getLatLng().distanceTo([p.lat, p.lon]) > 1) boxes[which].input.value = '';
+            setPin(which, p.lat, p.lon);
+          });
           if (options.world) {
             var w = options.world;
             var rect = [[w.minLat, w.minLon], [w.maxLat, w.maxLon]];

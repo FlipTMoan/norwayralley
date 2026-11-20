@@ -22,6 +22,9 @@ namespace Rally.Roads
     /// </summary>
     public static class RibbonMesh
     {
+        /// <summary>Half-open ownership test: a point on a border belongs to the tile east / north of it.</summary>
+        public static bool Owns(Bounds25833? own, double2 p) => !own.HasValue || (p.x >= own.Value.MinE && p.x < own.Value.MaxE && p.y >= own.Value.MinN && p.y < own.Value.MaxN);
+
         public const int Rows = 6;
         /// <summary>Skirts run SkirtOut beyond the shoulder edge and SkirtDrop down: buried in the terrain that meets the edge
         /// (RoadConstants.CarveLift), they show only where a coarse terrain ring sags, as an earth-coloured embankment face
@@ -31,8 +34,13 @@ namespace Rally.Roads
         [StructLayout(LayoutKind.Sequential)]
         struct Vertex { public float3 Pos; public float3 Normal; public float2 UV; public float2 UV1; }
 
-        /// <summary>Build one mesh for a tile's runs, in metres relative to <paramref name="origin"/>.</summary>
-        public static Mesh Build(List<RoadPolyline> lines, Utm33 origin)
+        /// <summary>
+        /// Build one mesh for a tile's runs, in metres relative to <paramref name="origin"/>. A tile's runs reach TilePad into
+        /// its neighbours (grading and carving need that context), so with <paramref name="own"/> only the segments whose
+        /// middle lies inside the tile itself (half-open) are drawn: every stretch of road by exactly one tile. Two tiles used to
+        /// draw the same 120 m at every border, from different meshes with V restarting at each run: z-fighting dashes.
+        /// </summary>
+        public static Mesh Build(List<RoadPolyline> lines, Utm33 origin, Bounds25833? own = null)
         {
             var verts = new List<Vertex>(4096);
             var tarmac = new List<uint>(8192); var gravel = new List<uint>(8192);
@@ -62,7 +70,7 @@ namespace Rally.Roads
                             Normal = new float3(0, 1, 0), UV = new float2(u, s[i].S / 4f), UV1 = new float2(half, 0),
                         });
                     }
-                    if (i < s.Count - 1 && !(s[i].Covered && s[i + 1].Covered))   // inside a junction the major road's ribbon is the surface
+                    if (i < s.Count - 1 && !(s[i].Covered && s[i + 1].Covered) && Owns(own, (s[i].P + s[i + 1].P) * 0.5))   // inside a junction the major road's ribbon is the surface
                     {
                         uint a = (uint)(baseV + i * Rows), b = (uint)(baseV + (i + 1) * Rows);
                         for (uint k = 0; k < Rows - 1; k++)
@@ -74,7 +82,7 @@ namespace Rally.Roads
                     }
                 }
             }
-            if (verts.Count == 0) return null;
+            if (verts.Count == 0 || tarmac.Count + gravel.Count == 0) return null;
             var data = Mesh.AllocateWritableMeshData(1);
             var md = data[0];
             md.SetVertexBufferParams(verts.Count,

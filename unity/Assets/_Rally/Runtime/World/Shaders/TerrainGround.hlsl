@@ -34,61 +34,83 @@ int CoarseTile(float2 wxz, out float2 local)
     return (int)LOAD_TEXTURE2D_LOD(_CoarseSlices, ij, 0).r;
 }
 
-int FineTile(float2 wxz, out float2 local)
+int FineTile(float2 wxz, out float2 local, out int2 ij)
 {
     float2 rel = wxz - _FineWindow.xy;
-    int2 ij = (int2)floor(rel / _FineWindow.z);
+    ij = (int2)floor(rel / _FineWindow.z);
     int dim = (int)_FineWindow.w;
     local = rel - (float2)ij * _FineWindow.z;
     if (any(ij < 0) || any(ij >= dim)) return -1;
     return (int)LOAD_TEXTURE2D_LOD(_FineSlices, ij, 0).r;
 }
 
-float2 TileUV(float2 local, float cell) { return (local / cell + 0.5) / _AtlasParams.x; }
+// Fine tiles blend into the coarse ground over _FineBlend metres at an outline no fine neighbour continues, and fade in
+// over half a second (_FineFade, one entry per fine atlas slice, TileWorld.AdvanceFades). TileWorld.FineWeight is the CPU twin.
+float _FineFade[32];
+float _FineBlend;
 
-// Ground height: the 1 m tiles along the roads first, then the 8 m tiles (stream.js sample()).
-// found = 0 where nothing is loaded yet (the clipmap clips those pixels).
-float GroundHeight(float2 wxz, out float found)
+float FineFadeAt(int2 ij)
 {
-    float2 local;
-    int slice = FineTile(wxz, local);
-    if (slice >= 0)
-    {
-        found = 1;
-        return SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsFine, sampler_HeightsFine, TileUV(local, _AtlasParams.z), slice, 0).r;
-    }
-    slice = CoarseTile(wxz, local);
-    if (slice >= 0)
-    {
-        found = 1;
-        return SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsCoarse, sampler_HeightsCoarse, TileUV(local, _AtlasParams.y), slice, 0).r;
-    }
-    found = 0;
-    return 0;
+    int dim = (int)_FineWindow.w;
+    if (any(ij < 0) || any(ij >= dim)) return 0;
+    int s = (int)LOAD_TEXTURE2D_LOD(_FineSlices, ij, 0).r;
+    return s >= 0 ? _FineFade[s] : 0;
 }
 
-// Ground height and the carve mask (1 on a road's / pad's flat band) from the same tile: fine first, then coarse.
+float FineOpen(float fadeNeighbour, float d) { return 1 - (1 - fadeNeighbour) * (1 - smoothstep(0, _FineBlend, d)); }
+
+// How much of the fine tile shows: its fade times, near each side / corner, 1 where a faded-in neighbour continues it and
+// down to 0 at a bare outline. Seen from either tile of a shared edge the product is the same, so the blend is seamless.
+float FineWeight(int slice, int2 ij, float2 local)
+{
+    float w = _FineFade[slice];
+    float s = _FineWindow.z, b = _FineBlend;
+    float2 hi = s - local;
+    if (min(min(local.x, local.y), min(hi.x, hi.y)) >= b) return w;
+    int sx = local.x < b ? -1 : (hi.x < b ? 1 : 0), sy = local.y < b ? -1 : (hi.y < b ? 1 : 0);
+    float dx = sx < 0 ? local.x : hi.x, dy = sy < 0 ? local.y : hi.y;
+    if (sx != 0) w *= FineOpen(FineFadeAt(ij + int2(sx, 0)), dx);
+    if (sy != 0) w *= FineOpen(FineFadeAt(ij + int2(0, sy)), dy);
+    if (sx != 0 && sy != 0) w *= FineOpen(FineFadeAt(ij + int2(sx, sy)), sqrt(dx * dx + dy * dy));
+    return w;
+}
+
+float2 TileUV(float2 local, float cell) { return (local / cell + 0.5) / _AtlasParams.x; }
+
+// Ground height and the carve mask (1 on a road's / pad's flat band): the 1 m tiles along the roads blended into the 8 m
+// tiles by FineWeight (stream.js sample() took the fine tile outright: a step at every fine outline).
+// found = 0 where nothing is loaded yet (the clipmap clips those pixels).
 float GroundHeightMask(float2 wxz, out float found, out float mask)
 {
-    float2 local;
-    int slice = FineTile(wxz, local);
+    float2 local, cl; int2 ij;
+    float w = 0, hf = 0, mf = 0;
+    int slice = FineTile(wxz, local, ij);
     if (slice >= 0)
     {
-        found = 1;
         float2 uv = TileUV(local, _AtlasParams.z);
-        mask = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskFine, sampler_MaskCoarse, uv, slice, 0).r;
-        return SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsFine, sampler_HeightsFine, uv, slice, 0).r;
+        mf = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskFine, sampler_MaskCoarse, uv, slice, 0).r;
+        hf = SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsFine, sampler_HeightsFine, uv, slice, 0).r;
+        w = FineWeight(slice, ij, local);
+        if (w >= 1) { found = 1; mask = mf; return hf; }
     }
-    slice = CoarseTile(wxz, local);
-    if (slice >= 0)
+    int cs = CoarseTile(wxz, cl);
+    if (cs >= 0)
     {
         found = 1;
-        float2 uv = TileUV(local, _AtlasParams.y);
-        mask = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, uv, slice, 0).r;
-        return SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsCoarse, sampler_HeightsCoarse, uv, slice, 0).r;
+        float2 uv = TileUV(cl, _AtlasParams.y);
+        float mc = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, uv, cs, 0).r;
+        float hc = SAMPLE_TEXTURE2D_ARRAY_LOD(_HeightsCoarse, sampler_HeightsCoarse, uv, cs, 0).r;
+        mask = lerp(mc, mf, w);
+        return lerp(hc, hf, w);
     }
-    found = 0; mask = 0;
-    return 0;
+    found = slice >= 0 ? 1 : 0; mask = mf;
+    return hf;
+}
+
+float GroundHeight(float2 wxz, out float found)
+{
+    float mask;
+    return GroundHeightMask(wxz, found, mask);
 }
 
 // Ground layer weights of the coarse tile under a point (LandcoverSplat order: s0 = conifer floor, birch floor,
@@ -101,10 +123,10 @@ void GroundCover(float2 wxz, float2 splatOffset, out float4 s0, out float4 s1, o
     s0 = 0; s1 = 0; mask = 0;
     int slice = CoarseTile(wxz, local);
     if (slice < 0) return;
-    float2 fl;
-    int fs = FineTile(wxz, fl);
-    mask = fs >= 0 ? SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskFine, sampler_MaskCoarse, TileUV(fl, _AtlasParams.z), fs, 0).r
-                   : SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, TileUV(local, _AtlasParams.y), slice, 0).r * 0.35;   // coarse: a faint verge tone only (its flat band is widened, TileWorld.Carve)
+    float2 fl; int2 fij;
+    int fs = FineTile(wxz, fl, fij);
+    mask = SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskCoarse, sampler_MaskCoarse, TileUV(local, _AtlasParams.y), slice, 0).r * 0.35;   // coarse: a faint verge tone only (its flat band is widened, TileWorld.Carve)
+    if (fs >= 0) mask = lerp(mask, SAMPLE_TEXTURE2D_ARRAY_LOD(_MaskFine, sampler_MaskCoarse, TileUV(fl, _AtlasParams.z), fs, 0).r, FineWeight(fs, fij, fl));   // TileWorld.VergeMaskAt
     float2 jl;
     int js = CoarseTile(wxz + splatOffset, jl);
     if (js < 0) { js = slice; jl = local; }

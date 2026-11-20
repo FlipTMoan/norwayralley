@@ -6,6 +6,7 @@
     "Rally.Geo",
     "Rally.World",
     "Rally.Roads",
+    "Rally.Track",
     "Rally.Vehicle",
     "Rally.Actors",
     "Rally.Gameplay",

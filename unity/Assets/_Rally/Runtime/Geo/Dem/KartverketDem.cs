@@ -57,24 +57,94 @@ namespace Rally.Geo
             progress?.Invoke(0.55f, "Unpacking the 1 m elevation model…");
 
             GeoTiffImage img;
+            await WorkBudget.Slice();
+            ct.ThrowIfCancellationRequested();
+            long t0 = FrameProbe.Start();
             try { img = GeoTiff.Decode(bytes); }
             catch (FormatException e) { throw new Exception($"Kartverket returned an elevation tile the game could not read ({e.Message}).", e); }
             if (img.Width < 2 || img.Height < 2) throw new Exception("Kartverket returned an elevation tile the game could not read.");
 
+            FrameProbe.Stop("dem.decode", t0);
             var grid = new HeightGrid(n, cellM, bounds.Min);
-            Resample(img, env, grid);
+            try
+            {
+                var lattice = new Lattice(env, grid);
+                // In row bands within the frame's streaming budget (WorkBudget): 66 000 samples are tens of ms on the main thread.
+                for (int r = 0; r < n; r += BandRows)
+                {
+                    await WorkBudget.Slice();
+                    ct.ThrowIfCancellationRequested();
+                    t0 = FrameProbe.Start();
+                    ResampleRows(img, lattice, grid, r, Math.Min(n, r + BandRows));
+                    FrameProbe.Stop("dem.resample", t0);
+                }
+            }
+            catch { grid.Dispose(); throw; }
+            grid.Version++;
             return grid;
+        }
+
+        const int BandRows = 32, LatticeStep = 16;
+
+        /// <summary>
+        /// Lat/lon of the grid samples, exact (Proj.ToLatLon) every <see cref="LatticeStep"/> samples and bilinear in between:
+        /// the projection is smooth enough that this is within a millimetre over a tile, and 250× fewer projections.
+        /// </summary>
+        sealed class Lattice
+        {
+            readonly int m;
+            readonly int[] at;
+            readonly double[] lat, lon;
+            public readonly double Sx, Sy, MinLon, MaxLat;
+
+            public Lattice(LatLonBounds env, HeightGrid grid)
+            {
+                int n = grid.N;
+                m = (n - 1 + LatticeStep - 1) / LatticeStep + 1;
+                at = new int[m];
+                for (int k = 0; k < m; k++) at[k] = Math.Min(k * LatticeStep, n - 1);
+                lat = new double[m * m]; lon = new double[m * m];
+                for (int j = 0; j < m; j++)
+                    for (int i = 0; i < m; i++)
+                    {
+                        var p = Proj.ToLatLon(new Utm33(grid.Origin.E + at[i] * grid.CellM, grid.Origin.N + at[j] * grid.CellM));
+                        lat[j * m + i] = p.Lat; lon[j * m + i] = p.Lon;
+                    }
+                MinLon = env.MinLon; MaxLat = env.MaxLat;
+                Sx = 1.0 / (env.MaxLon - env.MinLon); Sy = 1.0 / (env.MaxLat - env.MinLat);
+            }
+
+            int Cell(int s, out double t)
+            {
+                int k = Math.Min(s / LatticeStep, m - 2);
+                t = (double)(s - at[k]) / (at[k + 1] - at[k]);
+                return k;
+            }
+
+            public void At(int col, int row, out double latitude, out double longitude)
+            {
+                int i = Cell(col, out double tx), j = Cell(row, out double ty);
+                int a = j * m + i, b = a + 1, c = a + m, d = c + 1;
+                latitude = (lat[a] * (1 - tx) + lat[b] * tx) * (1 - ty) + (lat[c] * (1 - tx) + lat[d] * tx) * ty;
+                longitude = (lon[a] * (1 - tx) + lon[b] * tx) * (1 - ty) + (lon[c] * (1 - tx) + lon[d] * tx) * ty;
+            }
         }
 
         /// <summary>Bilinear lookup of each UTM grid sample in the lat/lon raster (row 0 = north).</summary>
         public static void Resample(GeoTiffImage img, LatLonBounds env, HeightGrid grid)
         {
-            double sx = img.Width / (env.MaxLon - env.MinLon), sy = img.Height / (env.MaxLat - env.MinLat);
-            for (int row = 0; row < grid.N; row++)
+            ResampleRows(img, new Lattice(env, grid), grid, 0, grid.N);
+            grid.Version++;
+        }
+
+        static void ResampleRows(GeoTiffImage img, Lattice lattice, HeightGrid grid, int row0, int row1)
+        {
+            double sx = img.Width * lattice.Sx, sy = img.Height * lattice.Sy;
+            for (int row = row0; row < row1; row++)
             for (int col = 0; col < grid.N; col++)
             {
-                var p = Proj.ToLatLon(new Utm33(grid.Origin.E + col * grid.CellM, grid.Origin.N + row * grid.CellM));
-                double fx = (p.Lon - env.MinLon) * sx - 0.5, fy = (env.MaxLat - p.Lat) * sy - 0.5;
+                lattice.At(col, row, out double plat, out double plon);
+                double fx = (plon - lattice.MinLon) * sx - 0.5, fy = (lattice.MaxLat - plat) * sy - 0.5;
                 fx = Math.Max(0, Math.Min(img.Width - 1.0001, fx));
                 fy = Math.Max(0, Math.Min(img.Height - 1.0001, fy));
                 int x = (int)fx, y = (int)fy;
@@ -84,7 +154,6 @@ namespace Rally.Geo
                 float h = (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty;
                 grid[col, row] = h;
             }
-            grid.Version++;
         }
 
         /// <summary>worldgen.js: nodata / non-finite / below −1000 m is sea → 0; nothing below sea level.</summary>

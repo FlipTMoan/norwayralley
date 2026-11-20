@@ -20,11 +20,14 @@ namespace Rally.World
         [ReadOnly] public NativeArray<float> Base;
         [ReadOnly] public NativeArray<CarveSegment> Segments;
         public int SegmentCount;
+        /// <summary>First grid row of this job: index i of the parallel-for is row RowOffset + i (CpuCarver runs bands of rows).</summary>
+        public int RowOffset;
         [NativeDisableParallelForRestriction] public NativeArray<float> Heights;
         [NativeDisableParallelForRestriction] public NativeArray<byte> Mask;
 
         public void Execute(int row)
         {
+            row += RowOffset;
             float y = row * CellM;
             int rowBase = row * N;
             for (int col = 0; col < N; col++)

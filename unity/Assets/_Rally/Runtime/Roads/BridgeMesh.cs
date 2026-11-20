@@ -73,9 +73,11 @@ namespace Rally.Roads
 
         /// <summary>
         /// Build the drawn mesh (null without bridges) and the collider mesh (<paramref name="collider"/>, null without
-        /// bridges) for a tile's runs. <paramref name="ground"/> is the natural ground the piers stand on.
+        /// bridges) for a tile's runs. <paramref name="ground"/> is the natural ground the piers stand on. With
+        /// <paramref name="own"/> a span is built only by the tile that holds its middle sample (RibbonMesh.Owns), not by
+        /// both tiles whose padded runs reach it.
         /// </summary>
-        public static Mesh Build(List<RoadPolyline> lines, Utm33 origin, Func<Utm33, float> ground, out Mesh collider)
+        public static Mesh Build(List<RoadPolyline> lines, Utm33 origin, Func<Utm33, float> ground, out Mesh collider, Bounds25833? own = null)
         {
             var draw = new Buf(); var solid = new Buf();
             var o = new double2(origin.E, origin.N);
@@ -86,6 +88,7 @@ namespace Rally.Roads
                 float W = RoadConstants.DeckHalf(line.Lanes.Half);
                 foreach (var sp in Spans(s))
                 {
+                    if (!RibbonMesh.Owns(own, s[(sp.I0 + sp.I1) / 2].P)) continue;
                     float2 L(int i) => (float2)(s[i].P - o);
                     float Top(int i) => RoadConstants.DeckTop(s[i].RoadY);
                     float2 Tangent(int i)

@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-20 (fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-20 (tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -134,22 +134,38 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   cannot see the disk, so there the browser's quota is used and 10 % of it stays unused. The room is measured at
   start, every 5 minutes and after every 256 MB written; when it shrank, the oldest entries are evicted.
 
-## Streaming while driving (stream.js behaviour, verified 2026-11-16)
+## Streaming while driving (stream.js behaviour, verified 2026-11-16; seams and frame budget 2026-11-20)
 
 - `TileScheduler.LedPoint` leads the load centre along the velocity (≤ LEAD_DISTANCE 2800 m, 3.5 s of travel);
   `GameController.Update` feeds `TileWorld.Update(carPos, car.State.Vel, …)` every frame, so the 4400 m ring stays
   ahead of a fast car and tiles beyond 5300 m are dropped behind it.
-- Endless mode: `TileScheduler.SetPrefetchPath(points)` takes the next RoadWalk sector's centre line; the coarse tiles
-  under it and the fine (1 m) tiles along it are queued *behind* the ring around the car (priority +50 000) and are
-  exempt from the distance drop, so the road ahead is carved before the car gets there.
-- A frame is never blocked: the DEM arrives as a task, `GameController` applies at most **one tile result per frame**
-  (`TileWorld.OnTileData`: upload + carve, the clipmap shows it the same frame). Roads, OSM features and SR16 land cover
-  arrive later through `TileWorld.OnTileFeatures` (splat, water, houses, pads, forest) and a failed Overpass answer is
-  asked again after 45 s.
+- Prefetch: `TileScheduler.SetPrefetchPath(points)` — in endless mode the next RoadWalk sector's centre line, on a
+  normal (OSRM / demo) stage the stage line from the car to 2.5 km ahead, renewed every 200 m
+  (`GameController.PrefetchStage`). The coarse tiles under it and the fine (1 m) tiles along it are queued *behind* the
+  ring around the car (priority +50 000) and are exempt from the distance drop, so the road ahead is carved before the
+  car gets there.
+- Frame budget (`Core/WorkBudget`, 5 ms of streaming work per frame while driving, a quarter of the frame at low frame
+  rates, 50 ms while the car waits on loading / start screen / countdown; the web build has no worker threads, so work is
+  cut into pieces rather than moved to jobs): the DEM resample runs in 32-row bands (projection on a 16-sample lattice),
+  `GameController` applies tile results while the budget lasts (at least one per frame), a coarse overlay runs as steps
+  (roads, ribbon, bridges, signs, splat, water, houses, the houses' collider, carve) that runs to the end once started
+  (a tile's roads count as in — `RoadGraph.HasTile` — only when graded to the end; neighbours cut from a way graded
+  again are set again), and re-carves go to a queue in
+  `TileWorld` that carves the tiles nearest to the car first. One Overpass answer is parsed once per tile.
+- Measuring: `FrameProbe` (Core) records every real frame and the sections of each frame over 33 ms; `PreviewShots
+  -previewDrive SECONDS -previewGlide` drives the car along the stage line (free drive: along the road) at exactly
+  `-previewDriveKmh` and writes `bench_detail.txt` (distribution, slow frames with what ran, streaming work per frame,
+  how long before the car arrived each 1 m tile was ready).
+- Tile borders (`PreviewShots -previewSeams` surveys them): every tile's DTM is its own WCS request, so a new tile takes
+  the edges (and corners) of the neighbours of its kind that are already in and fades the difference out over 4 coarse /
+  16 fine samples (`TileWorld.Stitch`) — shared edges are identical. A 1 m tile blends into the 8 m ground over 16 m at
+  every outline no fine neighbour continues (heights, carve mask, verge tone; `TerrainGround.hlsl FineWeight`, CPU twin
+  `TileWorld.FineWeight` for the car) and fades in over 0.5 s. A coarse tile collects road segments by the widened reach
+  it carves them with, and carves house pads of its neighbours too; each stretch of ribbon is drawn by the tile that
+  holds its middle; roads over ground that is not loaded yet hold the nearest known ground and are graded again later.
 - The car waits only at the start (`IGround.IsLoaded` under the start pose). While a fine tile is loading the car drives
-  on the 8 m ground; when the fine tile lands `TileWorld` simply switches to it (fine first, then coarse). To keep the
-  decimetre step out from under the wheels, `GameController` holds a fine tile whose edge is within 30 m of the car for
-  up to 3 s (`FineTileHoldDistance`); no height blending is implemented.
+  on the 8 m ground; `GameController` still holds a fine tile whose edge is within 30 m of the car for up to 3 s
+  (`FineTileHoldDistance`), and the fade-in makes the change gradual.
 - `TileWorld.GetStats()` = loaded coarse / fine counts, pending (queued + loading) and the CPU height bytes, shown in
   the HUD status line like `streamStats()` in the JS.
 
