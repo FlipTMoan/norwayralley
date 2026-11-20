@@ -63,7 +63,9 @@ namespace Rally.Tests.Play
                 until = Time.realtimeSinceStartup + 3f;
                 while (Time.realtimeSinceStartup < until) yield return null;
                 float moved = Vector3.Dot(car.transform.position - start, forward);
-                Assert.Greater(moved, 5f, $"{want} moved {moved:F1} m in 3 s ({car.SpeedKmh:F0} km/h)");
+                // The fake stage's start line counts as rough ground, where the Volvo (least traction) crawls: ~5.0 m before the
+                // wheelspin (plan "Off road: wheelspin and mud"), 4.9 m with it. The point is that every car drives away.
+                Assert.Greater(moved, 4f, $"{want} moved {moved:F1} m in 3 s ({car.SpeedKmh:F0} km/h, {car.State.SurfaceKind}, on road {car.State.OnRoad}, slip {car.State.WheelSlip:F1} m/s)");
                 car.ApplyExternalHit(new float3(0f, 0f, -1f), 12f, 500f);
                 Assert.Greater(car.Damage, 0f, $"{want}: a hit damages it");
                 Assert.IsFalse(car.Wrecked, want.ToString());

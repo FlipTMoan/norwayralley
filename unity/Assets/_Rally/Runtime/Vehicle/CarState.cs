@@ -51,11 +51,17 @@ namespace Rally.Vehicle
         public float SlideGrip;
         public SlideMode SlideMode;
         public float4 WheelCompression;
+        /// <summary>Wheelspin: the driven wheels' surface speed minus the ground speed (m/s, signed like the drive). CarSim.SlipTarget.</summary>
+        public float WheelSlip;
 
         // Drivetrain state.
         public int Gear;
         public bool AutoShift;
-        public float Rpm, ShiftTimer, EngineLoad;
+        /// <summary>Engine revs as heard and shown (with the wheelspin flare).</summary>
+        public float Rpm;
+        /// <summary>Revs from the road speed: what the torque curve, the limiter and the automatic box use (CarSim.UpdateDrivetrain).</summary>
+        public float RoadRpm;
+        public float ShiftTimer, EngineLoad;
         /// <summary>Turbo boost 0..1 (cars with CarSpec.TurboLag &gt; 0): builds under throttle above mid revs, collapses off it.</summary>
         public float Boost;
         public bool Limiter;
@@ -91,6 +97,7 @@ namespace Rally.Vehicle
             s.Gear = 1;
             s.AutoShift = true;
             s.Rpm = spec.Idle;
+            s.RoadRpm = spec.Idle;
             s.AirborneAt = -1f;
             s.Random = new RallyRandom(seed);
             s.VisualRotation = quaternion.identity;

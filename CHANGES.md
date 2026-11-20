@@ -1,8 +1,34 @@
 # Changes
 
-_Updated 2026-11-20 (car chooser in the Unity game)._
+_Updated 2026-11-20 (wheelspin and mud in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: wheels spin off road and throw mud
+- **Wheelspin** (`CarSim.SlipTarget`, `CarState.WheelSlip`): when the drive asks for more than the tyres can give, the
+  driven wheels run ahead of the ground. Loose ground lets go early (off road at 60 % of the traction limit, gravel at
+  80 %, asphalt only past it), and each car has its own `CarSpec.Spin`: the 911s 1.0 and the Volvo 1.1 spin easily, the MV6
+  0.8, the 736 0.65, and the Baja Bug and the Ranger 0.55 grip better but still spin. Floored off road from rest, the
+  wheels run ahead by ~13–15 m/s in the 911s and the Volvo, 11 in the MV6, 5–7 in the buggies and 2.6 in the Ranger. A
+  wheel never runs past the gear's redline, and the wheels hook up again when you lift.
+- **Revs flare, wheels turn at wheel speed:** the rev bar and the engine sound follow the spinning wheels (`CarState.Rpm`),
+  and the driven wheel meshes turn at wheel speed (the rears, and the fronts on a 4WD). Torque, limiter and the automatic
+  box use the road-speed revs (`CarState.RoadRpm`), so a car whose wheels do not spin drives exactly as before.
+- **Less power reaches the ground:** a wheel spinning hard (≥ 10 m/s) loses 5 % of its traction off road and 3 % on
+  gravel, nothing on asphalt (quadratic below that, so a small slip costs almost nothing). Top speeds on asphalt are
+  unchanged (`TopSpeedTests`).
+- **Mud thrown from the tyres** (`CarMud`, `Editor/CarMudSetup`, `Settings/Car/MudClod.*`): one small particle system
+  behind each driven wheel, rate ∝ slip × wheel speed, thrown up and back under gravity: brown clods (a few big ones) off
+  road, grey stones and dust on gravel, a little white smoke on asphalt only when the wheels really spin, water drops
+  when wading and a burst on the entry splash. 64 particles per wheel, none beyond 90 m, no collisions.
+- `PreviewShots -previewMud` launches the car from rest off road, on gravel, on asphalt and in shallow water near the
+  start and saves side and chase frames.
+- Tests: `WheelspinTests` (slip grows with power and falls with grip on every surface; off road the 911 and the Volvo
+  spin more than 1.5 × the Ranger / Baja / 736, which still spin; every car spins most off road, less on gravel, least
+  on asphalt; revs flare and the driven wheels turn faster; less power reaches the ground; no slip and no mud at a
+  steady 100 km/h on asphalt or flat out at speed; the mud follows slip and surface), `GarageTests` checks a mud
+  system per driven wheel. `GarageSceneTests`' drive-away check is 4 m in 3 s (was 5): the fake stage's start counts as
+  rough ground, where the Volvo moved ~5.0 m before and 4.9 m with wheelspin. EditMode 181 / 181, PlayMode 12 / 12.
 
 ### Unity: the car no longer stops at 50 km/h; every car reaches its own top speed
 - **Cause (confirmed by test):** the car counted as "off the road" whenever it was more than the stage line's half width

@@ -11,7 +11,7 @@ namespace Rally.Tests.Edit.Vehicle
     /// <summary>
     /// The car chooser's garage: every CarSpec is a plausible car, every car drives and takes damage in the pure sim, the
     /// turbo cars spool, the wire ids round-trip, and every built prefab has its wheels where the spec puts them, a body box
-    /// of the spec's size, a readable car-space body for the dents and an exhaust at the back.
+    /// of the spec's size, a readable car-space body for the dents, an exhaust at the back and mud on the driven wheels.
     /// </summary>
     public class GarageTests
     {
@@ -177,6 +177,16 @@ namespace Rally.Tests.Edit.Vehicle
                         var lp = p.transform.localPosition;
                         Assert.Less(lp.z, spec.BodyZ - spec.Body.z * 0.35f, n + " tailpipe at the back");
                         Assert.Less(math.abs(lp.x), spec.Body.x * 0.5f, n + " tailpipe inside the width");
+                    }
+                    var mud = go.GetComponent<CarMud>();
+                    Assert.IsNotNull(mud, n + " mud");
+                    Assert.AreEqual(spec.Drive == DriveType.All ? 4 : 2, mud.Wheels.Length, n + " one mud system per driven wheel");
+                    for (int j = 0; j < mud.Wheels.Length; j++)
+                    {
+                        var w = CarSim.WheelOffset(spec, mud.WheelIndex[j]);
+                        var lp = mud.Wheels[j].transform.localPosition;
+                        Assert.Less(math.distance(new float2(lp.x, lp.z), w) , spec.WheelRadius * 1.2f, $"{n} mud {j} at its wheel");
+                        Assert.Less(lp.z, w.y, $"{n} mud {j} behind its wheel");
                     }
                     Assert.IsEmpty(go.GetComponentsInChildren<Camera>(true), n + " no cameras from the file");
                 }

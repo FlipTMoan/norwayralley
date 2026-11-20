@@ -146,3 +146,12 @@
   refreshed the asset database and left a dead reference. Create scene-referenced assets last, right before BuildScene;
   diff the regenerated scene's `{fileID: 0}` count against HEAD; GarageSceneTests now asserts the panel and the cards.
   And look at the web build in Chrome before calling it done: only that showed it.
+
+## 2026-11-20 — wheelspin: keep a new visual quantity out of the control loops it was not meant for
+- Feeding the flared (wheelspin) revs into the automatic box and the power limit looked "realistic" and broke two
+  untested-for behaviours: the MV6 hunted 1↔2 off road (Rpm lag vs instant slip) and the 736 lost off-road speed. Rule:
+  when adding a quantity for feel (sound, rev bar, particles), give it its own field (`Rpm`) and leave the physics on the
+  old one (`RoadRpm`) unless the change to the physics is the point; then a car that does not trigger the new effect
+  drives bit-for-bit as before.
+- Several existing tests sat within 1–3 % of their thresholds (736 off-road top 65.2 vs 65.0, Volvo 5.0 m vs 5 m). A
+  `Spec.Spin = 0` A/B (EditMode or one PlayMode run) tells in minutes whether a failure is the new effect or the margin.

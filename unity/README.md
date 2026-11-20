@@ -1,6 +1,6 @@
 # Retro Norway Rally — Unity 6 web build
 
-_Updated 2026-11-20 (car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
+_Updated 2026-11-20 (wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` and is still what
 `npm run build` deploys to GitHub Pages; the Unity build is served next to it at
@@ -200,12 +200,18 @@ Top speed on flat asphalt is the real car's (`CarSpec.TopSpeed`: 225 / 245 / 260
 one-lane stage line (see CHANGES: that was the 50 km/h bug). A Q/E press switches the gearbox to manual for the visit only;
 the gear then reads e.g. `3 M`, and a manual box on the limiter for 1.5 s says how to shift up.
 
+Off road, and less on gravel, the driven wheels spin under power (`CarSim.SlipTarget`, `CarState.WheelSlip`): the revs
+flare, the wheels turn faster than the car moves, a hard-spinning wheel pushes a little less, and `CarMud` throws mud and
+clods (off road), stones and dust (gravel), water (wading) or a little tyre smoke (asphalt, only when really spinning)
+from the driven wheels. How readily each car spins is `CarSpec.Spin` (911s 1.0, Volvo 1.1, MV6 0.8, 736 0.65, Baja Bug
+and Ranger 0.55). The mud systems are put on the prefabs by `Editor/CarMudSetup` (`RunAll`, also called by the builder).
+
 Engines are the real car's power × 1.58, the arcade factor the original 911 already had. The prefabs come from
 `Editor/CarGarageBuilder.cs` (**Rally → Build Car Prefabs**, or `-executeMethod Rally.Editor.CarGarageBuilder.Build`;
 `BuildSceneAndPictures` with a display also rebuilds the scene and the card pictures, `-carShots DIR` writes side / top /
 front / rear views for checking). It scales each FBX to the real car's length, turns it nose-forward, hangs the wheels
-(splitting a mesh that holds all four), bakes the paint panels into one car-space mesh for the dents and puts the exhaust on
-the tailpipes; it logs the measured wheelbase, track, wheel radius and body box, which `CarSpec` must match.
+(splitting a mesh that holds all four), bakes the paint panels into one car-space mesh for the dents, puts the exhaust on
+the tailpipes and the mud on the driven wheels; it logs the measured wheelbase, track, wheel radius and body box, which `CarSpec` must match.
 
 A new model: unpack it into `Art/Cars/<name>/` with a LICENSE.txt, list its parts with
 `-executeMethod Rally.Editor.CarGarageBuilder.ProbeFbx -probeFbx PATH`, add a `Model` entry (wheels, paint panels, nose

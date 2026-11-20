@@ -28,7 +28,8 @@ namespace Rally.Editor
     /// drawn and GC bytes per frame, written to DIR/bench.txt. <c>-previewDrive SECONDS [-previewDriveKmh K]</c> skips the shots
     /// and only drives (a trace line per second, the car's <c>collision:</c> lines in the log); <c>-previewCar ID</c> picks the car (Garage ids:
     /// porsche, carrera, turbo930, volvo240, mv6, ranger, baja, type736), and a drive saves its last chase frame; <c>-previewExhaust</c> adds
-    /// exhaust shots at idle and under full throttle; <c>-previewRoadDebug</c> also logs the edge fit and water-on-road survey.
+    /// exhaust shots at idle and under full throttle; <c>-previewMud</c> skips the shots and instead launches the car from rest
+    /// off road, on gravel, on asphalt and in shallow water near the start (side and chase frames 0.9 s and 2 m in, wheelspin and mud); <c>-previewRoadDebug</c> also logs the edge fit and water-on-road survey.
     /// </summary>
     public static class PreviewShots
     {
@@ -37,7 +38,11 @@ namespace Rally.Editor
         static bool live, noCompute, bench, roadDebug;
         static float driveSecs, driveKmh;
         static double nextTrace, exhaustT0;
-        static bool exhaust;
+        static bool exhaust, mud;
+        static readonly Queue<string> mudRuns = new Queue<string>();
+        static string mudRun;
+        static double mudT0;
+        static float2 mudSpot;
         static int step;
         static double waitUntil, started, treesSince;
         static readonly Queue<(string name, Action pose)> shots = new Queue<(string, Action)>();
@@ -58,6 +63,7 @@ namespace Rally.Editor
             bench = Array.IndexOf(args, "-previewBench") >= 0;
             roadDebug = Array.IndexOf(args, "-previewRoadDebug") >= 0;
             exhaust = Array.IndexOf(args, "-previewExhaust") >= 0;
+            mud = Array.IndexOf(args, "-previewMud") >= 0;
             driveSecs = float.TryParse(Arg(args, "-previewDrive"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ds) ? ds : 0f;
             driveKmh = float.TryParse(Arg(args, "-previewDriveKmh"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dk) ? dk : 70f;
             GpuCaps.ForceNoCompute = noCompute;   // the WebGL 2 path: CPU scatter, RenderMeshInstanced
@@ -106,6 +112,7 @@ namespace Rally.Editor
                         Debug.Log($"PreviewShots: {world.Trees.Count} trees indexed, shooting");
                         if (roadDebug) RoadReport();
                         if (driveSecs > 0) { cam = game.MainCamera != null ? game.MainCamera : Camera.main; BenchPlan(); benchPoses.Clear(); step = 10; return; }   // -previewDrive: no shots, just the drive
+                        if (mud) { MudPlan(); step = 30; return; }   // -previewMud: launches on each surface, no other shots
                         Plan();
                         step = 2;
                         return;
@@ -153,6 +160,37 @@ namespace Rally.Editor
                         else { Look(ep.xz - ef * 7f, 1.9f, ep.xz + ef * 2f, 0.6f); pending = "13_exhaust_throttle_chase"; }
                         cam.targetTexture = rt; waitUntil = now + 0.05;
                         step++;
+                        return;
+                    }
+                    case 30:   // -previewMud: wait for the countdown, then place the car for the next run and floor it
+                    {
+                        if (game.Phase != Phase.Racing) return;
+                        if (pending != null) { if (now < waitUntil) return; Save(pending); pending = null; }
+                        if (mudRuns.Count == 0) { Finish(0); return; }
+                        mudRun = mudRuns.Dequeue();
+                        var mc = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
+                        if (!MudSpot(mudRun, mc.State.Pos.xz, out var spot, out float yaw)) { Debug.Log($"PreviewShots mud: no {mudRun} spot near the start"); return; }
+                        mc.ResetTo(spot, yaw);
+                        mudT0 = now; mudSpot = spot; step = 31;
+                        return;
+                    }
+                    case 31:   // 0.9 s of full throttle from rest: a low side view at the rear wheel, then one from behind
+                    case 32:
+                    {
+                        // 0.9 s, and 2 m driven (a far jump streams tiles and the first frames are long and capped)
+                        if (step == 31 && (now < mudT0 + 0.9 || math.distance(UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>().State.Pos.xz, mudSpot) < 2f && now < mudT0 + 6)) return;
+                        if (pending != null) { if (now < waitUntil) return; Save(pending); pending = null; }
+                        var mc = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
+                        ref var ms = ref mc.State;
+                        var mt = mc.transform;
+                        float3 mp = mt.position; float2 mf = math.normalizesafe(((float3)mt.forward).xz), mr = new float2(mf.y, -mf.x);
+                        Debug.Log($"PreviewShots mud {mudRun}: {mc.Kind} {ms.SurfaceKind} onRoad {ms.OnRoad} water {ms.WaterDepth:0.00} {ms.SpeedKmh:0} km/h slip {ms.WheelSlip:0.0} m/s gear {ms.Gear} rpm {ms.Rpm:0}");
+                        // Over water the camera keeps above the surface, not above the bed.
+                        float2 sideFrom = mp.xz + mr * 5.5f - mf * 4.5f, chaseFrom = mp.xz - mf * 8f;
+                        float Above(float2 at) { var w = world.WaterAt(at); return w.Depth > 0f ? w.Depth : 0f; }
+                        if (step == 31) { Look(sideFrom, 1.0f + Above(sideFrom), mp.xz - mf * 2.5f, 0.7f, mp.y); pending = $"mud_{mc.Kind}_{mudRun}_side"; step = 32; }
+                        else { Look(chaseFrom, 2.2f + Above(chaseFrom), mp.xz + mf * 1f, 0.8f, mp.y); pending = $"mud_{mc.Kind}_{mudRun}_chase"; step = 30; }
+                        cam.targetTexture = rt; waitUntil = now + 0.05;
                         return;
                     }
                     case 10:   // bench: next pose, 1 s to settle, 3 s measured; then the drive
@@ -208,6 +246,54 @@ namespace Rally.Editor
                 }
             }
             catch (Exception e) { Fail(e.ToString()); }
+        }
+
+        /// <summary>-previewMud: the runs, the camera off the rig, motion blur off, and the car on a straight-ahead full-throttle driver.</summary>
+        static void MudPlan()
+        {
+            cam = game.MainCamera != null ? game.MainCamera : Camera.main;
+            if (blur == null && game.Style != null && game.Style.PostProfile != null && game.Style.PostProfile.TryGet<UnityEngine.Rendering.Universal.MotionBlur>(out var mb))
+            { blur = mb; blurWasActive = mb.active; mb.active = false; }
+            var rig = UnityEngine.Object.FindAnyObjectByType<CameraRig>();
+            if (rig != null) rig.enabled = false;
+            if (rt == null) rt = new RenderTexture(W, H, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
+            foreach (var r in new[] { "offroad", "gravel", "asphalt", "water" }) mudRuns.Enqueue(r);
+            var ctl = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
+            ctl.Driver = new Rally.Vehicle.ScriptedDriver { TargetKmh = 250f, SteerGain = 0f };   // flat out, straight ahead
+            game.StartEngine();
+        }
+
+        /// <summary>A launch spot within 800 m: the surface wanted under the car and 20 m straight ahead, level, dry (or shallow water); off road no tree colliders just ahead.</summary>
+        static bool MudSpot(string run, float2 near, out float2 spot, out float yaw)
+        {
+            bool Fits(float2 p)
+            {
+                var w = world.WaterAt(p);
+                if (run == "water") return w.Depth > 0.2f && w.Depth < 0.6f;
+                if (w.Depth > 0f || !world.IsLoaded(p)) return false;
+                var want = run == "offroad" ? Surface.Offroad : run == "gravel" ? Surface.Gravel : Surface.Asphalt;
+                return world.SurfaceAt(p) == want;
+            }
+            int trees = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>().TreeLayers.value;
+            for (float rad = 10f; rad < 800f; rad += 7f)
+                for (float a = 0f; a < 2f * math.PI; a += 7f / rad)
+                {
+                    var p = near + new float2(math.cos(a), math.sin(a)) * rad;
+                    if (!Fits(p)) continue;
+                    for (int k = 0; k < 16; k++)
+                    {
+                        float y = k * math.PI / 8f;
+                        var f = new float2(math.sin(y), math.cos(y));
+                        bool ok = true;
+                        float h0 = world.HeightAt(p);
+                        for (float d = 4f; d <= 20f && ok; d += 4f) ok = Fits(p + f * d) && math.abs(world.HeightAt(p + f * d) - h0) < d * 0.05f;
+                        // Off road: room for the camera beside and behind (not into a hillside), no trees right ahead.
+                        if (ok && run == "offroad") ok = !Physics.CheckSphere(new Vector3(p.x, h0 + 1.5f, p.y) + new Vector3(f.x, 0f, f.y) * 10f, 9f, trees, QueryTriggerInteraction.Ignore);
+                        if (ok) { spot = p; yaw = y; return true; }
+                    }
+                }
+            spot = near; yaw = 0f;
+            return false;
         }
 
         static void Plan()

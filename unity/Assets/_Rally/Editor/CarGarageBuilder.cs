@@ -17,7 +17,7 @@ namespace Rally.Editor
     /// length, wheel meshes hung under the four pivot/spin pairs at the CarSpec axles (a mesh that holds all four wheels is
     /// split into quadrants), the paint panels baked into one car-space mesh for the dents (CarDamageVisual works in the
     /// body's object space), editable material copies with the textures wired, the vehicle components, the body box from
-    /// CarSpec and the exhaust on the tailpipes (CarExhaustSetup). <see cref="Pictures"/> renders the start-screen card of
+    /// CarSpec, the exhaust on the tailpipes (CarExhaustSetup) and the thrown mud on the driven wheels (CarMudSetup). <see cref="Pictures"/> renders the start-screen card of
     /// every car into Runtime/UI/Resources/UI/Cars.
     /// <c>Unity -batchmode -nographics -projectPath unity -executeMethod Rally.Editor.CarGarageBuilder.Build -quit</c> (rebuilds
     /// the new cars; BuildSceneAndPictures also the scene and the cards), <c>DISPLAY=:0 Unity -batchmode -projectPath unity -executeMethod Rally.Editor.CarGarageBuilder.Pictures -quit
@@ -288,6 +288,7 @@ namespace Rally.Editor
             PrefabUtility.SaveAsPrefabAsset(root, path);
             UnityEngine.Object.DestroyImmediate(root);
             CarExhaustSetup.Apply(path, def.Pipes);
+            CarMudSetup.Apply(path, spec);
             return AssetDatabase.LoadAssetAtPath<GameObject>(path);
         }
 

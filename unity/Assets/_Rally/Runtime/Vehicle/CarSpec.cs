@@ -16,15 +16,19 @@ namespace Rally.Vehicle
     /// <summary>
     /// Surface model (car.js:92 SURFACES). `Peak` scales the lateral grip, `Loose` how progressively the
     /// tyres let go (and how much the tail comes round on the throttle), `Dust` whether the wheels throw a plume.
+    /// Wheelspin (CarSim.SlipTarget): the driven wheels start to spin once the drive asks for more than `SpinAt` × the
+    /// traction limit (loose ground shears before the tyre's peak), `SpinGain` scales how fast they then run ahead of the
+    /// ground, and a fully spinning wheel loses `SpinLoss` of its traction. Asphalt spins only past the limit and loses nothing.
     /// </summary>
     public struct SurfaceModel
     {
         public float Mu, Rolling, Drag, Peak, Loose, SlipK;
+        public float SpinAt, SpinGain, SpinLoss;
         public bool Dust;
 
-        public static readonly SurfaceModel Asphalt = new SurfaceModel { Mu = 1.08f, Rolling = 0.4f, Drag = 0.0011f, Peak = 1.2f, Loose = 0f, SlipK = 9.0f, Dust = false };  // car.js:93
-        public static readonly SurfaceModel Gravel = new SurfaceModel { Mu = 0.86f, Rolling = 0.9f, Drag = 0.0013f, Peak = 0.95f, Loose = 0.35f, SlipK = 6.0f, Dust = true }; // car.js:94
-        public static readonly SurfaceModel Offroad = new SurfaceModel { Mu = 0.7f, Rolling = 2.0f, Drag = 0.003f, Peak = 0.85f, Loose = 0.55f, SlipK = 5.0f, Dust = true };  // car.js:95
+        public static readonly SurfaceModel Asphalt = new SurfaceModel { Mu = 1.08f, Rolling = 0.4f, Drag = 0.0011f, Peak = 1.2f, Loose = 0f, SlipK = 9.0f, Dust = false, SpinAt = 1f, SpinGain = 0.25f, SpinLoss = 0f };  // car.js:93
+        public static readonly SurfaceModel Gravel = new SurfaceModel { Mu = 0.86f, Rolling = 0.9f, Drag = 0.0013f, Peak = 0.95f, Loose = 0.35f, SlipK = 6.0f, Dust = true, SpinAt = 0.8f, SpinGain = 0.6f, SpinLoss = 0.03f }; // car.js:94
+        public static readonly SurfaceModel Offroad = new SurfaceModel { Mu = 0.7f, Rolling = 2.0f, Drag = 0.003f, Peak = 0.85f, Loose = 0.55f, SlipK = 5.0f, Dust = true, SpinAt = 0.6f, SpinGain = 1f, SpinLoss = 0.05f };  // car.js:95
 
         /// <summary>car.js:945 `SURFACES[kind] || SURFACES.gravel`.</summary>
         public static SurfaceModel For(Surface kind)
@@ -103,6 +107,8 @@ namespace Rally.Vehicle
         public float TopSpeed;
         /// <summary>Air-drag multiplier on the surface drag (car.js had 1 for every car, which held the 911 to ~175 km/h whatever its gearing).</summary>
         public float Aero;
+        /// <summary>Wheelspin: how readily the driven tyres break traction (1 = road tyres; knobbly off-road tyres less). CarSim.SlipTarget.</summary>
+        public float Spin;
         public DriveType Drive;
         /// <summary>Turbo spool time (s) to full boost; 0 = no turbo. Off boost the engine makes <see cref="CarSim.OffBoost"/> of its torque and power.</summary>
         public float TurboLag;
@@ -149,7 +155,7 @@ namespace Rally.Vehicle
             TravelDown = 0.14f, TravelUp = 0.2f, SpringK = 190f, SpringD = 14f, Jump = 4.0f,
             Gears = GearList(-6.0f, 6.77f, 4.05f, 2.90f, 2.26f, 1.85f), FinalDrive = 3.9f, Idle = 1200f, Redline = 12000f,
             Torque = 380f, Power = 224000f, Upshift = 11000f, Downshift = 4200f, DriveLoad = 0.62f,
-            GripAsphalt = 1f, GripGravel = 1f, GripOffroad = 1f, TopSpeed = 225f, OffroadMax = 50f / 3.6f, MaxClimb = 30f, Planted = Planted.None,
+            GripAsphalt = 1f, GripGravel = 1f, GripOffroad = 1f, TopSpeed = 225f, OffroadMax = 50f / 3.6f, Spin = 1.00f, MaxClimb = 30f, Planted = Planted.None,
             Drive = DriveType.Rear, Body = new float3(1.82f, 1.3f, 4.05f), BodyZ = 0.025f,   // the old box: track + 0.2, 1.3, wheelbase + 1.6 about mid-wheelbase
             Eye = new float3(-0.36f, 1.1f, 0.12f), Shadow = new float2(2.8f, 4.6f), Paint = 0xd34a31,
         });
@@ -161,7 +167,7 @@ namespace Rally.Vehicle
             TravelDown = 0.35f, TravelUp = 0.45f, SpringK = 120f, SpringD = 11f, Jump = 4.8f,
             Gears = GearList(-6.0f, 9.0f, 5.4f, 3.6f, 2.6f), FinalDrive = 3.4f, Idle = 1000f, Redline = 8000f,
             Torque = 1500f, Power = 895000f, Upshift = 7600f, Downshift = 3200f, DriveLoad = 1.0f,
-            GripAsphalt = 0.85f, GripGravel = 1.25f, GripOffroad = 1.4f, Aero = 1f, OffroadMax = 50f / 3.6f, MaxClimb = 80f,
+            GripAsphalt = 0.85f, GripGravel = 1.25f, GripOffroad = 1.4f, Aero = 1f, OffroadMax = 50f / 3.6f, Spin = 0.45f, MaxClimb = 80f,
             Drive = DriveType.All, Body = new float3(2.3f, 1.3f, 4.5f), BodyZ = 0f,
             Planted = new Planted { Has = true, Lateral = 1.3f, Kick = 0.3f, Loose = 0.45f, Wander = 0.35f, Yaw = 0.85f, Response = 1.4f },
             Eye = new float3(0f, 1.6f, -0.1f), Shadow = new float2(3.6f, 4.8f), Paint = 0xf0c020,
@@ -212,7 +218,7 @@ namespace Rally.Vehicle
             TravelDown = 0.14f, TravelUp = 0.2f, SpringK = 190f, SpringD = 14f, Jump = 4.0f,
             Gears = GearList(-3.8f, 3.82f, 2.26f, 1.60f, 1.23f, 0.99f), FinalDrive = 3.44f, Idle = 900f, Redline = 6800f,
             Torque = 660f, Power = 272000f, Upshift = 6400f, Downshift = 3600f, DriveLoad = 0.62f,
-            GripAsphalt = 1.03f, GripGravel = 1f, GripOffroad = 0.95f, TopSpeed = 245f, OffroadMax = 50f / 3.6f, MaxClimb = 30f, Planted = Planted.None,
+            GripAsphalt = 1.03f, GripGravel = 1f, GripOffroad = 0.95f, TopSpeed = 245f, OffroadMax = 50f / 3.6f, Spin = 1.00f, MaxClimb = 30f, Planted = Planted.None,
             Drive = DriveType.Rear, Body = new float3(1.7f, 1.2f, 4.29f), BodyZ = -0.055f,
             Eye = new float3(-0.36f, 1.07f, 0.02f), Shadow = new float2(2.7f, 4.6f), Paint = 0xc8c8c0,
         });
@@ -224,7 +230,7 @@ namespace Rally.Vehicle
             TravelDown = 0.13f, TravelUp = 0.19f, SpringK = 200f, SpringD = 15f, Jump = 4.0f,
             Gears = GearList(-2.6f, 2.58f, 1.49f, 1.02f, 0.74f), FinalDrive = 4.22f, Idle = 900f, Redline = 6800f,
             Torque = 1000f, Power = 353000f, Upshift = 6500f, Downshift = 3800f, DriveLoad = 0.64f,
-            GripAsphalt = 1.06f, GripGravel = 0.95f, GripOffroad = 0.9f, TopSpeed = 260f, OffroadMax = 45f / 3.6f, MaxClimb = 30f, Planted = Planted.None,
+            GripAsphalt = 1.06f, GripGravel = 0.95f, GripOffroad = 0.9f, TopSpeed = 260f, OffroadMax = 45f / 3.6f, Spin = 1.00f, MaxClimb = 30f, Planted = Planted.None,
             Drive = DriveType.Rear, TurboLag = 1.2f, Body = new float3(1.78f, 1.18f, 4.29f), BodyZ = -0.064f,
             Eye = new float3(-0.36f, 1.06f, 0.03f), Shadow = new float2(2.8f, 4.6f), Paint = 0xb01818,
         });
@@ -236,7 +242,7 @@ namespace Rally.Vehicle
             TravelDown = 0.18f, TravelUp = 0.22f, SpringK = 160f, SpringD = 13f, Jump = 3.8f,
             Gears = GearList(-3.4f, 3.36f, 1.94f, 1.37f, 1.09f, 0.92f), FinalDrive = 3.91f, Idle = 800f, Redline = 6000f,
             Torque = 620f, Power = 183000f, Upshift = 5600f, Downshift = 3000f, DriveLoad = 0.5f,
-            GripAsphalt = 1f, GripGravel = 1f, GripOffroad = 0.95f, TopSpeed = 195f, OffroadMax = 50f / 3.6f, MaxClimb = 28f, Planted = Planted.None,
+            GripAsphalt = 1f, GripGravel = 1f, GripOffroad = 0.95f, TopSpeed = 195f, OffroadMax = 50f / 3.6f, Spin = 1.10f, MaxClimb = 28f, Planted = Planted.None,
             Drive = DriveType.Rear, TurboLag = 0.8f, Body = new float3(1.72f, 1.34f, 4.85f), BodyZ = -0.202f,
             Eye = new float3(-0.38f, 1.15f, -0.25f), Shadow = new float2(2.7f, 5.1f), Paint = 0x1c2c58,
         });
@@ -248,7 +254,7 @@ namespace Rally.Vehicle
             TravelDown = 0.18f, TravelUp = 0.25f, SpringK = 170f, SpringD = 14f, Jump = 4.2f,
             Gears = GearList(-4.4f, 4.37f, 2.62f, 1.87f, 1.50f, 1.25f), FinalDrive = 4.0f, Idle = 1100f, Redline = 9000f,
             Torque = 800f, Power = 420000f, Upshift = 8600f, Downshift = 5000f, DriveLoad = 1.0f,
-            GripAsphalt = 1f, GripGravel = 1.1f, GripOffroad = 1.1f, TopSpeed = 210f, OffroadMax = 75f / 3.6f, MaxClimb = 45f,
+            GripAsphalt = 1f, GripGravel = 1.1f, GripOffroad = 1.1f, TopSpeed = 210f, OffroadMax = 75f / 3.6f, Spin = 0.80f, MaxClimb = 45f,
             Planted = new Planted { Has = true, Lateral = 1.1f, Kick = 0.6f, Loose = 0.8f, Wander = 0.7f, Yaw = 0.95f, Response = 1.1f },
             Drive = DriveType.All, Body = new float3(1.78f, 1.42f, 3.6f), BodyZ = 0.073f,
             Eye = new float3(-0.36f, 1.1f, -0.05f), Shadow = new float2(2.7f, 4.0f), Paint = 0xe8e4d8,
@@ -261,7 +267,7 @@ namespace Rally.Vehicle
             TravelDown = 0.3f, TravelUp = 0.38f, SpringK = 110f, SpringD = 10f, Jump = 4.4f,
             Gears = GearList(-5.5f, 5.54f, 3.16f, 2.21f, 1.70f, 1.43f, 1.27f), FinalDrive = 3.73f, Idle = 750f, Redline = 4500f,
             Torque = 970f, Power = 236000f, Upshift = 4000f, Downshift = 2000f, DriveLoad = 1.0f,
-            GripAsphalt = 0.88f, GripGravel = 1.1f, GripOffroad = 1.3f, TopSpeed = 175f, OffroadMax = 90f / 3.6f, MaxClimb = 60f,
+            GripAsphalt = 0.88f, GripGravel = 1.1f, GripOffroad = 1.3f, TopSpeed = 175f, OffroadMax = 90f / 3.6f, Spin = 0.55f, MaxClimb = 60f,
             Planted = new Planted { Has = true, Lateral = 1.15f, Kick = 0.4f, Loose = 0.6f, Wander = 0.5f, Yaw = 0.9f, Response = 1.2f },
             Drive = DriveType.All, Body = new float3(1.95f, 1.9f, 5.36f), BodyZ = -0.238f,
             Eye = new float3(-0.4f, 1.75f, -0.4f), Shadow = new float2(3.0f, 5.6f), Paint = 0x2a3a2a,
@@ -278,7 +284,7 @@ namespace Rally.Vehicle
             TravelDown = 0.32f, TravelUp = 0.42f, SpringK = 120f, SpringD = 11f, Jump = 4.8f,
             Gears = GearList(-4.5f, 4.51f, 2.61f, 1.84f, 1.50f, 1.30f), FinalDrive = 4.12f, Idle = 900f, Redline = 7000f,
             Torque = 420f, Power = 176000f, Upshift = 6600f, Downshift = 3400f, DriveLoad = 0.7f,
-            GripAsphalt = 0.9f, GripGravel = 1.2f, GripOffroad = 1.3f, TopSpeed = 160f, OffroadMax = 100f / 3.6f, MaxClimb = 55f,
+            GripAsphalt = 0.9f, GripGravel = 1.2f, GripOffroad = 1.3f, TopSpeed = 160f, OffroadMax = 100f / 3.6f, Spin = 0.55f, MaxClimb = 55f,
             Planted = new Planted { Has = true, Lateral = 1.15f, Kick = 0.5f, Loose = 0.6f, Wander = 0.5f, Yaw = 0.9f, Response = 1.2f },
             Drive = DriveType.Rear, Body = new float3(2.0f, 1.9f, 4.0f), BodyZ = 0.006f,
             Eye = new float3(-0.32f, 1.45f, -0.3f), Shadow = new float2(3.0f, 4.4f), Paint = 0x4a7a2a,
@@ -294,7 +300,7 @@ namespace Rally.Vehicle
             TravelDown = 0.24f, TravelUp = 0.3f, SpringK = 140f, SpringD = 11f, Jump = 4.4f,
             Gears = GearList(-2.6f, 2.60f, 1.56f, 1.11f, 0.90f), FinalDrive = 4.4f, Idle = 850f, Redline = 5500f,
             Torque = 330f, Power = 70000f, Upshift = 5200f, Downshift = 2800f, DriveLoad = 0.68f,
-            GripAsphalt = 0.95f, GripGravel = 1.1f, GripOffroad = 1.15f, TopSpeed = 125f, OffroadMax = 70f / 3.6f, MaxClimb = 40f, Planted = Planted.None,
+            GripAsphalt = 0.95f, GripGravel = 1.1f, GripOffroad = 1.15f, TopSpeed = 125f, OffroadMax = 70f / 3.6f, Spin = 0.65f, MaxClimb = 40f, Planted = Planted.None,
             Drive = DriveType.Rear, Body = new float3(1.55f, 1.26f, 3.3f), BodyZ = -0.09f,
             Eye = new float3(-0.3f, 1.15f, -0.25f), Shadow = new float2(2.4f, 3.8f), Paint = 0xd8a020,
         });

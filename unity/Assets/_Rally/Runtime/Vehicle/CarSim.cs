@@ -38,6 +38,10 @@ namespace Rally.Vehicle
         public const float MaxSteerHigh = 0.08f;       // car.js:111 — rad at 50 m/s
         /// <summary>Damage: the speed an engine at damage 1 could still reach is nil; healthy it is above any gear (m/s).</summary>
         public const float DamageSpeedCapHealthy = 80f;
+        /// <summary>Wheelspin: m/s of slip per unit of drive demand over the surface's spin point (× Spin × SpinGain).</summary>
+        public const float SlipPerGrip = 3f;
+        /// <summary>Slip (m/s) at which a spinning wheel has lost the surface's full SpinLoss of traction (quadratic below it).</summary>
+        public const float SlipFull = 10f;
 
         /* ---------------- helpers (geo.js:122–139) ---------------- */
 
@@ -91,6 +95,18 @@ namespace Rally.Vehicle
             return new float2(gx, gz);
         }
 
+        /// <summary>
+        /// Wheelspin target (m/s, ≥ 0) for a drive asking for <paramref name="demand"/> (m/s²) from tyres that can give
+        /// <paramref name="grip"/> (m/s²): nothing below the surface's spin point (SpinAt × grip), then growing with the excess,
+        /// the car's tyres (<see cref="CarSpec.Spin"/>) and the surface (SpinGain). More power or less grip spins more.
+        /// </summary>
+        public static float SlipTarget(in CarSpec spec, in SurfaceModel surface, float demand, float grip)
+            => grip > 0.01f ? spec.Spin * surface.SpinGain * SlipPerGrip * math.max(0f, demand / grip - surface.SpinAt) : 0f;
+
+        /// <summary>The wheels' surface speed at the redline in a gear (m/s): a spinning wheel never runs past it.</summary>
+        public static float GearWheelSpeed(in CarSpec spec, int gear)
+            => spec.Redline / 60f * 2f * math.PI * spec.WheelRadius / math.max(0.01f, math.abs(spec.GearRatio(gear)) * spec.FinalDrive);
+
         /* ---------------- reset (car.js:739) ---------------- */
 
         /// <summary>car.js:739 reset(pose): stop the car on the ground at a pose. Keeps the sliding mode, auto box and damage.</summary>
@@ -122,6 +138,7 @@ namespace Rally.Vehicle
             s.WrongWay = false;
             s.Gear = 1;
             s.Rpm = spec.Idle;
+            s.RoadRpm = spec.Idle;
             s.Boost = 0f;
             s.ShiftTimer = 0f;
             s.AirborneAt = -1f;
@@ -129,6 +146,7 @@ namespace Rally.Vehicle
             s.VisualRotation = quaternion.RotateY(yaw);
             s.WaterDepth = 0f;
             s.SunkTime = 0f;
+            s.WheelSlip = 0f;
         }
 
         /// <summary>car.js:731 setRoute / reset(): the route's start pose, or the origin without one.</summary>
@@ -168,7 +186,12 @@ namespace Rally.Vehicle
             // Blip the revs a little under throttle even when stationary.
             float powerInput = reversing ? brake : throttle;
             float freeRev = powerInput > 0f && wheelSpeed < 1f ? 1f : 0f;
-            s.Rpm = Damp(s.Rpm, math.max(targetRpm, spec.Idle + freeRev * 2600f), 9f, dt);
+            s.RoadRpm = Damp(s.RoadRpm, math.max(targetRpm, spec.Idle + freeRev * 2600f), 9f, dt);
+            // What you hear and see: the engine turns with the driven wheels, which run ahead of the ground while they spin, so
+            // the revs flare. The torque, the limiter and the box stay on the road revs (what a spinning wheel loses is the
+            // surface's SpinLoss, in the substep), so a car that does not spin drives exactly as before.
+            float flareRpm = math.clamp(math.abs(s.VF + s.WheelSlip) / (2f * math.PI * spec.WheelRadius) * 60f * ratio, spec.Idle, spec.Redline);
+            s.Rpm = Damp(s.Rpm, math.max(flareRpm, spec.Idle + freeRev * 2600f), 9f, dt);
             // Rev limiter: on the redline (manual box, or a long downhill) the ignition cuts until the revs drop.
             s.Limiter = rawRpm >= spec.Redline * 0.995f;
 
@@ -186,8 +209,8 @@ namespace Rally.Vehicle
             {
                 if (s.Gear != Reverse)
                 {
-                    if (s.Rpm > spec.Upshift && throttle > 0.25f && s.Gear < spec.GearCount - 1) Shift(ref s, spec, s.Gear + 1);
-                    else if (s.Rpm < spec.Downshift && s.Gear > 1) Shift(ref s, spec, s.Gear - 1);
+                    if (s.RoadRpm > spec.Upshift && throttle > 0.25f && s.Gear < spec.GearCount - 1) Shift(ref s, spec, s.Gear + 1);
+                    else if (s.RoadRpm < spec.Downshift && s.Gear > 1) Shift(ref s, spec, s.Gear - 1);
                 }
             }
             else if (!s.AutoShift)
@@ -199,7 +222,7 @@ namespace Rally.Vehicle
             // Damage: a holed radiator cooks the engine, fastest when it is revving hard.
             if (s.Damage.Radiator > 0f && !s.Damage.Wrecked)
             {
-                float hot = s.Rpm > spec.Redline * 0.7f ? 1f : 0.15f;
+                float hot = s.RoadRpm > spec.Redline * 0.7f ? 1f : 0.15f;
                 s.Damage.Engine = math.min(1f, s.Damage.Engine + dt * s.Damage.Radiator * 0.02f * hot);
                 if (s.Damage.Engine >= 1f) s.Damage.Wrecked = true;
             }
@@ -209,7 +232,7 @@ namespace Rally.Vehicle
             float boost = 1f;
             if (spec.TurboLag > 0f)
             {
-                float revs = math.saturate((s.Rpm - spec.Idle) / (spec.Redline - spec.Idle));
+                float revs = math.saturate((s.RoadRpm - spec.Idle) / (spec.Redline - spec.Idle));
                 float want = powerInput * math.smoothstep(0.3f, 0.6f, revs);
                 float rate = (want > s.Boost ? 1f : 3f) / spec.TurboLag;
                 s.Boost = math.clamp(s.Boost + math.clamp(want - s.Boost, -rate * dt, rate * dt), 0f, 1f);
@@ -218,11 +241,11 @@ namespace Rally.Vehicle
 
             // Torque at the wheels, minus a clutch cut while shifting.
             bool shifting = s.ShiftTimer > 0.12f;
-            float torque = EngineTorque(spec, s.Rpm) * boost * powerInput * (shifting ? 0.15f : 1f) * (s.Grounded ? 1f : 0.35f) * (s.Limiter ? 0f : 1f);
+            float torque = EngineTorque(spec, s.RoadRpm) * boost * powerInput * (shifting ? 0.15f : 1f) * (s.Grounded ? 1f : 0.35f) * (s.Limiter ? 0f : 1f);
             // Damage: drive force × (1 − 0.6·Engine), the power limit included, so a sick engine is weak at speed too.
-            float driveForce = math.min((torque * ratio) / spec.WheelRadius, spec.Power * boost / math.max(wheelSpeed, 3f)) * health * (reversing ? -1f : 1f);
+            float driveForce = math.min((torque * ratio) / spec.WheelRadius, spec.Power * boost / math.max(math.abs(s.VF), 3f)) * health * (reversing ? -1f : 1f);
             float engineBrake = powerInput == 0f && math.abs(s.VF) > 1f
-                ? -(Sign(s.VF) * (28f + s.Rpm * 0.012f) * math.abs(ratio) * 0.16f)
+                ? -(Sign(s.VF) * (28f + s.RoadRpm * 0.012f) * math.abs(ratio) * 0.16f)
                 : 0f;
             s.EngineLoad = powerInput;
 
@@ -285,6 +308,7 @@ namespace Rally.Vehicle
                 s.Grounded = true;
                 s.Pos.y = ground.HeightAt(s.Pos.xz);
                 s.Throttle = 0f;
+                s.WheelSlip = 0f;
                 s.Drifting = false;
                 s.Crash = 0f;
                 UpdateVisual(ref s, spec, ground, dt);
@@ -364,9 +388,18 @@ namespace Rally.Vehicle
                     : 0f;
                 float holdR = climbR <= limit ? SlopeG * math.abs(sinR) * 0.8f * 1.1f : 0f;
 
-                float maxDrive = math.max(
-                    surface.Mu * bonus * spec.DriveLoad * 9.81f * cosF * (input.Handbrake ? 0.3f : 1f) * drowned,
-                    holdF);
+                float grip = surface.Mu * bonus * spec.DriveLoad * 9.81f * cosF * (input.Handbrake ? 0.3f : 1f) * drowned;
+                // Wheelspin: a drive asking for more than the ground gives spins the driven wheels up (sooner on loose ground,
+                // never past the gear's redline), and a spinning tyre pushes less. Locked rears on the handbrake do not spin.
+                float slipWant = input.Handbrake ? 0f : SlipTarget(spec, surface, math.abs(drivetrain.DriveForce) / spec.Mass, grip);
+                float slipCap = math.max(0f, GearWheelSpeed(spec, s.Gear) * 0.97f - math.abs(vF));
+                slipWant = math.min(slipWant, slipCap) * Sign(drivetrain.DriveForce);
+                s.WheelSlip = Damp(s.WheelSlip, slipWant, math.abs(slipWant) > math.abs(s.WheelSlip) ? 10f : 6f, h);
+                s.WheelSlip = math.clamp(s.WheelSlip, -slipCap, slipCap);
+                // A tyre at a small slip is still near its peak; only a wheel spinning hard loses the surface's SpinLoss.
+                float spun = math.saturate(math.abs(s.WheelSlip) / SlipFull);
+                float spinLoss = 1f - surface.SpinLoss * spun * spun;
+                float maxDrive = math.max(grip * spinLoss, holdF);
                 float driveAccel = math.clamp(drivetrain.DriveForce / spec.Mass, -maxDrive, maxDrive);
                 // Off the road the ground takes the power: no drive past the car's rough-ground speed (car.js:1031, 50 km/h there).
                 if (!s.OnRoad && math.abs(vF) >= spec.OffroadMax && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
@@ -482,6 +515,7 @@ namespace Rally.Vehicle
             {
                 // Airborne: keep the engine spinning, allow a little yaw authority (car.js:1133).
                 s.Drifting = false;
+                s.WheelSlip = Damp(s.WheelSlip, 0f, 3f, h);
                 s.YawVel = Damp(s.YawVel, s.YawVel * 0.985f, 0.3f, h);
                 vF -= vF * 0.035f * h;
                 s.AirControl = Damp(s.AirControl, s.Steer * 0.55f, 2.0f, h);
@@ -737,8 +771,9 @@ namespace Rally.Vehicle
             var inv = math.inverse(rot);
 
             s.SteerVisual = Damp(s.SteerVisual, s.Steer * 0.48f, 12f, dt);
-            s.WheelSpin += (s.VF / spec.WheelRadius) * dt;
-            if (!s.HandbrakeOn) s.RearSpin += (s.VF / spec.WheelRadius) * dt; // locked rears stand still
+            // Driven wheels turn at wheel speed (ground speed plus the wheelspin): the rears always, the fronts on a 4WD.
+            s.WheelSpin += ((s.VF + (spec.Drive == DriveType.All ? s.WheelSlip : 0f)) / spec.WheelRadius) * dt;
+            if (!s.HandbrakeOn) s.RearSpin += ((s.VF + s.WheelSlip) / spec.WheelRadius) * dt; // locked rears stand still
             // Each wheel drops or lifts to meet the ground beneath it (in car space).
             float R = spec.WheelRadius;
             float lift = 0f;
