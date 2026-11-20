@@ -16,7 +16,7 @@ namespace Rally.World
     /// Height lookup order is stream.js: the 1 m tiles along the roads first, then the 8 m tiles, then the
     /// road profile and ribbon lift on top, exactly as car.js groundAt does it.
     /// </summary>
-    public sealed class TileWorld : IGround, IDisposable
+    public sealed class TileWorld : IGround, ILayeredGround, IDisposable
     {
         public const int CoarseSlices = 96, FineSlices = 32, SplatRes = 128;   // 96: view ring to just past the horizon + drop hysteresis (TileScheduler.DropRadius); ~0.7 MB GPU per slice
         public readonly TileScheduler Scheduler = new TileScheduler();
@@ -26,6 +26,8 @@ namespace Rally.World
         public readonly TreeIndex Trees = new TreeIndex();
         public readonly Transform Root;
         public IRoadQuery Roads;
+        /// <summary>ILayeredGround: the height of whoever asks (the car sets it around its step); NaN = the top surface (a bridge deck).</summary>
+        public float ReferenceY { get; set; } = float.NaN;
         public Clipmap Clipmap;
         public VegetationRenderer Vegetation;
         public TreeColliderPool TreeColliders;
@@ -248,6 +250,7 @@ namespace Rally.World
                 for (int i = 0; i < roadSegs; i++)
                 {
                     var c = segs[i];
+                    if ((c.Flags & CarveSegment.DeckOnly) != 0) continue;   // a bridge span's mask is its deck, no more
                     c.HalfWidth += tile.Key.CellM * 1.5f; c.Ha -= RoadConstants.CarveMargin; c.Hb -= RoadConstants.CarveMargin;
                     segs[i] = c;
                 }
@@ -322,13 +325,43 @@ namespace Rally.World
         }
 
         /// <summary>
+        /// A bridge deck under a point (within its rails) that the asker is up on: <see cref="ReferenceY"/> unset, or not more
+        /// than DeckCatch under the deck top (car.js deckAt). Under the deck the ground below answers.
+        /// </summary>
+        bool OnDeck(Utm33 p, out RoadHit b)
+        {
+            b = default;
+            if (Roads == null || Roads.BridgeSegmentCount == 0) return false;
+            if (!Roads.Nearest(p, 16, RoadLayer.Deck, out b) || b.Distance > RoadConstants.DeckHalf(b.Half)) return false;
+            return float.IsNaN(ReferenceY) || ReferenceY >= RoadConstants.DeckTop(b.RoadY) - RoadConstants.DeckCatch;
+        }
+
+        /// <summary>
+        /// The nearest road on the ground, unless a bridge deck is nearer (and within its carve reach): the carve gives such a
+        /// cell to the bridge and leaves it natural (CarveJob), so the approach road's end cap does not reach under the deck.
+        /// </summary>
+        bool GroundRoad(Utm33 p, double limit, out RoadHit q)
+        {
+            if (Roads == null || !Roads.Nearest(p, limit, RoadLayer.Ground, out q)) { q = default; return false; }
+            return Roads.BridgeSegmentCount == 0 || !Roads.Nearest(p, q.Distance, RoadLayer.Deck, out var b)
+                   || b.Distance >= q.Distance || b.Distance > RoadConstants.DeckHalf(b.Half) + RoadConstants.MaxEarthwork;
+        }
+
+        /// <summary>
         /// car.js groundAt: inside a road corridor the engineered profile from the natural ground plus the
         /// ribbon lift (so the tyres ride the ribbon, not the carve under it); elsewhere the carved ground.
+        /// On a bridge the deck: the ribbon on the carriageway, the slab's top out to the rails.
         /// </summary>
         public float HeightAt(float2 xz)
         {
             var p = FloatingOrigin.ToUtm(xz);
-            if (Roads != null && Roads.Nearest(p, 24, out var q) && q.Distance <= RoadConstants.CorridorReach(q.Half, q.Cut))
+            if (OnDeck(p, out var b))
+            {
+                float bd = (float)b.Distance;
+                if (bd <= b.Half + RoadConstants.RoadShoulder) return b.RoadY + RoadConstants.RoadLift + RoadConstants.SurfaceLift(bd, b.Half);
+                return RoadConstants.DeckTop(b.RoadY) + math.max(0f, RoadConstants.SurfaceLift(bd, b.Half) - RoadConstants.CarveLift);
+            }
+            if (GroundRoad(p, 24, out var q) && q.Distance <= RoadConstants.CorridorReach(q.Half, q.Cut))
             {
                 float ground = BaseHeightAt(p);
                 float d = (float)q.Distance;
@@ -345,7 +378,8 @@ namespace Rally.World
         public Surface SurfaceAt(float2 xz)
         {
             var p = FloatingOrigin.ToUtm(xz);
-            if (Roads != null && Roads.Nearest(p, 24, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return q.Surface;
+            if (OnDeck(p, out var b)) return b.Surface;
+            if (GroundRoad(p, 24, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return q.Surface;
             return WaterAt(xz).Depth > 0.3f ? Surface.Water : Surface.Offroad;
         }
 
@@ -357,7 +391,9 @@ namespace Rally.World
             // 0.2–0.7 m there, and every road graded near sea level (quays, shore roads, roads over DTM sea cells) sat
             // under the 0.45 m sea plane — water drag that grows with depth × speed², up to 16 m/s², and no splash to show
             // for it: the "car suddenly brakes" of 2026-11-19.
-            if (Roads != null && Roads.Nearest(p, 12, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return WaterSample.Dry;
+            // On a bridge deck the car is dry; under it, in the river, it is not.
+            if (OnDeck(p, out _)) return WaterSample.Dry;
+            if (GroundRoad(p, 12, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return WaterSample.Dry;
             var t = TileFor(TileKind.Coarse, p);
             return Water.WaterAt(t != null ? ((TileView)t.UserData).Water : null, p, CarvedHeightAt(p));
         }
@@ -368,6 +404,8 @@ namespace Rally.World
         public void NearbyTrees(float2 xz, float radius, NativeList<TreeHit> result) => Trees.Query(xz, radius, result);
 
         public WaterBodies WaterBodiesAt(Utm33 p) { var t = TileFor(TileKind.Coarse, p); return t != null ? ((TileView)t.UserData).Water : null; }
+        /// <summary>Inside a lake or river another loaded tile has already built (the bridge detection's look past its own tile).</summary>
+        public bool InMappedWater(Utm33 p) => Water.InLakeOrRiver(WaterBodiesAt(p), p);
         public BuildingSet BuildingsAt(Utm33 p) { var t = TileFor(TileKind.Coarse, p); return t != null ? ((TileView)t.UserData).Buildings : null; }
         /// <summary>The SR16 raster of the coarse tile under a point (null until loaded); the actors' spawn rules read the crown cover.</summary>
         public CoverRaster CoverAt(Utm33 p) { var t = TileFor(TileKind.Coarse, p); return t != null ? ((TileView)t.UserData).Cover : null; }

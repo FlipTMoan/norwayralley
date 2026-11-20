@@ -53,6 +53,18 @@ namespace Rally.Core
         /// </summary>
         public const float FillRun = 2f, CutRun = 1.25f, MaxEarthwork = 10f;
 
+        /// <summary>
+        /// Bridge decks (legacy-js/src/bridges.js): the slab reaches <see cref="BridgeRailOut"/> beyond the ribbon's shoulder
+        /// edge (the JS uses 0.35 m; wider here so the ribbon's skirts end inside the slab), <see cref="DeckThickness"/> deep,
+        /// its top where the terrain meets the ribbon edge on a road. A car more than <see cref="DeckCatch"/> under the deck top
+        /// is under the bridge, not on it.
+        /// </summary>
+        public const float BridgeRailOut = 0.6f, DeckThickness = 0.9f, DeckCatch = 1.0f;
+        /// <summary>Half width of a bridge deck (carriageway + shoulder + rail) for a carriageway half width.</summary>
+        public static float DeckHalf(float half) => half + RoadShoulder + BridgeRailOut;
+        /// <summary>Deck top for a graded road height (no lift): the carved road's terrace height, EdgeTuck under the ribbon edge.</summary>
+        public static float DeckTop(float roadY) => roadY + RoadLift + CarveLift;
+
         /// <summary>Half width of the flat part: carriageway plus shoulder (corridor.js:38 flatHalf).</summary>
         public static float FlatHalf(float half) => half + Shoulder;
 

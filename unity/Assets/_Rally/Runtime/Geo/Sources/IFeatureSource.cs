@@ -30,6 +30,8 @@ namespace Rally.Geo
     {
         public string Kind, Name;
         public float Width;
+        /// <summary><c>tunnel=culvert</c>: piped under whatever crosses it, so a road over it is not a bridge.</summary>
+        public bool Culvert;
         public List<Utm33> Points = new List<Utm33>();
     }
 

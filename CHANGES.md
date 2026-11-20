@@ -1,8 +1,40 @@
 # Changes
 
-_Updated 2026-11-20 (fuller birch crowns in the Unity game)._
+_Updated 2026-11-20 (bridges over water in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: bridges where roads cross water
+- **Spans** (`Roads/Bridges.cs`, port of `legacy-js/src/bridges.js`): an OSM way tagged `bridge=*` (not `no` / `culvert`,
+  not a tunnel) is a bridge end to end; any other way becomes one where it crosses water for ≥ 6 m with water on both
+  sides and the DTM at water level (OSM lakes and rivers of the tile and of tiles already built, the DTM's sea cells;
+  culverted waterways, causeways, fords and 2.4 m streams stay road). Around Sand 41 bridges in the loaded ring, all but
+  one from the tag (Nordelv, Storelv, Solbrekk bru …).
+- **Deck profile:** graded bank to bank (no dip into the river valley), a Hermite cubic onto the abutments with the
+  approach grades, a 2 % arch, and a lift to 2.5 m over the water (0.8 m over dry ground) ramped out over 15–90 m where
+  the grade would pass too close. Junction easing never pulls a deck down onto a road under it.
+- **Nothing under a bridge is carved:** the span is a carve segment that wins its cells by distance and leaves them
+  natural (`CarveSegment.DeckOnly`, CPU job and compute shader), so the river flows under the deck instead of meeting
+  a road embankment, and the approach embankments stop at the abutments. No trees under the deck (mask).
+- **Drawn** (`Roads/BridgeMesh.cs`, one mesh per tile with the house material, shadows): concrete slab under the road
+  ribbon, kerb beams, steel guard rails on posts, piers every ~30 m and abutment walls down into the ground. The road
+  meeting a bridge now draws its ribbon right up to the deck (it used to leave a 5 m gravel strip at every bridge end).
+- **Car:** on the deck the car's ground is the deck, dry, asphalt/gravel as the road; the rails and piers are solid
+  (MeshCollider, layer Buildings). Below the deck (more than 1 m under it) the ground is the river bed and the water is
+  wet again (`TileWorld` is an `ILayeredGround`; `CarController` sets its height around the step).
+- **Quay and shore roads** are no longer graded under the 0.45 m sea plane (`RoadGraph.MinGradeGround`): at Sand the
+  harbour roads were drawn under the sea with sea "canals" carved along them; now 0 of 4143 live road points (was 183).
+- `PreviewShots -previewLook "LAT,LON;…"`: each spot from both sides across the nearest road, low down and along it.
+- Tests: `BridgeTests` (tags; river span bank to bank, stream / shore / causeway none; water probe incl. culverts and
+  unloaded tiles; deck clearance and grades; carve leaves the span and the river by the abutment natural; quay road
+  above the sea plane; tagged bridge way meets its approaches without a step; car drives across on the deck, never wet).
+  EditMode 196 / 196, PlayMode 12 / 12.
+- Live road survey at 59.6501, 6.34968 (`-previewRoadDebug`): carved terrain above the ribbon 19 → 18 points, ribbon
+  misses 152 → 150, edge samples floating 39.6 → 39.8 %, road points under the sea plane 183 → 0.
+- Frame time (`PreviewShots -previewBench`, live `?seed=beef;59.6501,6.34968`, compute path, GTX 1060 editor, 1080p,
+  medians of three runs): chase 9.64 → 9.24 ms, hillside 8.04 → 7.76, overview 7.87 → 8.25, forest edge 8.71 → 9.01,
+  60 s drive 9.43 → 9.52 (p95 10.58 → 10.43): within the run-to-run noise. Draw calls +10–16 (one bridge mesh per tile
+  with bridges, and its shadow pass).
 
 ### Unity: birch and mountain birch crowns are full, not a few thin arms
 - **Leaf sprays** (`Editor/TreeTextures FoliageAtlas.Birch`): each twig card is now a spray of side twigs and twiglets

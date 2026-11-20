@@ -10,6 +10,10 @@ namespace Rally.World
     /// interpolated between <see cref="Ha"/> and <see cref="Hb"/>, then blends back to the natural ground
     /// over <see cref="Shoulder"/> (corridor.js profileHeight with the rim equal to the ground). A building
     /// pad (terrain.js flattenPad) is the same thing with A == B, HalfWidth = radius and Shoulder = blend.
+    /// <see cref="Flags"/> <see cref="DeckOnly"/>: a bridge span. It takes part in "nearest wins" like a road (out to its
+    /// <see cref="Reach"/>), but a cell it wins keeps the natural ground: nothing under a bridge is carved, and an approach
+    /// road's carve ends where the deck is nearer (the abutment), instead of filling the river with its end cap. The deck's
+    /// footprint (<see cref="HalfWidth"/>) is marked 128 on the mask so no tree grows through it.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct CarveSegment
@@ -18,8 +22,10 @@ namespace Rally.World
         public float Ha, Hb;      // road height at A and B, metres a.s.l., ROAD_LIFT already added
         public float HalfWidth;   // flat band: carriageway half width + shoulder (corridor.js flatHalf)
         public float Shoulder;    // metres beyond the flat band to meet the untouched ground
+        public uint Flags;        // DeckOnly
 
-        public const int Stride = 32;
+        public const uint DeckOnly = 1;
+        public const int Stride = 36;
         /// <summary>How far from the line the segment can change the ground (flat band + the widest earthwork).</summary>
         public float Reach => HalfWidth + math.max(Shoulder, RoadConstants.MaxEarthwork);
     }
@@ -90,13 +96,22 @@ namespace Rally.World
         public Surface Surface;
         /// <summary>+1 on the side of the left normal (−tz, tx), −1 on the other: the carve's side rule.</summary>
         public int Side;
+        /// <summary>On a bridge span: <see cref="RoadY"/> is the deck's road height and nothing under it is carved.</summary>
+        public bool Bridge;
     }
+
+    /// <summary>Which roads a nearest-road query looks at: all, only those on the ground, only bridge decks.</summary>
+    public enum RoadLayer : byte { Any, Ground, Deck }
 
     /// <summary>The road graph as seen from below it: TileWorld (World) cannot reference Rally.Roads.</summary>
     public interface IRoadQuery
     {
         /// <summary>Nearest segment within <paramref name="limit"/> metres; false when none is that close.</summary>
         bool Nearest(Utm33 p, double limit, out RoadHit hit);
+        /// <summary>As <see cref="Nearest(Utm33, double, out RoadHit)"/>, restricted to the roads on the ground or to bridge decks.</summary>
+        bool Nearest(Utm33 p, double limit, RoadLayer layer, out RoadHit hit);
+        /// <summary>Bridge segments loaded (the deck queries are skipped while there are none).</summary>
+        int BridgeSegmentCount { get; }
         /// <summary>Every segment that can reach into <paramref name="bounds"/>, as carve input local to <paramref name="origin"/>, ROAD_LIFT added.</summary>
         void CollectCarveSegments(Bounds25833 bounds, Utm33 origin, System.Collections.Generic.List<CarveSegment> output);
         /// <summary>Road sample points within <paramref name="radius"/> (the scheduler's fine-tile band follows them).</summary>

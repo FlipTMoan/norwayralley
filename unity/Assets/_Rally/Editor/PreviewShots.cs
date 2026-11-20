@@ -41,6 +41,7 @@ namespace Rally.Editor
         static float driveSecs, driveKmh;
         static double nextTrace, exhaustT0;
         static bool exhaust, mud, treeShots;
+        static string lookSpots;
         static readonly Queue<string> mudRuns = new Queue<string>();
         static string mudRun;
         static double mudT0;
@@ -67,6 +68,7 @@ namespace Rally.Editor
             exhaust = Array.IndexOf(args, "-previewExhaust") >= 0;
             mud = Array.IndexOf(args, "-previewMud") >= 0;
             treeShots = Array.IndexOf(args, "-previewTrees") >= 0;
+            lookSpots = Arg(args, "-previewLook");
             driveSecs = float.TryParse(Arg(args, "-previewDrive"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ds) ? ds : 0f;
             driveKmh = float.TryParse(Arg(args, "-previewDriveKmh"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dk) ? dk : 70f;
             GpuCaps.ForceNoCompute = noCompute;   // the WebGL 2 path: CPU scatter, RenderMeshInstanced
@@ -313,6 +315,7 @@ namespace Rally.Editor
             float3 c = car.position;
             float2 fwd = math.normalizesafe(((float3)car.forward).xz);
             float2 hillDir = HillDir(c, fwd);
+            if (lookSpots != null) { LookShots(lookSpots); return; }
             shots.Enqueue(("02_hillside", () => Look(c.xz - hillDir * 30, 4, c.xz + hillDir * 600, 0.45f)));
             shots.Enqueue(("03_overview", () => Look(c.xz - hillDir * 250, 120, c.xz + hillDir * 300, 0f)));
             shots.Enqueue(("04_forest_edge", () => Look(c.xz - fwd * 10, 2.5f, c.xz + fwd * 120, 0.15f)));
@@ -633,6 +636,30 @@ namespace Rally.Editor
                 float ground = world.HeightAt(at);
                 shots.Enqueue(($"14_sign_{i}_near", () => Look(at + dir * 6f, 1.4f, at, p.y - ground)));
                 if (i < 2) shots.Enqueue(($"14_sign_{i}_30m", () => Look(at + dir * 30f + new float2(dir.y, -dir.x) * 3f, 1.4f, at, p.y - ground)));
+            }
+        }
+
+        /// <summary>
+        /// <c>-previewLook "LAT,LON;LAT,LON"</c>: instead of the usual set, each spot (a bridge, say) seen across the nearest
+        /// road from both sides 45 m out and 5 m up, from low down 25 m to the side, and along the road from 35 m back.
+        /// </summary>
+        static void LookShots(string spots)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            int i = 0;
+            foreach (var spot in spots.Split(';'))
+            {
+                var ll = spot.Split(',');
+                if (ll.Length != 2) continue;
+                var utm = Proj.ToUtm(new LatLon(double.Parse(ll[0], inv), double.Parse(ll[1], inv)));
+                float2 at = FloatingOrigin.ToWorldXZ(utm), dir = new float2(0, 1);
+                if (world.Roads != null && world.Roads.Nearest(utm, 60, out var q)) { at = FloatingOrigin.ToWorldXZ(new Utm33(q.Point.x, q.Point.y)); dir = (float2)q.Tangent; }
+                float2 side = new float2(dir.y, -dir.x);
+                int k = i++;
+                shots.Enqueue(($"17_look{k}_side_a", () => Look(at + side * 45, 5f, at, 0f)));
+                shots.Enqueue(($"17_look{k}_side_b", () => Look(at - side * 45, 5f, at, 0f)));
+                shots.Enqueue(($"17_look{k}_low", () => Look(at + side * 25 - dir * 10, 1.2f, at + dir * 5, -1f)));
+                shots.Enqueue(($"17_look{k}_along", () => Look(at - dir * 35, 2.2f, at + dir * 10, 0.5f)));
             }
         }
 

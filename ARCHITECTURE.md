@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-20 (Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-20 (Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -181,7 +181,7 @@ flowchart TB
     GP --> AC[Rally.Actors<br/>SpawnRules · CrossingActor · ActorManager]
     GP --> TR[Rally.Track<br/>StageRoute · PaceNotes · RoadWalk]
     VH --> TR
-    TR --> RD[Rally.Roads<br/>RoadGraph · ProfileGrader · RibbonMesh]
+    TR --> RD[Rally.Roads<br/>RoadGraph · ProfileGrader · RibbonMesh · Bridges · BridgeMesh]
     RD --> WD[Rally.World<br/>TileScheduler · TerrainTile · Clipmap · Carve.compute · Scatter.compute · Vegetation · Water · Buildings · TileWorld:IGround · Signs]
     VH --> CORE
     AC --> CORE
@@ -198,7 +198,7 @@ flowchart TB
 | Core | EPSG:25833 frame, floating origin (rebases every 2048 m), the `HeightGrid` ground truth, `IGround`, road profile constants, seeded RNG, log. |
 | Geo | Every geodata request with the JS URL formats, the IndexedDB cache **shared with the JS game** (same database), circuit breakers, fakes for tests. |
 | World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, real road signs (NVDB plates placed on the shoulders, Norwegian faces painted into a shared atlas, one mesh per near tile), physics colliders (buildings mesh, pooled tree capsules, sign posts as props, water triggers), procedural sky. |
-| Roads | OSM road graph with NVDB attributes, grading, carve segments, ribbon meshes, `Nearest`. |
+| Roads | OSM road graph with NVDB attributes, grading, carve segments, ribbon meshes, `Nearest` (all roads, on the ground, or bridge decks). Bridges: spans from `bridge=*` or a water crossing, deck profile (bank to bank, clearance, ramps), one deck/rail/pier mesh per tile with a rail/pier collider; spans carve nothing and the car's ground (`TileWorld`, an `ILayeredGround`) is the deck while the car is up on it. |
 | Track | Stage line (4 m samples, segment-nearest), pace notes (positive = left in Unity's frame), the seeded `RoadWalk` endless-stage generator. |
 | Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. The garage: one `CarSpec` per car (mass, power, gears, driven wheels, grip, travel, turbo lag, body box measured off the model) and `Garage` (wire ids, names, credits, card stats). |
 | Actors | Seeded encounters by land cover (moose, deer, sheep, reindeer north of 65°, pedestrians, dogs, cyclists, tractors), crossing state machine, hits and near misses. |
@@ -208,6 +208,23 @@ flowchart TB
 
 Car art: `unity/Assets/_Rally/Art/Cars/<name>/` with a `LICENSE.txt` each
 (CC BY 4.0 models only; list in `unity/docs/car-models.md`).
+
+### Unity bridges (2026-11-20)
+
+```mermaid
+flowchart LR
+  OSM[Overpass ways + water] --> P[WaterProbe<br/>OSM lakes/rivers · DTM sea · built tiles]
+  OSM --> G[RoadGraph.SetTile]
+  P --> G
+  G -->|bridge=* or wet core ≥ 6 m| S[spans + piers<br/>Bridges.WetCore / MarkSpans]
+  S --> PR[BridgeRaw → grade → junctions → ApplyProfile<br/>bank to bank, arch, clearance lift]
+  PR --> SEG[segments: Bridge flag]
+  SEG --> C[CollectCarveSegments<br/>DeckOnly: wins cells, carves nothing]
+  SEG --> N[Nearest Any / Ground / Deck]
+  PR --> M[BridgeMesh: slab · kerbs · rails · piers<br/>+ rail/pier MeshCollider]
+  N --> TW[TileWorld HeightAt / WaterAt / SurfaceAt<br/>deck if ReferenceY ≥ deck − 1 m]
+  CAR[CarController sets ReferenceY] --> TW
+```
 
 ### Unity car chooser (2026-11-20)
 

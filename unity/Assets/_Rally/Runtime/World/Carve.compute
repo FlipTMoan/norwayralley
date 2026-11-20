@@ -10,17 +10,22 @@
 // resets the slice to the base heights and the scratch best-distance texture to +inf, later batches
 // keep refining, so an arbitrary number of segments still gives "nearest of all wins".
 //
+// flags (CarveSegment.Flags) 1: a bridge span. It wins texels by distance like a road, but leaves them at the base
+// height (nothing under a bridge is carved; an approach's end cap stops where the deck is nearer) and marks only its
+// footprint (|d| <= halfWidth) 0.5 on the mask, so no tree grows through the deck.
+//
 // Texel (x, y) = HeightGrid[row = y, col = x] = tile-local position (x, y) * _CellM from the south-west corner.
 #pragma kernel Carve
 
 #define MAX_SEGMENTS 2048
 
-struct CarveSegment            // mirrors Rally.World.CarveSegment (32 bytes)
+struct CarveSegment            // mirrors Rally.World.CarveSegment (36 bytes)
 {
     float2 a, b;               // tile-local metres
     float ha, hb;              // road heights at a and b (lift included)
     float halfWidth;           // flat band
     float shoulder;            // blend width
+    uint flags;                // 1 bridge span (deck only)
 };
 
 Texture2DArray<float> _Base;              // untouched DTM, one slice per tile
@@ -70,6 +75,7 @@ void Carve(uint3 id : SV_DispatchThreadID)
         float t = len2 > 1e-12 ? saturate(dot(p - seg.a, ab) / len2) : 0.0;
         float d = distance(p, seg.a + ab * t);
         if (d > reach || d >= bestD) continue;
+        if ((seg.flags & 1u) != 0) { bestD = d; h = ground; mask = d <= seg.halfWidth ? 0.5 : 0.0; continue; }   // bridge span
         float roadY = lerp(seg.ha, seg.hb, t);
         float w = EarthworkWidth(roadY, ground, seg.shoulder);
         if (d > seg.halfWidth + w) continue;

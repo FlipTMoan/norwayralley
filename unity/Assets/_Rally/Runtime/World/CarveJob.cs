@@ -32,6 +32,7 @@ namespace Rally.World
                 float2 p = new float2(col * CellM, y);
                 float ground = Base[rowBase + col];
                 float bestD = float.PositiveInfinity, bestH = ground, bestFlat = 0, bestShoulder = 0;
+                bool bestDeck = false;
                 for (int s = 0; s < SegmentCount; s++)
                 {
                     var seg = Segments[s];
@@ -44,6 +45,8 @@ namespace Rally.World
                     float t = len2 > 1e-12f ? math.saturate(math.dot(p - seg.A, ab) / len2) : 0f;
                     float d = math.distance(p, seg.A + ab * t);
                     if (d > reach || d >= bestD) continue;
+                    // A bridge span wins its cells like a road, and leaves them as they are.
+                    if ((seg.Flags & CarveSegment.DeckOnly) != 0) { bestD = d; bestFlat = seg.HalfWidth; bestDeck = true; continue; }
                     // Beyond the flat band a segment only claims cells its earthwork reaches (else the cell stays free
                     // for a farther segment whose profile does reach it, as before the earthworks widened the reach).
                     float h = math.lerp(seg.Ha, seg.Hb, t);
@@ -52,9 +55,11 @@ namespace Rally.World
                     bestH = h;
                     bestFlat = seg.HalfWidth;
                     bestShoulder = seg.Shoulder;
+                    bestDeck = false;
                 }
                 int idx = rowBase + col;
                 if (bestD == float.PositiveInfinity) { Heights[idx] = ground; Mask[idx] = 0; continue; }
+                if (bestDeck) { Heights[idx] = ground; Mask[idx] = bestD <= bestFlat ? (byte)128 : (byte)0; continue; }
                 Heights[idx] = RoadProfile.Height(bestH, ground, bestD, bestFlat, bestShoulder);
                 Mask[idx] = bestD <= bestFlat ? (byte)255 : (byte)128;
             }

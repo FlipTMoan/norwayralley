@@ -164,3 +164,17 @@
 - For before/after benches and "test fails on the old code" checks of generated assets, no worktree is needed: tar the
   new `Settings/Trees`, `git checkout HEAD --` it, run, untar. Bench runs at one place differ by ±2 % in static poses
   and the drive / forest-edge numbers are ruled by streaming hitches; repeat 3× and compare medians and p95.
+
+## 2026-11-20 — bridges: square ends by "nearest wins", not by clip flags; look at the joints
+- First try: flag the approach segment that ends at an abutment "clip at B" in the carve. The test still found the river
+  filled 16 m from the abutment: the *earlier* segments' round end caps (5 m segments, 20–30 m carve reach) poke past
+  the clip plane too. A per-abutment plane would have cut a road that bends along the bank onto the bridge. What works:
+  the span is a carve segment that takes part in "nearest wins" and leaves the cells it wins natural; the bisector
+  between deck and approach is the abutment, bends included, and `TileWorld.HeightAt` applies the same rule (deck
+  nearer → not on the road). Rule: when a carve region must end, give the other side a claimant instead of cutting.
+- The "along" shot showed a gravel strip across the road at every bridge end: a way meeting another end to end within
+  its flat band is `Covered` and draws no ribbon, expecting the other way to — but a tagged bridge is its own way and its
+  deck does not reach back over the land. The strip was there before bridges too (look at the before shots for the same
+  defect before blaming the change). Fixed only for decks (`!q.Bridge`); other end-to-end way joints probably still have it (not checked).
+- `git stash push -u -- <runtime paths>` (keeping the new editor tool) gave clean baseline benches and road surveys at
+  HEAD without a worktree; the stash must hold the new `.meta` files too, or Unity deletes/regenerates GUIDs.

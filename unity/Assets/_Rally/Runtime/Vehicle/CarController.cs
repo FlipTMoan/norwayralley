@@ -165,6 +165,9 @@ namespace Rally.Vehicle
             int gearBefore = state.Gear;
             var before = state.Pos.xz;
             float damageBefore = state.Damage.Total;
+            // On a bridge the ground answers for the car's own height: the deck while it is up there, the river bed under it.
+            var layered = Ground as ILayeredGround;
+            if (layered != null) layered.ReferenceY = state.Pos.y;
             CarSim.Step(ref state, Spec, input, Ground, Route, ReadOnlySpan<WallBox>.Empty, dt);
             // Colliders moved this frame (the tree pool, a FloatingOrigin rebase of the tile roots) reach PhysX queries only
             // at the next simulation step with autoSyncTransforms off: sync first, or the car tests stale positions.
@@ -172,6 +175,7 @@ namespace Rally.Vehicle
             SweepWalls(before);
             ResolveCollisions();
             diag.Watch(ref state, input, Ground, dt, damageBefore);
+            if (layered != null) layered.ReferenceY = float.NaN;
             if (state.Gear != gearBefore) Shifted?.Invoke(gearBefore, state.Gear);
             FloatingOrigin.MaybeRebase(state.Pos);
             ApplyPose();

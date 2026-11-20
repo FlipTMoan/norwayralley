@@ -19,6 +19,8 @@ namespace Rally.Tests.World
                 hit = new RoadHit { Distance = d, RoadY = 100, Half = RoadProfile.One.Half, Cut = RoadProfile.One.Cut, Surface = Surface.Gravel, Point = new double2(1000, p.N), Tangent = new double2(0, 1), Side = p.E < 1000 ? 1 : -1 };
                 return d <= limit;
             }
+            public bool Nearest(Utm33 p, double limit, RoadLayer layer, out RoadHit hit) { hit = default; return layer != RoadLayer.Deck && Nearest(p, limit, out hit); }
+            public int BridgeSegmentCount => 0;
             public void CollectCarveSegments(Bounds25833 bounds, Utm33 origin, List<CarveSegment> output) { }
             public void PointsNear(Utm33 p, double radius, List<Utm33> output) { }
         }

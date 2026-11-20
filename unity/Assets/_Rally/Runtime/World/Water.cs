@@ -140,6 +140,18 @@ namespace Rally.World
             return o;
         }
 
+        /// <summary>Inside one of the bodies' lake outlines or river ribbons (no sea, no depth).</summary>
+        public static bool InLakeOrRiver(WaterBodies bodies, Utm33 p)
+        {
+            if (bodies == null) return false;
+            var q = Local(p, bodies.Origin);
+            foreach (var lake in bodies.Lakes)
+                if (q.x >= lake.Min.x && q.x <= lake.Max.x && q.y >= lake.Min.y && q.y <= lake.Max.y && Geometry2D.PointInRing(q, lake.Ring)) return true;
+            foreach (var river in bodies.Rivers)
+                if (Geometry2D.PolylineDist2(q, river.Points) <= river.Half * river.Half) return true;
+            return false;
+        }
+
         /// <summary>water.js waterAt: the sea (ground ≈ 0 counts as deep), the fjord shore, lakes by outline, rivers by ribbon.</summary>
         public static WaterSample WaterAt(WaterBodies bodies, Utm33 p, float ground)
         {

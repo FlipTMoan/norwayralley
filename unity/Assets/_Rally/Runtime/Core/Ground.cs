@@ -26,6 +26,16 @@ namespace Rally.Core
         bool IsLoaded(float2 xz);
     }
 
+    /// <summary>
+    /// A ground with surfaces above each other (a bridge deck over a river): <see cref="ReferenceY"/> is the height of the
+    /// thing asking. NaN (the default) means the top surface; the car sets its own height around its step so that under a
+    /// bridge it drives on the river bed and on the deck it stays on the deck.
+    /// </summary>
+    public interface ILayeredGround
+    {
+        float ReferenceY { get; set; }
+    }
+
     /// <summary>A flat or analytic ground for tests and the editor.</summary>
     public sealed class FlatGround : IGround
     {

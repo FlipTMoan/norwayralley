@@ -82,6 +82,7 @@ namespace Rally.Geo
                     {
                         Kind = tags["waterway"], Name = Tag(tags, "name"),
                         Width = float.TryParse(Tag(tags, "width"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var w) ? w : 0,
+                        Culvert = Tag(tags, "tunnel") == "culvert",
                         Points = Points(geometry),
                     });
                     continue;

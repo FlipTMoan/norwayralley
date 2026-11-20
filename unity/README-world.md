@@ -53,7 +53,7 @@ when a tile's ways arrive, then `TileWorld.RecarveWithin(bounds)`; `RibbonMesh.B
   `RoadGraph.SetTile(…, surfaces)`); `Rally/Road` draws asphalt (markings on two-lane roads) or gravel.
 - Known limits: a way graded in an earlier tile keeps its heights (a side road graded before its main road arrives does
   not conform); OSRM / demo stage lines (`StageRoute`) keep their own Chaikin; at a junction corner on a steep side road
-  the side road's first ribbon quad can sit a few cm–15 cm off the main road's surface; bridges are not modelled.
+  the side road's first ribbon quad can sit a few cm–15 cm off the main road's surface; bridges: see below.
 
 ### Road edges, earthworks and the road surface (2026-11-19, second pass)
 - **The terrain meets the ribbon edge.** The carve's flat band sits `RoadConstants.CarveLift` (ribbon lift − `EdgeTuck`)
@@ -85,8 +85,39 @@ when a tile's ways arrive, then `TileWorld.RecarveWithin(bounds)`; `RibbonMesh.B
 - Known limits: at a junction on a steep side road the side road's first quad off the main road sits up to ~15 cm off the
   main road's carve, so the main road's apron can show through it by up to ~12 cm on a 30 % side road (4 cm tuck instead of
   the old 16 cm lift); the coarse-only carve still sinks `CarveMargin` (0.3 m) under the band, so far away where no 1 m tile is
-  loaded the ribbon edge stands ~0.3 m over the coarse terrain (under a pixel at that range); bridges are still not modelled
-  (the road is graded over the water; a road on DTM sea cells is drawn under the sea plane, though the car stays dry).
+  loaded the ribbon edge stands ~0.3 m over the coarse terrain (under a pixel at that range).
+
+### Bridges (2026-11-20)
+Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
+- **Which stretches:** a way tagged `bridge=*` (not `no` / `culvert`, not a tunnel) is a span end to end; any other way
+  is one where it crosses water for ≥ 6 m with water on both sides 4 m past its cut-through and the DTM at water level
+  (`Bridges.WetCore`; a causeway is land, a ford never a bridge, a 2.4 m stream a culvert). The water is
+  `WaterProbe`: the tile's OSM lakes and rivers (`tunnel=culvert` waterways left out), the DTM's sea cells where a tile is
+  loaded, and the lakes / rivers other tiles already built (`TileWorld.InMappedWater`). Each core is widened by one 5 m
+  sample to the abutments on the banks; piers every ~30 m on spans over 24 m.
+- **Profile** (`RoadGraph.SetTile`): the raw ground over a span is the straight line between the banks before the usual
+  grading (a tagged way is graded with 60 m of ground beyond its ends), junction easing never moves a span's interior and
+  ignores a deck more than `PassOver` (2.5 m) above or below, then `Bridges.ApplyProfile`: a Hermite cubic between the
+  abutments with the approach grades, a 2 % arch (≤ 1 m), and where needed a lift to 2.5 m over the water (over the sea
+  plane at least) or 0.8 m over dry ground, ramped out over 15–90 m and tapered to nothing at the way's own ends.
+- **Carve:** a span is a `CarveSegment.DeckOnly` (out to `RoadConstants.DeckHalf`, reach + 10 m): it takes part in
+  "nearest wins" but leaves the cells it wins natural, so nothing under a bridge is carved and an approach road's
+  embankment stops where the deck is nearer (no end cap filling the river). Its footprint is 128 on the mask (no trees).
+- **Drawn:** the ribbon as before on top of `BridgeMesh` (one mesh per tile, house material, casts shadows): concrete
+  slab `DeckThickness` 0.9 m out to `DeckHalf` = carriageway + shoulder + 0.6 m (the ribbon skirts end inside it), kerb
+  beams, steel guard rails on posts, piers and abutment walls into the ground. A road meeting a deck is never `Covered`
+  by it (its ribbon runs to the abutment).
+- **Car:** `TileWorld` is an `ILayeredGround`: `CarController` sets `ReferenceY` to the car's height around its step.
+  Within `DeckHalf` and no more than `DeckCatch` (1 m) under the deck top the ground is the deck (ribbon on the
+  carriageway, slab to the rails), dry, with the road's surface; under it the river bed and its water. Other callers
+  (NaN) get the deck. Rails and piers are a `MeshCollider` on layer Buildings (the rails a band from 0.5 m under the deck
+  to 1.25 m over it, so a car in the river passes under them).
+- **Quays:** no road is graded from ground under `RoadGraph.MinGradeGround` (sea plane + 0.5 m): shore and quay roads over
+  the DTM's sea cells used to be drawn under the 0.45 m sea plane (183 of 4143 live road points at Sand).
+- `PreviewShots -previewLook "LAT,LON;…"` shoots each spot across the nearest road from both sides, low down and along it.
+- Known limits: a way is graded once, with the water known then (its own tile's OSM water and tiles already built);
+  `HeightAt` without a reference height answers the deck (a camera or sign under a bridge sees the deck); the deck is
+  concrete whatever `bridge:structure` says; pace notes do not call bridges.
 
 ## How far ahead tiles and overlays are fetched (2026-11-18)
 

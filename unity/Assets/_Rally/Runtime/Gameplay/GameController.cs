@@ -88,6 +88,7 @@ namespace Rally.Gameplay
         RoadGraph roads;
         SignLayer signs;
         readonly Dictionary<TileKey, GameObject> ribbons = new Dictionary<TileKey, GameObject>();
+        readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> bridgeObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
         readonly Queue<TileResult> results = new Queue<TileResult>();
         FlatGround naturalGround;            // the uncarved DTM as an IGround, for StageRoute.AssignRoadY
 
@@ -342,7 +343,9 @@ namespace Rally.Gameplay
                     if (!world.Scheduler.IsReady(key)) return false;    // the DTM result is still ahead in the queue
                     if (roadData != null)
                     {
-                        var lines = roads.SetTile(key, roadData, p => world.BaseHeightAt(p), surfaces);
+                        // Water for the bridge rule: this tile's OSM lakes and rivers, the sea in the DTM, the water other tiles built.
+                        var water = new WaterProbe(features, p => world.BaseHeightAt(p), p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)), world.InMappedWater);
+                        var lines = roads.SetTile(key, roadData, p => world.BaseHeightAt(p), surfaces, water.Wet);
                         RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
                         var b = key.Bounds;
                         world.RecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
@@ -392,10 +395,11 @@ namespace Rally.Gameplay
             if (!done) results.Enqueue(r);
         }
 
-        /// <summary>The road surface of a tile: RibbonMesh over the carved ground, materials tarmac / gravel.</summary>
+        /// <summary>The road surface of a tile: RibbonMesh over the carved ground, materials tarmac / gravel; and its bridges (BridgeMesh).</summary>
         void BuildRibbon(TileKey key, List<RoadPolyline> lines)
         {
             if (ribbons.TryGetValue(key, out var old)) { Destroy(old); ribbons.Remove(key); }
+            BuildBridges(key, lines);
             var mesh = RibbonMesh.Build(lines, key.Origin);
             if (mesh == null) return;
             var go = new GameObject("Ribbon " + key);
@@ -406,9 +410,44 @@ namespace Rally.Gameplay
             ribbons[key] = go;
         }
 
+        /// <summary>Deck, rails and piers of the tile's bridge spans: house material (vertex colours, shadows), rails and piers solid on layer Buildings.</summary>
+        void BuildBridges(TileKey key, List<RoadPolyline> lines)
+        {
+            DropBridges(key);
+            var draw = BridgeMesh.Build(lines, key.Origin, p => world.BaseHeightAt(p), out var solid);
+            if (draw == null) return;
+            var go = new GameObject("Bridges " + key) { layer = RallyLayers.Buildings, isStatic = true };
+            go.transform.SetParent(world.Root, false);
+            go.transform.position = FloatingOrigin.ToWorld(key.Origin, 0);
+            go.AddComponent<MeshFilter>().sharedMesh = draw;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = world.Style != null ? world.Style.BuildingMaterial : null;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; mr.receiveShadows = true;
+            if (solid != null) go.AddComponent<MeshCollider>().sharedMesh = solid;
+            bridgeObjects[key] = (go, draw, solid);
+            var spans = new System.Text.StringBuilder();
+            int count = 0;
+            foreach (var line in lines)
+                foreach (var sp in BridgeMesh.Spans(line.Samples))
+                {
+                    var mid = line.Samples[(sp.I0 + sp.I1) / 2].P;
+                    var ll = Proj.ToLatLon(new Utm33(mid.x, mid.y));
+                    if (count++ < 12) spans.Append(FormattableString.Invariant($" way {line.Id} {line.Samples[sp.I1].S - line.Samples[sp.I0].S:0} m at {ll.Lat:0.00000},{ll.Lon:0.00000};"));
+                }
+            RallyLog.Info($"overlay: {key} bridges: {count} spans{spans}");
+        }
+
+        void DropBridges(TileKey key)
+        {
+            if (!bridgeObjects.TryGetValue(key, out var b)) return;
+            Destroy(b.go); Destroy(b.draw); if (b.solid != null) Destroy(b.solid);
+            bridgeObjects.Remove(key);
+        }
+
         void OnTileDisposing(TerrainTile tile)
         {
             if (ribbons.TryGetValue(tile.Key, out var go)) { Destroy(go); ribbons.Remove(tile.Key); }
+            DropBridges(tile.Key);
             if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); }
         }
 
@@ -1233,6 +1272,7 @@ namespace Rally.Gameplay
             flow.PhaseChanged -= OnPhase;
             foreach (var go in ribbons.Values) Destroy(go);
             ribbons.Clear();
+            foreach (var key in new List<TileKey>(bridgeObjects.Keys)) DropBridges(key);
             results.Clear();
             foreach (var v in actorViews.Values) Destroy(v.gameObject);
             actorViews.Clear();
