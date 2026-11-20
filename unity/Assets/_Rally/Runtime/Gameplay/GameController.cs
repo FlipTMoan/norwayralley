@@ -155,12 +155,14 @@ namespace Rally.Gameplay
                 Hud.CacheClearClicked += ClearCache;
                 Hud.DebugTapped += () => Hud.DebugVisible = !Hud.DebugVisible;
                 Hud.CarClicked += ChooseCar;
+                Hud.MenuClicked += BackToMenu;
+                logWindow = Hud.GetComponent<Rally.UI.LogWindow>();
             }
             LoadSettings();
             ShowCarCards();
             var mapGo = new GameObject("Map");                     // the name the template's SendMessage targets
             mapGo.AddComponent<MapEvents>().Handler = OnMapEvent;
-            flow.PhaseChanged += p => { Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading); if (p == Phase.Countdown) Hud?.GetComponent<Rally.UI.LogWindow>()?.AutoHide(); };
+            flow.PhaseChanged += p => Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading);
             try { await Boot(); }
             catch (OperationCanceledException) { }
             catch (Exception e) { RallyLog.Error("boot failed: " + e); status = "LOAD FAILED: " + e.Message; }
@@ -780,11 +782,17 @@ namespace Rally.Gameplay
         public void Restart()
         {
             if (car == null) return;
+            ResetToStart();
+            flow.Restart();
+        }
+
+        /// <summary>The car repaired on the start line and the stage's animals and people planned again (Restart, ToMenu).</summary>
+        void ResetToStart()
+        {
             car.Repair();
             car.SetRoute(route);
             actors.Clear();
             if (stage != null) for (int i = 0; i < math.max(1, sectorEnds.Count); i++) AddSectorPlans(i, i == 0 ? 0f : sectorEnds[i - 1], sectorEnds.Count > i ? sectorEnds[i] : stage.Length);
-            flow.Restart();
         }
 
         void OnActorSpawned(CrossingActor a)
@@ -827,6 +835,7 @@ namespace Rally.Gameplay
             HandleKeys();
             frames.Record(Time.unscaledDeltaTime);
             if (bench) Bench();
+            if (logWindow != null && Time.unscaledTime >= nextProgress) { nextProgress = Time.unscaledTime + 0.25f; ShowProgress(); }
             if (Hud != null && Hud.DebugVisible && Time.unscaledTime >= nextDebug) { nextDebug = Time.unscaledTime + 0.25f; Hud.SetDebug(DebugText()); }
             fps = math.lerp(fps, 1f / math.max(1e-4f, Time.unscaledDeltaTime), 0.05f);
             if (world == null) return;
@@ -845,7 +854,7 @@ namespace Rally.Gameplay
             FrameProbe.Stop("signs.update", tSigns);
             if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
 
-            if (flow.Phase == Phase.Intro && Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame) StartEngine();
+            if (flow.Phase == Phase.Intro && Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame && (Hud == null || !Hud.IsTyping)) StartEngine();
             flow.Update(dt);
             ref var s = ref car.State;
             var q = route.Nearest(s.Pos.xz, 120f);
@@ -938,14 +947,63 @@ namespace Rally.Gameplay
             }
             switch (flow.Phase)
             {
-                case Phase.Loading: return status + "  " + statsText;
-                case Phase.Intro: return "ENTER to start the engine  " + statsText;
+                case Phase.Loading: return status;                          // the tile numbers are on the LOG bar
+                case Phase.Intro: return Time.time < transientUntil ? transient : "ENTER or START ENGINE to drive";
                 case Phase.Countdown: return Mathf.CeilToInt(flow.Countdown).ToString();
                 case Phase.Finished: return status;
             }
             if (car != null && car.State.WrongWay) return "WRONG WAY";
             if (Time.time < transientUntil) return transient;
             return statsText;
+        }
+
+        // ---- the LOG bar's world-loading progress (LogWindow.SetProgress) ----
+
+        Rally.UI.LogWindow logWindow;
+        float nextProgress;
+
+        /// <summary>What the stream has done: terrain tiles (coarse + fine) ready of wanted, coarse tiles with their roads graded, fetches in flight.</summary>
+        public struct StreamCounts { public int TerrainReady, TerrainWanted, RoadsReady, RoadsWanted, Fetching; }
+
+        /// <summary>
+        /// Count the scheduler's tiles. With <paramref name="startRadius"/> &gt; 0 only the start area counts: the coarse tiles
+        /// within that distance of <paramref name="centre"/>, ground and roads — what <see cref="LoadFromQuery"/> waits for —
+        /// so the bar is full when the stage can start; otherwise every wanted tile (streaming while driving).
+        /// </summary>
+        public static StreamCounts CountStreaming(TileScheduler scheduler, Func<TileKey, bool> roadsDone, Utm33 centre, double startRadius)
+        {
+            var c = new StreamCounts();
+            foreach (var key in scheduler.Keys)
+            {
+                if (startRadius > 0 && (key.Kind != TileKind.Coarse || key.RectDistance(centre) > startRadius)) continue;
+                scheduler.TryGetState(key, out var state);
+                c.TerrainWanted++;
+                if (state == TileState.Ready) c.TerrainReady++;
+                else if (state == TileState.Loading) c.Fetching++;
+                if (key.Kind != TileKind.Coarse) continue;
+                c.RoadsWanted++;
+                if (roadsDone(key)) c.RoadsReady++;
+            }
+            return c;
+        }
+
+        /// <summary>One 0..1 value for the bar: terrain and roads counted alike; nothing wanted counts as done.</summary>
+        public static float StreamFraction(in StreamCounts c)
+        {
+            int wanted = c.TerrainWanted + c.RoadsWanted;
+            return wanted == 0 ? 1f : (float)(c.TerrainReady + c.RoadsReady) / wanted;
+        }
+
+        void ShowProgress()
+        {
+            if (world == null || roads == null) { logWindow.SetProgress(0f, status); return; }
+            bool start = flow.Phase == Phase.Loading;
+            var c = CountStreaming(world.Scheduler, roads.HasTile, anchor, start ? EndlessStartRadius : 0);
+            float f = StreamFraction(c);
+            int queued = results.Count + (activeOverlay != null ? 1 : 0);
+            string text = $"{(start ? "START AREA" : "WORLD")} {Mathf.FloorToInt(f * 100f)}% · terrain {c.TerrainReady}/{c.TerrainWanted} · roads {c.RoadsReady}/{c.RoadsWanted}"
+                + (c.Fetching > 0 ? $" · {c.Fetching} fetching" : "") + (queued > 0 ? $" · {queued} queued" : "");
+            logWindow.SetProgress(f, text);
         }
 
         #endregion
@@ -1029,7 +1087,7 @@ namespace Rally.Gameplay
         /// </summary>
         public void ChooseCar(int index)
         {
-            if (flow.Phase != Phase.Loading && flow.Phase != Phase.Intro) { Say("ESC back to the start screen to change the car", 2.5f); return; }
+            if (flow.Phase != Phase.Loading && flow.Phase != Phase.Intro) { Say("ESC or MENU: back to the start screen to change the car", 2.5f); return; }
             int n = Chooser.Length;
             carIndex = ((index % n) + n) % n;
             var kind = ChosenCar;
@@ -1076,11 +1134,7 @@ namespace Rally.Gameplay
             if (kb.gKey.wasPressedThisFrame) ToggleGearbox();
             if (kb.mKey.wasPressedThisFrame) ToggleMute();
             if (kb.f10Key.wasPressedThisFrame || kb.f3Key.wasPressedThisFrame) { if (Hud != null) Hud.DebugVisible = !Hud.DebugVisible; }
-            if (kb.escapeKey.wasPressedThisFrame)
-            {
-                if (mapOpen) CloseMap();
-                else if (car != null && flow.Phase != Phase.Loading && flow.Phase != Phase.Intro) ToMenu();
-            }
+            if (kb.escapeKey.wasPressedThisFrame) BackToMenu();
             if (car == null || flow.Phase == Phase.Loading) return;
             if (kb.rKey.wasPressedThisFrame) { Restart(); Say("RESTART", 1.5f); }
             if (kb.nKey.wasPressedThisFrame && flow.Phase != Phase.Intro) ScoutNewStage();
@@ -1114,10 +1168,21 @@ namespace Rally.Gameplay
         /// <summary>main.js returnToMenu: the car back on the start line, the start screen up, the clock reset.</summary>
         public void ToMenu()
         {
-            car.Repair();
-            car.SetRoute(route);
-            actors?.Clear();
+            if (car == null) return;
+            ResetToStart();
             flow.ToMenu();
+        }
+
+        /// <summary>
+        /// Esc and the HUD's MENU button: closes the route map if it is open, else goes back to the start screen from every
+        /// phase of a stage (countdown, racing, finished; route, endless or free drive). There the car, gearbox, sliding,
+        /// route and room can be changed, and START ENGINE restarts the stage. While loading the start screen is already up.
+        /// </summary>
+        public void BackToMenu()
+        {
+            if (mapOpen) { CloseMap(); return; }
+            if (Hud != null && Hud.HelpVisible) Hud.HelpVisible = false;
+            if (flow.Phase != Phase.Loading && flow.Phase != Phase.Intro) ToMenu();
         }
 
         /// <summary>main.js scoutNewStage: a fresh endless stage from where the car is, with a new seed.</summary>
@@ -1239,7 +1304,7 @@ namespace Rally.Gameplay
         string DebugText()
         {
             var sb = new System.Text.StringBuilder(512);
-            sb.Append($"RETRO NORWAY RALLY · debug (F10 / F3)\nfps {fps:0}   frame {frames.AvgMs:0.0} ms, p95 {frames.PercentileMs(0.95f):0.0} ms   phase {flow.Phase}\n");
+            sb.Append($"GRAND TOUR NORWAY · debug (F10 / F3)\nfps {fps:0}   frame {frames.AvgMs:0.0} ms, p95 {frames.PercentileMs(0.95f):0.0} ms   phase {flow.Phase}\n");
             if (car != null)
             {
                 ref var s = ref car.State;

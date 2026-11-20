@@ -46,16 +46,18 @@
     .route-pin span { transform: rotate(-45deg); }
     #footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; padding: 4px 16px; font-size: 10px; line-height: 1.4; color: #8e9a93; background: rgba(17, 22, 20, .6); pointer-events: none; }
     #footer a { color: #b7c1bb; pointer-events: auto; }
+    /* Credits show here while the page loads; the game's start screen carries them after that (one footer at a time). */
+    #loading.hidden ~ #footer { display: none; }
   </style>
 </head>
 <body>
   <div id="unity-container">
-    <canvas id="unity-canvas" tabindex="-1" aria-label="Retro Norway Rally"></canvas>
+    <canvas id="unity-canvas" tabindex="-1" aria-label="Grand Tour Norway"></canvas>
   </div>
 
   <div id="loading" role="status" aria-live="polite">
     <div class="kicker">KARTVERKET 1 M DTM · EPSG:25833</div>
-    <h1>RETRO NORWAY RALLY</h1>
+    <h1>GRAND TOUR NORWAY</h1>
     <div id="loading-track"><div id="loading-bar"></div></div>
     <div id="loading-text">Waking the mountain…</div>
   </div>

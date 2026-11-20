@@ -111,38 +111,38 @@ Before (scratchpad/startscreen_before.jpg, 1512×795): the open log covers the t
 HUD (clock, speed, gear, OFF ROAD) shows through the start screen; the status line ("ENTER to start the engine tiles
 4+4 (+49) 28 MB") overlaps the multiplayer hint; the cache row + CLEAR overlaps the credits; credits appear twice (Unity
 label + page footer); the keys line wraps into the buttons; the cards' left part is hidden.
-- [ ] Log window starts minimised (always, also while the world loads): a slim bar (e.g. bottom-left or under the top
+- [x] Log window starts minimised (always, also while the world loads): a slim bar (e.g. bottom-left or under the top
       buttons) with "LOG" + a progress bar for world loading (tiles ready / wanted, overlays pending, fetches in flight →
       one 0–100 % value with a short text like "terrain 12/16 · roads 3/8"), and the newest warning count. Click / F2 opens
       the full window; X minimises again. Progress reaches 100 % when the start area is ready and stays useful later
       (streaming activity while driving).
-- [ ] Start screen layout: one centred column that fits 1280×720 down to phone width without overlaps — title, car cards
+- [x] Start screen layout: one centred column that fits 1280×720 down to phone width without overlaps — title, car cards
       (all visible, scroll or wrap on narrow screens), START ENGINE, one options row, one short keys line, a compact
       "drive with friends" block, cache + credits in one small footer (credits once; keep the page footer or the Unity
       one, not both). Hide the driving HUD while the start screen is up. Status text gets its own line, no overlap.
-- [ ] Check at 1920×1080, 1512×795, 1280×720 and 390×844 in Chrome; screenshots before/after. Help text/README updated.
-- [ ] ESC → start screen to change car etc. (user: "User should be able to click "ESC" to come back to main menu to change
+- [x] Check at 1920×1080, 1512×795, 1280×720 and 390×844 in Chrome; screenshots before/after. Help text/README updated.
+- [x] ESC → start screen to change car etc. (user: "User should be able to click "ESC" to come back to main menu to change
       cars etc."). Code already has Esc → `ToMenu()` (GameController ~975) and ChooseCar refuses outside Intro/Loading —
       verify in the real web build why it doesn't work for the user (browser Esc = leave fullscreen / pointer lock, focus,
       phase guards such as Countdown/Finished, free drive, endless, map open, help open). Make Esc (and a visible MENU
       button on the HUD, also for touch) open the start screen from every phase; there the car, gearbox, sliding, route
       and room can be changed; START ENGINE restarts the current stage with the chosen car. Test in PlayMode: Esc while
       driving → start screen → choose another car → start → the new car drives the same stage.
-- [ ] Tests: PlayMode/GarageSceneTests-style check that the log starts minimised and the progress bar exists and moves.
+- [x] Tests: PlayMode/GarageSceneTests-style check that the log starts minimised and the progress bar exists and moves.
       Done after A/B (needs Unity), before C.
 
 ## I. Rename the game to "Grand Tour Norway"
 User: "Also rename game to "Grand Tour Norway"".
-- [ ] Every name the player sees: Unity productName (ProjectSettings), web page <title>, the start-screen title
+- [x] Every name the player sees: Unity productName (ProjectSettings), web page <title>, the start-screen title
       (Hud.uxml), the WebGL template, GameController strings, the share-link text, help text. Unity game only
       (user: "This is ment for the unity game.") — the JS game in legacy-js keeps its name.
-- [ ] Docs: unity/README.md, the Unity parts of README.md / ARCHITECTURE.md; CHANGES.md entry. Old dated plan files
+- [x] Docs: unity/README.md, the Unity parts of README.md / ARCHITECTURE.md; CHANGES.md entry. Old dated plan files
       (legacy-js/retro_norway_rally_*.md) stay as history.
-- [ ] Kept on purpose (renaming would break things): the repo name / URL (fliptmoan.github.io/norwayralley),
+- [x] Kept on purpose (renaming would break things): the repo name / URL (fliptmoan.github.io/norwayralley),
       C# namespaces `Rally.*`, folder `_Rally`, localStorage / IndexedDB keys `rally.*` (players would lose their saved
       car, settings, routes and cache), multiplayer room ids. Changing productName moves Unity's own PlayerPrefs/IndexedDB
       path — check that the game's cache and saved settings survive the rename (they use our own keys).
-- [ ] Logo: the start-screen title restyled for the new name (same retro look, fits on a phone). Done with H.
+- [x] Logo: the start-screen title restyled for the new name (same retro look, fits on a phone). Done with H.
 
 ## Next (separate plan)
 - Landmarks, photo camera and photo album: tasks/plan_20261120_landmarks.md (after A–H).
@@ -152,6 +152,41 @@ User: "Also rename game to "Grand Tour Norway"".
 - Collisions with ghost cars of other players, and new object kinds (fences, poles, rocks) that don't exist today.
 
 ## Review
+
+### H. Start screen, LOG bar, Esc / MENU + I. Rename to Grand Tour Norway (done 2026-11-20)
+- **Esc, checked in the real WebDev build first (Chrome, trusted key events):** Esc → start screen worked from racing
+  in free drive with the canvas focused, with `document.body` focused (Unity listens on the window), after mouse-clicking
+  START ENGINE and after focusing the room-code field. No fullscreen / pointer lock exists in the game. Gaps found: no
+  visible way on touch screens; the only hint was the long keys line hidden behind the open log; Esc after an endless
+  stage left it without animals/people (ToMenu skipped the sector plans R re-adds); Enter in the room-code field started
+  the engine. Not reproducible: a phase where Esc did nothing while driving (Loading already shows the start screen).
+- **Changed:** `Hud.uxml/uss` (start column in a ScrollView, logo GRAND TOUR / N O R W A Y, compact friends row, cache +
+  credits footer, `.menu` hides the driving HUD, top row MENU / MAP / ? / LOG bar, `.narrow` < 900 panel units),
+  `HudController` (MenuClicked, ShowStartScreen → `.menu`, status → startInfo, column min-height = viewport),
+  `LogWindow` (starts minimised, LOG bar: progress + text + warnings since last open; AutoHide removed),
+  `GameController` (`BackToMenu` for Esc and MENU, `ResetToStart` shared by Restart / ToMenu, `CountStreaming` /
+  `StreamFraction` / `ShowProgress` every 0.25 s, Enter gated by typing, start-screen status without tile stats),
+  `RallyPanel.asset` + `SceneBuilder` (match 0.5, productName), `ProjectSettings` productName, template (h1, aria,
+  page footer only while loading), help text, docs.
+- **Numbers:** phone 390×844: UI drawn at 0.30× before (1280-wide panel), ~0.60× now (652-wide panel). Progress in the
+  web build: "START AREA 75% · terrain 4/4 · roads 2/4 · 15 queued" while loading, then "WORLD 52% · terrain 32/57 ·
+  roads 18/39 · 25 fetching · 29 queued" rising while it streams (cold IndexedDB on a new origin, Overpass slow).
+- **Rename / storage:** web settings are localStorage `rally.*`, the cache IndexedDB `rally-cache` (both literal names);
+  the web game uses no PlayerPrefs / persistentDataPath. Verified: the cache count went on from 526 (old build) to 536–545
+  items (new build) on the same origin. Editor: `persistentDataPath` moves with productName, so the 337 MB file cache
+  was copied to `~/.config/unity3d/Filip Tobias Moan/Grand Tour Norway/rally-cache` (old folder left in place).
+- **Checked in Chrome** (window is maximised on a 4K screen, resize_window has no effect: sizes through an iframe harness
+  in the scratchpad): 1920×1080, 1512×795, 1280×720, 390×844 before/after (`scratchpad/startscreen/before_after.jpg`);
+  MENU click while driving → start screen → Baja Bug card → START ENGINE drives the same stage with the buggy; page
+  title "Grand Tour Norway"; no console errors. The 390 px driving view showed the LOG bar text running off the right
+  edge → ellipsis fix (`.narrow .hudButtons` right bound), rebuilt and rechecked (`after_390x844_driving_top.png`).
+- **Tests:** PlayMode `ControlsTests.EscWhileDrivingOpensTheMenuToChangeTheCar` (Esc while racing → start screen with
+  `.menu`, other car, same stage, START drives it; MENU path from the countdown) and `LogStartsMinimisedWithAProgressBar`
+  (closed from frame 1, progress rises while loading, WORLD after, bar drawn, F2 opens / minimises). Neither compiles on
+  the old code (no `StartScreenVisible`, `logMini`, `IsOpen`), and the old log was open at start.
+- **Open:** the START ENGINE button is shown (inactive) while loading; this Chrome reports a touchscreen, so the keys line
+  and touch buttons follow `Touchscreen.current`, not width; the driving status line still shows tile stats next to the
+  LOG bar; when the start roads time out (20 s) the stage starts with START AREA < 100 %. Build/Web not rebuilt (rule).
 
 ### E. Route map place search (done 2026-11-20)
 - **Cause / need:** the picker only took clicks; the stedsnavn API has no type filter and returns islands, hills and

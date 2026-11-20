@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-20 (Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-20 (Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -159,8 +159,10 @@ Vite with a relative `base`; `npm test` runs Node tests under
 builds and deploys `legacy-js/dist/` to Pages on every push to `main`.
 
 
-## Unity / WebAssembly rewrite (`unity/`)
+## Unity / WebAssembly rewrite (`unity/`) — "Grand Tour Norway"
 
+The Unity game is called **Grand Tour Norway** (renamed 2026-11-20; player-visible names only: `productName`, titles,
+loader. Namespaces `Rally.*`, folder `_Rally`, storage keys `rally.*` / IndexedDB `rally-cache` and the repo URL stay).
 Started 2026-11-16 from `tasks/plan_20261116_unity.md`. Unity 6 (6000.6),
 URP, WebGPU first with a WebGL 2 fallback, IL2CPP → wasm. Nothing has been
 compiled yet (no Unity on the build machine); `unity/docs/integration-review.md`
@@ -295,3 +297,25 @@ geometry it measures and warns when CarSpec drifts from the model. A car whose m
 is left out of the scene list and so out of the chooser. On the road a car is "on the road" when it is within the stage
 line's lane or on any road the world draws (`IGround.SurfaceAt`); top speed comes from `CarSpec.Aero`, the off-road limit
 from `CarSpec.OffroadMax`.
+
+### Unity start screen, LOG bar and MENU (2026-11-20)
+
+```mermaid
+flowchart LR
+    FLOW[GameFlow.PhaseChanged] -->|Loading / Intro| SS[HudController.ShowStartScreen:<br/>.menu on the HUD root hides the driving HUD,<br/>status line → startInfo]
+    ESC[Esc key] --> BTM[GameController.BackToMenu]
+    MENU[MENU button] -->|MenuClicked| BTM
+    BTM -->|map open: close it; help open: close it| BTM
+    BTM -->|Countdown / Racing / Finished| TM[ToMenu: ResetToStart + flow.ToMenu → Intro]
+    TM --> SS
+    SS -->|cards, GEARBOX, SLIDING, ROUTE MAP, rooms| GC[GameController]
+    GC -->|START ENGINE| CD[Countdown on the same stage]
+    SCH[TileScheduler tiles + RoadGraph.HasTile] -->|CountStreaming every 0.25 s:<br/>start area while Loading, every wanted tile after| PB[LogWindow.SetProgress → LOG bar]
+    LOG[RallyLog.Written WARN/ERR] -->|count while minimised| PB
+```
+
+The start screen is one column inside a ScrollView (min-height = viewport, so it centres when it fits and scrolls when
+it does not). The panel scales with width and height alike (`RallyPanel.match` 0.5); `.narrow` (panel narrower than 900
+units, phones in portrait) moves the HUD buttons under the clock and wraps the car cards 4 + 4. The log window starts
+minimised; F2 or a click on the LOG bar opens it.
+

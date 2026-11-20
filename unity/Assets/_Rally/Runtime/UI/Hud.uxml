@@ -1,7 +1,7 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements">
   <Style src="Hud.uss" />
   <ui:VisualElement name="hud" class="hud">
-    <ui:VisualElement class="top">
+    <ui:VisualElement class="top drivingHud" picking-mode="Ignore">
       <ui:Label name="clock" text="0:00.00" class="clock" />
       <ui:Label name="penalty" text="" class="penalty" />
       <ui:Label name="distLeft" text="" class="dist" />
@@ -11,7 +11,7 @@
       <ui:Label name="noteDist" text="300" class="noteDist" />
       <ui:Label name="noteKind" text="EASY LEFT" class="noteKind" />
     </ui:VisualElement>
-    <ui:VisualElement class="bottom">
+    <ui:VisualElement class="bottom drivingHud" picking-mode="Ignore">
       <ui:VisualElement class="dial">
         <ui:Label name="speed" text="0" class="speed" />
         <ui:Label text="km/h" class="unit" />
@@ -21,38 +21,47 @@
       <ui:Label name="surface" text="GRAVEL" class="surface" />
       <ui:VisualElement class="damage"><ui:VisualElement name="damageBar" class="damageBar" /></ui:VisualElement>
     </ui:VisualElement>
-    <ui:Label name="status" text="" class="status" />
+    <ui:Label name="status" text="" class="status drivingHud" />
     <ui:VisualElement name="startScreen" class="startScreen">
-      <ui:Label text="RETRO NORWAY RALLY" class="title" />
-      <ui:Label name="startInfo" text="" class="startInfo" />
-      <ui:VisualElement name="carCards" class="carCards" />
-      <ui:Label name="carHint" text="CHOOSE YOUR CAR: click a card, or LEFT / RIGHT (gamepad d-pad)" class="carHint" />
-      <ui:Button name="startButton" text="START ENGINE" class="bigButton" />
-      <ui:VisualElement class="row startOptions">
-        <ui:Button name="gearboxBtn" text="GEARBOX: AUTOMATIC" class="toggleButton" />
-        <ui:Button name="slideBtn" text="SLIDING: 0 MINIMAL" class="toggleButton" />
-        <ui:Button name="mapBtn" text="PICK A ROUTE ON THE MAP" class="toggleButton" />
-        <ui:Button name="helpBtn" text="? HELP" class="toggleButton" />
-      </ui:VisualElement>
-      <ui:Label text="LEFT / RIGHT choose the car here · WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 or C camera · M mute · H help · F10 debug · F2 log" class="startControls" />
-      <ui:VisualElement name="friends" class="friends">
-        <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
-        <ui:Button name="hostButton" text="HOST A ROOM" class="smallButton" />
-        <ui:VisualElement class="row">
-          <ui:TextField name="roomCode" max-length="6" class="roomCode" />
-          <ui:Button name="joinButton" text="JOIN" class="smallButton" />
+      <ui:ScrollView name="startScroll" mode="Vertical" horizontal-scroller-visibility="Hidden" class="startScroll">
+        <ui:VisualElement name="startColumn" class="startColumn">
+          <ui:VisualElement class="logo">
+            <ui:Label text="GRAND TOUR" class="title" />
+            <ui:Label text="N O R W A Y" class="titleSub" />
+          </ui:VisualElement>
+          <ui:VisualElement name="carCards" class="carCards" />
+          <ui:Label name="carHint" text="CHOOSE YOUR CAR: click a card, or LEFT / RIGHT" class="carHint" />
+          <ui:Button name="startButton" text="START ENGINE" class="bigButton" />
+          <ui:Label name="startInfo" text="" class="startInfo" />
+          <ui:VisualElement class="row startOptions">
+            <ui:Button name="gearboxBtn" text="GEARBOX: AUTOMATIC" class="toggleButton" />
+            <ui:Button name="slideBtn" text="SLIDING: 0 MINIMAL" class="toggleButton" />
+            <ui:Button name="mapBtn" text="ROUTE MAP" class="toggleButton" />
+            <ui:Button name="helpBtn" text="? HELP" class="toggleButton" />
+          </ui:VisualElement>
+          <ui:Label name="startControls" text="WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gears · ESC this menu · H help" class="startControls" />
+          <ui:VisualElement name="friends" class="friends">
+            <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
+            <ui:VisualElement class="row friendsRow">
+              <ui:Button name="hostButton" text="HOST A ROOM" class="smallButton" />
+              <ui:Label text="or" class="friendsOr" />
+              <ui:TextField name="roomCode" max-length="6" class="roomCode" />
+              <ui:Button name="joinButton" text="JOIN" class="smallButton" />
+            </ui:VisualElement>
+            <ui:Label name="roomStatus" text="" class="roomStatus" />
+          </ui:VisualElement>
+          <ui:VisualElement class="startFooter">
+            <ui:VisualElement class="row cacheRow">
+              <ui:Label name="cacheInfo" text="Local cache: …" class="cacheInfo" />
+              <ui:Button name="cacheClear" text="CLEAR" class="tinyButton" />
+            </ui:VisualElement>
+            <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain and place names © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · road data Statens vegvesen (NLOD) · routing OSRM · borders geoBoundaries (CC BY 4.0)" class="credits" />
+          </ui:VisualElement>
         </ui:VisualElement>
-        <ui:Label name="roomStatus" text="" class="roomStatus" />
-        <ui:Label text="Phones cannot link over Bluetooth from a web page; rooms go through the internet (4-letter code)." class="hint" />
-      </ui:VisualElement>
-      <ui:VisualElement class="row cacheRow">
-        <ui:Label name="cacheInfo" text="Local cache: …" class="cacheInfo" />
-        <ui:Button name="cacheClear" text="CLEAR" class="smallButton" />
-      </ui:VisualElement>
-      <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain © Kartverket (CC BY 4.0) · SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · Statens vegvesen (NLOD) · geoBoundaries (CC BY 4.0)" class="credits" />
+      </ui:ScrollView>
     </ui:VisualElement>
     <ui:Label name="debugPanel" text="" class="debugPanel" />
-    <ui:Label name="helpLine" text="H help · WASD drive · SPACE jump · SHIFT drift · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 C camera · F10 debug · F2 log · M mute" class="helpLine" />
+    <ui:Label name="helpLine" text="H help · WASD drive · SPACE jump · SHIFT drift · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 C camera · F10 debug · F2 log · M mute" class="helpLine drivingHud" />
     <ui:VisualElement name="touchControls" class="touchControls">
       <ui:VisualElement class="touchSide">
         <ui:Button name="touchLeft" text="◀" class="touchButton" />
@@ -64,9 +73,17 @@
         <ui:Button name="touchDrift" text="DRIFT" class="touchButton" />
       </ui:VisualElement>
     </ui:VisualElement>
-    <ui:Button name="mapButton" text="MAP" class="logButton mapButton" />
-    <ui:Button name="logButton" text="LOG" class="logButton" />
-    <ui:Button name="helpButton" text="?" class="logButton helpButton" />
+    <ui:VisualElement name="hudButtons" class="hudButtons" picking-mode="Ignore">
+      <ui:Button name="menuButton" text="MENU" class="logButton drivingHud" />
+      <ui:Button name="mapButton" text="MAP" class="logButton drivingHud" />
+      <ui:Button name="helpButton" text="?" class="logButton helpButton drivingHud" />
+      <ui:VisualElement name="logMini" class="logMini">
+        <ui:Label text="LOG" class="logMiniTitle" />
+        <ui:VisualElement class="logTrack"><ui:VisualElement name="logProgress" class="logProgress" /></ui:VisualElement>
+        <ui:Label name="logProgressText" text="" class="logMiniText" />
+        <ui:Label name="logWarnCount" text="" class="logMiniWarn" />
+      </ui:VisualElement>
+    </ui:VisualElement>
     <ui:VisualElement name="helpOverlay" class="helpOverlay">
       <ui:VisualElement class="helpPanel">
         <ui:VisualElement class="helpBar">
@@ -86,9 +103,9 @@
           <ui:VisualElement class="helpRow"><ui:Label text="Handbrake (drift)" class="helpCell helpCol0" /><ui:Label text="Shift" class="helpCell helpCol1" /><ui:Label text="B (east)" class="helpCell helpCol2" /><ui:Label text="DRIFT" class="helpCell helpCol3" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="Jump" class="helpCell helpCol0" /><ui:Label text="Space" class="helpCell helpCol1" /><ui:Label text="A (south)" class="helpCell helpCol2" /><ui:Label text="-" class="helpCell helpCol3" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="Gear up / down" class="helpCell helpCol0" /><ui:Label text="E / Q" class="helpCell helpCol1" /><ui:Label text="RB / LB" class="helpCell helpCol2" /><ui:Label text="-" class="helpCell helpCol3" /></ui:VisualElement>
-          <ui:Label text="Q / E (or RB / LB) switch an automatic gearbox to manual for this visit (the gear shows M; on the limiter press E or G); G switches and is remembered. On the start screen: the car cards (click, or LEFT / RIGHT), START ENGINE (or Enter), GEARBOX, SLIDING (how easily the tail steps out, 0-3) and PICK A ROUTE ON THE MAP." class="helpText" />
+          <ui:Label text="Q / E (or RB / LB) switch an automatic gearbox to manual for this visit (the gear shows M; on the limiter press E or G); G switches and is remembered. On the start screen: the car cards (click, or LEFT / RIGHT), START ENGINE (or Enter), GEARBOX, SLIDING (how easily the tail steps out, 0-3) and ROUTE MAP." class="helpText" />
           <ui:Label text="CARS" class="helpHead" />
-          <ui:Label text="Pick your car on the start screen: click or tap a card, or LEFT / RIGHT (gamepad d-pad); ESC returns there from a stage. The game remembers the choice, and friends in a room see the car you drive. Each car handles differently: Porsche 911 and 911 Carrera 3.2 (rear engine, light and lively), 911 Turbo (930, fastest on tarmac, the turbo wakes up late), Volvo 240 Turbo (heavy, soft, predictable), MV6 '83 Group B (four-wheel drive, short gears, huge power), Ford Ranger Offroad (heavy 4WD truck on long springs: slow on tarmac, climbs almost anything), Baja Bug (light buggy on big tyres, 100 km/h across open ground), Buggy Type 736 (small, slow and nimble). Every car reaches its real top speed on the road; off the road the road cars stop pulling at 45-50 km/h, the buggies and the Ranger go much faster. Card stats: power, weight, driven wheels, gears." class="helpText" />
+          <ui:Label text="Pick your car on the start screen: click or tap a card, or LEFT / RIGHT (gamepad d-pad); ESC or the MENU button returns there from a stage to change it. The game remembers the choice, and friends in a room see the car you drive. Each car handles differently: Porsche 911 and 911 Carrera 3.2 (rear engine, light and lively), 911 Turbo (930, fastest on tarmac, the turbo wakes up late), Volvo 240 Turbo (heavy, soft, predictable), MV6 '83 Group B (four-wheel drive, short gears, huge power), Ford Ranger Offroad (heavy 4WD truck on long springs: slow on tarmac, climbs almost anything), Baja Bug (light buggy on big tyres, 100 km/h across open ground), Buggy Type 736 (small, slow and nimble). Every car reaches its real top speed on the road; off the road the road cars stop pulling at 45-50 km/h, the buggies and the Ranger go much faster. Card stats: power, weight, driven wheels, gears." class="helpText" />
           <ui:Label text="GAME KEYS" class="helpHead" />
           <ui:VisualElement class="helpRow"><ui:Label text="H or F1" class="helpCell helpKey helpCol0" /><ui:Label text="this help (game paused)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="C" class="helpCell helpKey helpCol0" /><ui:Label text="next camera - 1 overhead, 2 chase, 3 seat" class="helpCell helpKey helpCol1" /></ui:VisualElement>
@@ -96,14 +113,14 @@
           <ui:VisualElement class="helpRow"><ui:Label text="N" class="helpCell helpKey helpCol0" /><ui:Label text="new endless stage from where you are" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="G" class="helpCell helpKey helpCol0" /><ui:Label text="gearbox automatic / manual" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="M" class="helpCell helpKey helpCol0" /><ui:Label text="sound on / off" class="helpCell helpKey helpCol1" /></ui:VisualElement>
-          <ui:VisualElement class="helpRow"><ui:Label text="Esc" class="helpCell helpKey helpCol0" /><ui:Label text="back to the start screen (closes the help or the map first)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="Esc or MENU" class="helpCell helpKey helpCol0" /><ui:Label text="back to the start screen from any point of a stage: change the car, gearbox, sliding, route or room, then START ENGINE restarts the stage (Esc closes the help or the map first)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="MAP button" class="helpCell helpKey helpCol0" /><ui:Label text="pick a route on the map (web build)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
-          <ui:VisualElement class="helpRow"><ui:Label text="F2 or LOG" class="helpCell helpKey helpCol0" /><ui:Label text="log window - collision: lines say what stopped the car" class="helpCell helpKey helpCol1" /></ui:VisualElement>
+          <ui:VisualElement class="helpRow"><ui:Label text="F2 or LOG bar" class="helpCell helpKey helpCol0" /><ui:Label text="log window, minimised to the LOG bar at the top: its progress bar shows how much of the world is loaded (the start area while loading, then everything around the car), the warning count is in red; click it or F2 to open, X to minimise. collision: lines say what stopped the car" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="F10 or F3" class="helpCell helpKey helpCol0" /><ui:Label text="debug window (phones: tap the speed three times)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:Label text="ON SCREEN" class="helpHead" />
           <ui:Label text="Top left: stage time, penalty and distance to the finish. Top right: the pace note for the next turn - arrow, metres to it and its kind (EASY LEFT, HAIRPIN RIGHT ...). Bottom: speed in km/h, gear (R = reverse), rev bar (red near the limiter), the surface under the car (ASPHALT, GRAVEL, OFF ROAD, WATER) and the red damage bar. Off road, and less on gravel, the wheels spin under full power: the revs jump, mud or stones fly and the car pulls a little less - ease the throttle for grip." class="helpText" />
           <ui:Label text="STAGES" class="helpHead" />
-          <ui:Label text="Route stage: on the MAP, search a town or place name in the START and FINISH boxes (or click the map, start then finish); each pin snaps to the nearest road and the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts. Every stage is a link in the address bar you can share." class="helpText" />
+          <ui:Label text="Route stage: on the MAP, search a town or place name in the START and FINISH boxes (or click the map, start then finish); each pin snaps to the nearest road and the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts (rooms go through the internet; phones cannot link over Bluetooth from a web page). Every stage is a link in the address bar you can share." class="helpText" />
           <ui:Label text="DATA" class="helpHead" />
           <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces and road signs Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
           <ui:Label text="CAR MODELS (CC BY 4.0, Sketchfab)" class="helpHead" />

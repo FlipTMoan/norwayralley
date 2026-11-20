@@ -8,6 +8,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
+using UnityEngine.UIElements;
 
 namespace Rally.Tests.Play
 {
@@ -93,6 +94,107 @@ namespace Rally.Tests.Play
                 yield return Tap(kb.f10Key);
                 Assert.AreNotEqual(before, hud.DebugVisible, "F10 toggles the debug window");
             }
+            Assert.IsEmpty(watch.Problems, watch.Summary);
+        }
+
+        /// <summary>
+        /// User 2026-11-20: "User should be able to click ESC to come back to main menu to change cars etc." Esc while driving
+        /// opens the start screen (driving HUD hidden), another car can be chosen there, and START ENGINE drives the same
+        /// stage with it; the MENU button's path (BackToMenu) works from the countdown too.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator EscWhileDrivingOpensTheMenuToChangeTheCar()
+        {
+            using var watch = new LogWatch();
+            yield return Boot();
+            var game = Object.FindAnyObjectByType<GameController>();
+            var hud = Object.FindAnyObjectByType<Rally.UI.HudController>();
+            var hudRoot = hud.GetComponent<UIDocument>().rootVisualElement.Q("hud");
+            Assert.IsTrue(hud.StartScreenVisible && hudRoot.ClassListContains("menu"), "the start screen hides the driving HUD");
+            var car = Object.FindAnyObjectByType<CarController>();
+            var firstKind = car.Kind;
+            var startPos = car.transform.position;
+            bool freeDrive = game.FreeDrive; int notes = game.PaceNoteCount;
+
+            game.StartEngine();
+            float until = Time.realtimeSinceStartup + 6f;
+            while (game.Phase != Phase.Racing && Time.realtimeSinceStartup < until) yield return null;
+            Assert.IsFalse(hud.StartScreenVisible || hudRoot.ClassListContains("menu"), "driving: the HUD is back, the start screen gone");
+            Press(kb.wKey);
+            until = Time.realtimeSinceStartup + 1.5f;
+            while (Time.realtimeSinceStartup < until) yield return null;
+            Release(kb.wKey);
+            Assert.Greater(Vector3.Distance(car.transform.position, startPos), 1f, "drove away");
+
+            yield return Tap(kb.escapeKey);
+            Assert.AreEqual(Phase.Intro, game.Phase, "Esc while racing goes back to the start screen");
+            Assert.IsTrue(hud.StartScreenVisible && hudRoot.ClassListContains("menu"));
+            int index = System.Array.FindIndex(game.CarPrefabs, p => p.GetComponent<CarController>().Kind != firstKind);
+            game.ChooseCar(index);
+            yield return null;
+            var newCar = Object.FindAnyObjectByType<CarController>();
+            Assert.AreNotEqual(firstKind, newCar.Kind, "the car can be changed on the start screen reached by Esc");
+            Assert.Less(Vector3.Distance(newCar.transform.position, startPos), 3f, "on the start line of the same stage");
+            Assert.AreEqual(freeDrive, game.FreeDrive); Assert.AreEqual(notes, game.PaceNoteCount, "same stage");
+
+            game.StartEngine();
+            until = Time.realtimeSinceStartup + 6f;
+            while (game.Phase != Phase.Racing && Time.realtimeSinceStartup < until) yield return null;
+            Assert.AreEqual(Phase.Racing, game.Phase, "START ENGINE restarts the stage");
+            Press(kb.wKey);
+            until = Time.realtimeSinceStartup + 1.5f;
+            while (Time.realtimeSinceStartup < until) yield return null;
+            Release(kb.wKey);
+            Assert.Greater(Vector3.Distance(newCar.transform.position, startPos), 1f, "the new car drives the stage");
+
+            game.Restart();
+            Assert.AreEqual(Phase.Countdown, game.Phase);
+            game.BackToMenu();   // the HUD MENU button
+            Assert.AreEqual(Phase.Intro, game.Phase, "MENU works during the countdown");
+            game.ChooseCar(System.Array.FindIndex(game.CarPrefabs, p => p.GetComponent<CarController>().Kind == firstKind));   // leave the first car for the other tests
+            yield return null;
+            Assert.IsEmpty(watch.Problems, watch.Summary);
+        }
+
+        /// <summary>
+        /// User 2026-11-20: "the log window should be minimized by default", with "a progress bar on the minimized log window".
+        /// The window is closed from the first frame, the LOG bar's progress rises while the start area loads and reads
+        /// WORLD (everything around the car) once the stage can start; F2 opens and closes the full window.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator LogStartsMinimisedWithAProgressBar()
+        {
+            using var watch = new LogWatch();
+            kb = InputSystem.AddDevice<Keyboard>();
+            SceneManager.LoadScene(ScenePath);
+            yield return null;
+            var game = Object.FindAnyObjectByType<GameController>();
+            var log = Object.FindAnyObjectByType<Rally.UI.LogWindow>();
+            Assert.IsNotNull(log, "the HUD has its log window");
+            var root = log.GetComponent<UIDocument>().rootVisualElement;
+            var window = root.Q("logWindow"); var mini = root.Q("logMini"); var bar = root.Q("logProgress");
+            Assert.IsNotNull(mini, "the minimised LOG bar exists"); Assert.IsNotNull(bar, "with a progress bar");
+            Assert.IsFalse(log.IsOpen, "the log starts minimised");
+            Assert.AreEqual(DisplayStyle.None, window.resolvedStyle.display);
+            float lo = 2f, hi = -1f;
+            float until = Time.realtimeSinceStartup + 20f;
+            while (game.Phase != Phase.Intro && Time.realtimeSinceStartup < until)
+            {
+                if (game.Phase == Phase.Loading) { lo = Mathf.Min(lo, log.Progress); hi = Mathf.Max(hi, log.Progress); }
+                Assert.IsFalse(log.IsOpen, "still minimised while the world loads");
+                yield return null;
+            }
+            Assert.AreEqual(Phase.Intro, game.Phase, "the world did not load");
+            Assert.Greater(hi, lo, $"the progress moved while loading ({lo:P0} → {hi:P0})");
+            yield return new WaitForSecondsRealtime(0.4f);
+            var text = root.Q<Label>("logProgressText").text;
+            StringAssert.StartsWith("WORLD", text, "after loading the bar follows the streaming around the car");
+            Assert.AreEqual(DisplayStyle.Flex, mini.resolvedStyle.display, "the LOG bar shows on the start screen");
+            Assert.Greater(bar.resolvedStyle.width, 0f, "the bar is drawn");
+            yield return Tap(kb.f2Key);
+            Assert.IsTrue(log.IsOpen, "F2 opens the window");
+            yield return Tap(kb.f2Key);
+            Assert.IsFalse(log.IsOpen, "F2 minimises it again");
             Assert.IsEmpty(watch.Problems, watch.Summary);
         }
 

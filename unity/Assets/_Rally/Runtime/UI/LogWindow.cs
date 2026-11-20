@@ -10,9 +10,10 @@ namespace Rally.UI
     /// The in-game log window: a scrolling, virtualised list of <see cref="RallyLog"/> lines (3000 kept) with
     /// filter chips for the tile, overlay (OSM roads and features, SR16 forest, signs) and cache traffic, a
     /// FOLLOW mode that sticks to the newest line until the user scrolls up, and COPY to put the visible text on
-    /// the clipboard so it can be pasted into a bug report. F2 or the LOG button toggles it. It is open while
-    /// the world loads and closes itself when the countdown starts, unless the player opened or closed it by hand.
-    /// Elements are named in Hud.uxml (logWindow, logList, logButton, logAll …).
+    /// the clipboard so it can be pasted into a bug report. It starts minimised (user, 2026-11-20): the LOG bar in the
+    /// top row shows a progress bar for world loading (<see cref="SetProgress"/>, fed by the game) and the warnings
+    /// written since the window was last open; a click on the bar or F2 opens the window, X or F2 minimises it.
+    /// Elements are named in Hud.uxml (logWindow, logList, logMini, logProgress, logAll …).
     /// </summary>
     [RequireComponent(typeof(UIDocument))]
     public sealed class LogWindow : MonoBehaviour
@@ -25,12 +26,20 @@ namespace Rally.UI
 
         VisualElement window;
         ListView list;
-        Button toggleButton, followButton;
+        VisualElement mini, progressBar;
+        Label progressText, warnCount;
+        Button followButton;
         readonly Dictionary<Filter, Button> chips = new Dictionary<Filter, Button>();
         readonly List<string> shown = new List<string>(RallyLog.Capacity);
 
         Filter filter = Filter.All;
-        bool follow = true, open = true, userToggled;
+        bool follow = true, open;
+        int newWarnings;
+
+        /// <summary>The world-loading fraction 0..1 last shown on the minimised bar (for tests and tools).</summary>
+        public float Progress { get; private set; }
+        /// <summary>True while the full window is open (it starts minimised).</summary>
+        public bool IsOpen => open;
         int seenVersion = -1;
         float nextRefresh;
 
@@ -39,7 +48,10 @@ namespace Rally.UI
             var root = GetComponent<UIDocument>().rootVisualElement;
             window = root.Q("logWindow");
             list = root.Q<ListView>("logList");
-            toggleButton = root.Q<Button>("logButton");
+            mini = root.Q("logMini");
+            progressBar = root.Q("logProgress");
+            progressText = root.Q<Label>("logProgressText");
+            warnCount = root.Q<Label>("logWarnCount");
             followButton = root.Q<Button>("logFollow");
             if (window == null || list == null) { enabled = false; return; }
 
@@ -53,17 +65,40 @@ namespace Rally.UI
 
             var scroller = list.Q<ScrollView>()?.verticalScroller;
             if (scroller != null)
-                scroller.valueChanged += v => { if (!settingScroll) SetFollow(v >= scroller.highValue - FollowSlack, false); };
+                scroller.valueChanged += v => { if (!settingScroll) SetFollow(v >= scroller.highValue - FollowSlack); };
 
             Chip("logAll", Filter.All); Chip("logTiles", Filter.Tiles); Chip("logOverlays", Filter.Overlays);
             Chip("logCache", Filter.Cache); Chip("logWarn", Filter.Warnings);
-            followButton?.RegisterCallback<ClickEvent>(_ => { SetFollow(!follow, true); if (follow) ScrollToEnd(); });
+            followButton?.RegisterCallback<ClickEvent>(_ => { SetFollow(!follow); if (follow) ScrollToEnd(); });
             root.Q<Button>("logCopy")?.RegisterCallback<ClickEvent>(_ => Copy());
-            root.Q<Button>("logClose")?.RegisterCallback<ClickEvent>(_ => Toggle(true));
-            toggleButton?.RegisterCallback<ClickEvent>(_ => Toggle(true));
+            root.Q<Button>("logClose")?.RegisterCallback<ClickEvent>(_ => Toggle());
+            mini?.RegisterCallback<ClickEvent>(_ => Toggle());
+            RallyLog.Written += OnWritten;
 
             Mark();
-            SetOpen(true);
+            SetOpen(false);
+        }
+
+        void OnDisable() => RallyLog.Written -= OnWritten;
+
+        /// <summary>Warnings and errors written while the window is minimised are counted on the bar.</summary>
+        void OnWritten(string line)
+        {
+            if (open || line.Length <= 14 || (line[13] != 'W' && line[13] != 'E')) return;
+            newWarnings++;
+            if (warnCount != null) warnCount.text = newWarnings == 1 ? "1 WARNING" : newWarnings + " WARNINGS";
+        }
+
+        /// <summary>The minimised bar: world loading <paramref name="fraction"/> 0..1 and a short text ("START AREA 60 % · terrain 3/5 …").</summary>
+        public void SetProgress(float fraction, string text)
+        {
+            Progress = Mathf.Clamp01(fraction);
+            if (progressBar != null)
+            {
+                progressBar.style.width = Length.Percent(Progress * 100f);
+                progressBar.EnableInClassList("done", Progress >= 1f);
+            }
+            if (progressText != null) progressText.text = text ?? "";
         }
 
         bool settingScroll;
@@ -83,31 +118,27 @@ namespace Rally.UI
 
         void Update()
         {
-            if (Keyboard.current != null && Keyboard.current.f2Key.wasPressedThisFrame) Toggle(true);
+            if (Keyboard.current != null && Keyboard.current.f2Key.wasPressedThisFrame) Toggle();
             if (!open || Time.unscaledTime < nextRefresh) return;
             nextRefresh = Time.unscaledTime + RefreshSeconds;
             Refresh();
         }
 
-        /// <summary>Open or close; `byHand` stops the automatic close at the countdown.</summary>
-        public void Toggle(bool byHand) { if (byHand) userToggled = true; SetOpen(!open); }
-
-        /// <summary>Called by the game when the countdown starts: closes the window unless the player took control of it.</summary>
-        public void AutoHide() { if (!userToggled) SetOpen(false); }
+        /// <summary>Open the full window, or minimise it to the LOG bar.</summary>
+        public void Toggle() => SetOpen(!open);
 
         void SetOpen(bool value)
         {
             open = value;
             window.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
-            toggleButton?.EnableInClassList("on", value);
-            if (value) { seenVersion = -1; Refresh(); }
+            mini?.EnableInClassList("on", value);
+            if (value) { seenVersion = -1; Refresh(); newWarnings = 0; if (warnCount != null) warnCount.text = ""; }
         }
 
-        void SetFollow(bool value, bool byButton)
+        void SetFollow(bool value)
         {
             follow = value;
             followButton?.EnableInClassList("on", follow);
-            if (byButton) userToggled = true;
         }
 
         void Refresh()

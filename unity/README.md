@@ -1,8 +1,15 @@
-# Retro Norway Rally — Unity 6 web build
+# Grand Tour Norway — Unity 6 web build
 
-_Updated 2026-11-20 (wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
+_Updated 2026-11-20 (renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
 
-The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` and is still what
+The Unity rewrite of the browser game, named **Grand Tour Norway** since 2026-11-20 (the JS game keeps the name Retro
+Norway Rally). The rename touched only what the player sees (`productName`, page and start-screen title, the loader,
+debug window): C# namespaces `Rally.*`, the `_Rally` folder, the repo URL, room ids and the browser keys stay, so saved
+settings (localStorage `rally.*`) and the tile cache (IndexedDB `rally-cache`) survive it. Unity's own `PlayerPrefs` /
+`persistentDataPath` do depend on the product name, but the web game uses neither; in the editor the file cache moves to
+`~/.config/unity3d/Filip Tobias Moan/Grand Tour Norway/rally-cache` (copy the old folder over to keep it).
+
+The JS original lives in `../legacy-js/` and is still what
 `npm run build` deploys to GitHub Pages; the Unity build is served next to it at
 `/norwayralley/unity/`.
 
@@ -180,7 +187,9 @@ request. The car can hit the posts. Code: `Runtime/World/Signs` (catalog, painte
 
 The start screen shows a card per car (picture, power, weight, driven wheels, gears): click or tap one, or press
 `←` / `→` (gamepad d-pad). The choice is kept in localStorage `rally.car` (the JS game's key; `porsche` is shared) and
-sent to the room, so friends see the right car. It can only change on the start screen (`Esc` from a stage).
+sent to the room, so friends see the right car. It can only change on the start screen: `Esc` or the HUD's **MENU**
+button goes there from any point of a stage (countdown, racing, finished; route, endless or free drive), where the car,
+gearbox, sliding, route and room can be changed; START ENGINE then restarts the same stage with the chosen car.
 
 | Car | Game hp | kg | Drive | Gears | Character | Model (CC BY 4.0) |
 |---|---|---|---|---|---|---|
@@ -220,7 +229,12 @@ line, run `BuildSceneAndPictures`, copy the logged geometry into the spec and ch
 
 ## Log window
 
-Press **F2** (or the LOG button next to the clock) in the game to open the scrolling log: tile requests and
+The log starts minimised to the **LOG bar** in the top row (next to MENU / MAP / ?; top-left on the start screen). Its
+progress bar shows how much of the world is in: while loading only the start area (the coarse tiles within 1 km of
+the start, ground and graded roads — what the game waits for, so it is full when the stage can start), afterwards
+every tile the stream wants around the car (`GameController.CountStreaming` / `StreamFraction`), with a short text
+(`WORLD 85% · terrain 37/41 · roads 30/37 · 2 fetching · 3 queued`) and the warnings written since the window was last
+open in red. Click the bar or press **F2** to open the scrolling log (X or F2 minimises it): tile requests and
 readiness, OSM road/feature counts, SR16 forest rasters, trees placed and cache hits and misses, with filter chips,
 FOLLOW (stick to the newest line) and COPY (visible lines to the clipboard). The same lines go to the browser
 console with a `[rally]` prefix. Source: `Runtime/UI/LogWindow.cs`, `Runtime/Core/RallyLog.cs`.
@@ -230,7 +244,7 @@ handbrake, with the surface, water, ground and contact at that moment (`Runtime/
 
 ## Help screen
 
-`H`, `F1`, the **? HELP** button on the start screen or the **?** button next to LOG / MAP open an overlay
+`H`, `F1`, the **? HELP** button on the start screen or the **?** button next to MENU / MAP open an overlay
 (`Hud.uxml` `helpOverlay`, `HudController.HelpVisible`) with the goal, the keyboard / gamepad / touch controls,
 the game keys, what the HUD shows, the stage types and the data credits. It pauses the game (time scale 0, sound
 paused) and gives everything back when closed with `H`, `F1`, `Esc` or CLOSE; with a friends room open it only
@@ -254,12 +268,19 @@ overlays. Keep it in step with the controls table below.
 | `M` | Mute |
 | `H` / `F1` | Help screen (controls, HUD, stage types, data credits); pauses the game unless a friends room is open |
 | `F10` / `F3` | Debug window (phone: three quick taps on the speed) |
-| `F2` | Log window |
-| `Esc` | Close the help screen or the route map, or back to the start screen |
+| `F2` | Log window (open / minimise to the LOG bar) |
+| `Esc` | Close the help screen or the route map, or back to the start screen (also the **MENU** button) |
 | `Enter` | Start the engine |
 | `←` / `→` (start screen) | Choose the car (gamepad: d-pad) |
 
-Mouse and touch: the **MAP** button (and PICK A ROUTE ON THE MAP on the start screen) opens the Leaflet route
+The start screen is one centred column (title, car cards, START ENGINE with the status line under it, one row of
+options, a short keys line, DRIVE WITH FRIENDS, then the cache line and the credits); it scrolls when it does not fit,
+and the driving HUD is hidden under it. The UI panel scales with the screen matched half by width and half by height
+(`RallyPanel`, `match` 0.5), so a phone in portrait is not shrunk to a 1280-wide layout; below 900 panel units the HUD
+buttons move under the clock and the cards wrap 4 + 4 (`.narrow`). The page's own credits footer shows only while the
+page loads.
+
+Mouse and touch: **MENU** (top row) goes back to the start screen; the **MAP** button (and ROUTE MAP on the start screen) opens the Leaflet route
 map in the web build. Type a town or place name in the START or FINISH box (Kartverket's place-name register; towns
 and villages first, shown as "Hovden — tettsted, Bykle"; ↑ ↓ Enter Esc) or click the map (start, then finish);
 pins snap to the nearest road of the chosen profile within 1 km, GENERATE ROUTE and

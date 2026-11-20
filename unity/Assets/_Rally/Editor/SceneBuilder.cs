@@ -70,7 +70,7 @@ namespace Rally.Editor
         static void ApplyProjectSettings()
         {
             PlayerSettings.companyName = "Filip Tobias Moan";
-            PlayerSettings.productName = "Retro Norway Rally";
+            PlayerSettings.productName = "Grand Tour Norway";
             PlayerSettings.colorSpace = ColorSpace.Linear;
             // activeInputHandler: 0 = legacy Input Manager, 1 = Input System package, 2 = both. There is no public API;
             // the serialized field on ProjectSettings.asset is what the Player Settings UI writes. Takes effect on the
@@ -172,7 +172,7 @@ namespace Rally.Editor
             return profile;
         }
 
-        /// <summary>UI Toolkit panel: 1280×720 "scale with screen size" (the JS HUD was laid out for that), default runtime theme.</summary>
+        /// <summary>UI Toolkit panel: 1280×720 "scale with screen size" (the JS HUD was laid out for that), matched half by width and half by height, default runtime theme.</summary>
         static PanelSettings CreatePanelSettings()
         {
             string tssPath = SettingsDir + "/UnityDefaultRuntimeTheme.tss", path = SettingsDir + "/RallyPanel.asset";
@@ -181,6 +181,7 @@ namespace Rally.Editor
             if (panel == null) { panel = ScriptableObject.CreateInstance<PanelSettings>(); AssetDatabase.CreateAsset(panel, path); }
             panel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
             panel.referenceResolution = new Vector2Int(1280, 720);
+            panel.match = 0.5f;   // width and height alike: a phone in portrait is not shrunk to a 1280-wide panel (2026-11-20)
             panel.themeStyleSheet = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(tssPath);
             EditorUtility.SetDirty(panel);
             return panel;

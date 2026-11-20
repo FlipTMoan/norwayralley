@@ -21,9 +21,12 @@ namespace Rally.UI
         public event System.Action StartClicked, HostClicked;
         /// <summary>GEARBOX, SLIDING, the route map (start screen and the MAP button), cache CLEAR, and three quick taps on the speed (debug on phones).</summary>
         public event System.Action GearboxClicked, SlideClicked, MapClicked, CacheClearClicked, DebugTapped;
+        /// <summary>The HUD's MENU button (Esc on a keyboard): back to the start screen.</summary>
+        public event System.Action MenuClicked;
         Button gearboxBtn, slideBtn;
         Label cacheInfo, debugPanel, helpLine;
-        VisualElement touchControls;
+        VisualElement touchControls, hud, startControls;
+        bool menu;
         readonly float[] speedTaps = new float[3];
         int tapIndex;
         public event System.Action<string> JoinClicked;
@@ -48,6 +51,11 @@ namespace Rally.UI
             slideBtn?.RegisterCallback<ClickEvent>(_ => SlideClicked?.Invoke());
             root.Q<Button>("mapBtn")?.RegisterCallback<ClickEvent>(_ => MapClicked?.Invoke());
             root.Q<Button>("mapButton")?.RegisterCallback<ClickEvent>(_ => MapClicked?.Invoke());
+            root.Q<Button>("menuButton")?.RegisterCallback<ClickEvent>(_ => MenuClicked?.Invoke());
+            hud = root.Q("hud"); startControls = root.Q("startControls");
+            // The start column is at least as tall as the view: centred when it fits, scrolls when it does not (phones).
+            var scroll = root.Q<ScrollView>("startScroll"); var column = root.Q("startColumn");
+            scroll?.contentViewport.RegisterCallback<GeometryChangedEvent>(e => column.style.minHeight = e.newRect.height);
             root.Q<Button>("cacheClear")?.RegisterCallback<ClickEvent>(_ => CacheClearClicked?.Invoke());
             helpOverlay = root.Q("helpOverlay");
             root.Q<Button>("helpButton")?.RegisterCallback<ClickEvent>(_ => HelpVisible = !HelpVisible);
@@ -67,6 +75,7 @@ namespace Rally.UI
                 if (Time.unscaledTime - speedTaps[tapIndex] < 0.9f) { DebugTapped?.Invoke(); System.Array.Clear(speedTaps, 0, 3); }
             });
             if (speed != null) speed.pickingMode = PickingMode.Position;
+            ShowStartScreen(true);   // the UXML opens on the start screen; the game's first phase (Loading) keeps it
         }
 
         /// <summary>One car on the start-screen chooser.</summary>
@@ -101,14 +110,22 @@ namespace Rally.UI
 
         public void SelectCar(int index) { for (int i = 0; i < carCards.Count; i++) carCards[i].EnableInClassList("selected", i == index); }
 
-        /// <summary>Show or hide the start screen; `info` is the loading/stage line under the title.</summary>
-        public void ShowStartScreen(bool visible, string info = null)
+        /// <summary>
+        /// Show or hide the start screen. While it is up the driving HUD (clock, pace note, speed, status line, MENU / MAP / ?)
+        /// is hidden (.menu on the HUD root) and the status line moves into the start column under START ENGINE.
+        /// </summary>
+        public void ShowStartScreen(bool visible)
         {
             if (startScreen == null) return;
             startScreen.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            menu = visible;
+            hud?.EnableInClassList("menu", visible);
+            if (visible) turnBox.style.display = DisplayStyle.None;
             SetRacingHud(!visible);
-            if (info != null && startInfo != null) startInfo.text = info;
         }
+
+        /// <summary>True while the start screen is up.</summary>
+        public bool StartScreenVisible => menu;
 
         /// <summary>A held touch button: pressed while the pointer is down on it, released on up, leave or cancel.</summary>
         void Touch(string name, System.Action<bool> set)
@@ -128,7 +145,10 @@ namespace Rally.UI
             // index.html: touch controls appear on phones and narrow screens; the help line is for keyboards.
             bool touch = UnityEngine.InputSystem.Touchscreen.current != null || Screen.width < 900;
             if (touchControls != null) touchControls.style.display = touch && racingHud ? DisplayStyle.Flex : DisplayStyle.None;
-            if (helpLine != null) helpLine.style.display = touch ? DisplayStyle.None : DisplayStyle.Flex;
+            if (helpLine != null) helpLine.style.display = touch || menu ? DisplayStyle.None : DisplayStyle.Flex;
+            if (startControls != null) startControls.style.display = touch ? DisplayStyle.None : DisplayStyle.Flex;
+            // Phones in portrait (the panel scales with the screen, see RallyPanel): buttons under the clock, cards 4 + 4.
+            if (hud != null && !float.IsNaN(root.layout.width)) hud.EnableInClassList("narrow", root.layout.width < 900f);
         }
 
         bool racingHud = true;
@@ -189,7 +209,7 @@ namespace Rally.UI
             rpmBar.EnableInClassList("redline", f.Rpm > f.Redline * 0.92f);
             clock.text = Clock(f.StageTime + f.PenaltyTime);
             penalty.text = f.PenaltyTime > 0 ? $"+{f.PenaltyTime:0}s" : "";
-            bool note = !string.IsNullOrEmpty(f.NoteKind);
+            bool note = !string.IsNullOrEmpty(f.NoteKind) && !menu;
             turnBox.style.display = note ? DisplayStyle.Flex : DisplayStyle.None;
             if (note)
             {
@@ -200,7 +220,8 @@ namespace Rally.UI
             surface.text = f.Surface;
             distLeft.text = f.DistanceLeft > 0 ? $"{f.DistanceLeft / 1000f:0.00} km" : "";
             damageBar.style.width = Length.Percent(f.Damage * 100f);
-            status.text = f.Status ?? "";
+            if (menu) { if (startInfo != null) startInfo.text = f.Status ?? ""; }
+            else status.text = f.Status ?? "";
         }
 
         public static string Clock(float t)

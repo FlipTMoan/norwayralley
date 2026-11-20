@@ -22,24 +22,49 @@
 .damageBar { height: 100%; width: 0%; background-color: rgb(255, 60, 40); }
 .status { position: absolute; bottom: 60px; left: 0; right: 0; -unity-text-align: middle-center; font-size: 14px; color: rgb(255, 255, 255); }
 
-/* Start screen (index.html #start) and the friends panel (index.html #friends). */
-.startScreen { position: absolute; left: 0; top: 0; right: 0; bottom: 0; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 0.55); }
-.title { font-size: 40px; color: rgb(255, 196, 64); margin-bottom: 16px; }
-.startInfo { font-size: 12px; color: rgb(255, 255, 255); margin-bottom: 20px; }
-.bigButton { font-size: 22px; padding: 14px 32px; background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); border-width: 0; border-radius: 6px; }
-.friends { margin-top: 28px; padding: 14px 18px; background-color: rgba(0, 0, 0, 0.5); border-radius: 8px; align-items: center; width: 420px; }
-.friendsTitle { font-size: 12px; color: rgb(255, 196, 64); margin-bottom: 10px; }
-.smallButton { font-size: 12px; padding: 8px 14px; background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); border-width: 0; border-radius: 4px; margin: 4px; }
+/* Start screen (tidied 2026-11-20): one centred column in a ScrollView (HudController sets the column's min-height to the
+   viewport so it centres when it fits and scrolls when it does not). .menu on the root hides the driving HUD under it. */
+.startScreen { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.62); }
+.startScroll { flex-grow: 1; }
+.startColumn { align-items: center; justify-content: center; padding: 44px 16px 8px 16px; }
+.logo { align-items: center; margin-bottom: 14px; }
+.title { font-size: 46px; color: rgb(255, 196, 64); -unity-font-style: bold; letter-spacing: 4px; margin: 0; padding: 0; }
+.titleSub { font-size: 15px; color: rgb(255, 255, 255); letter-spacing: 12px; margin: -2px 0 0 12px; padding: 0; }
+.startInfo { font-size: 12px; color: rgb(255, 255, 255); margin-top: 8px; min-height: 16px; white-space: normal; -unity-text-align: middle-center; max-width: 760px; }
+.bigButton { font-size: 22px; padding: 12px 36px; margin: 0; background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); border-width: 0; border-radius: 6px; }
+.friends { margin-top: 14px; padding: 8px 14px; background-color: rgba(0, 0, 0, 0.5); border-radius: 8px; align-items: center; }
+.friendsTitle { font-size: 11px; color: rgb(255, 196, 64); margin-bottom: 4px; }
+.friendsRow { flex-wrap: wrap; justify-content: center; }
+.friendsOr { font-size: 10px; color: rgb(200, 200, 200); margin: 0 4px; }
+.smallButton { font-size: 12px; padding: 7px 14px; background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); border-width: 0; border-radius: 4px; margin: 4px; }
+.tinyButton { font-size: 9px; padding: 2px 8px; margin: 0; background-color: rgba(0, 0, 0, 0); color: rgb(255, 196, 64); border-width: 1px; border-color: rgba(255, 196, 64, 0.6); border-radius: 3px; }
 .row { flex-direction: row; align-items: center; }
-.roomCode { width: 120px; font-size: 16px; }
-.roomStatus { font-size: 11px; color: rgb(255, 255, 255); margin-top: 6px; }
-.hint { font-size: 9px; color: rgb(200, 200, 200); margin-top: 8px; white-space: normal; -unity-text-align: middle-center; }
-.credits { position: absolute; bottom: 10px; font-size: 8px; color: rgb(200, 200, 200); white-space: normal; -unity-text-align: middle-center; padding: 0 24px; }
+.roomCode { width: 110px; font-size: 16px; }
+.roomStatus { font-size: 11px; color: rgb(255, 255, 255); margin-top: 2px; }
+.startFooter { margin-top: 14px; align-items: center; max-width: 900px; }
+.credits { font-size: 8px; color: rgb(170, 170, 170); white-space: normal; -unity-text-align: middle-center; margin-top: 4px; }
 
 /* In-game log window (LogWindow.cs): F2 or the LOG button. Drawn after the start screen so it stays on top. */
-.logButton { position: absolute; top: 12px; left: 230px; font-size: 10px; padding: 4px 10px; background-color: rgba(0, 0, 0, 0.55); color: rgb(255, 196, 64); border-width: 1px; border-color: rgb(255, 196, 64); border-radius: 4px; }
+/* Top buttons (MENU, MAP, ?) and the minimised log bar in one row; under the clock on narrow screens, top-left on the start screen. */
+.hudButtons { position: absolute; top: 12px; left: 230px; flex-direction: row; align-items: center; }
+.narrow .hudButtons { top: 50px; left: 12px; right: 12px; }
+.menu .hudButtons { top: 12px; left: 12px; }
+.menu .drivingHud { display: none; }
+.logButton { font-size: 10px; padding: 4px 10px; margin: 0 6px 0 0; background-color: rgba(0, 0, 0, 0.55); color: rgb(255, 196, 64); border-width: 1px; border-color: rgb(255, 196, 64); border-radius: 4px; }
 .logButton.on { background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); }
-.logWindow { position: absolute; left: 12px; top: 52px; width: 66%; max-width: 980px; height: 52%; background-color: rgba(8, 10, 14, 0.88); border-width: 1px; border-color: rgba(255, 196, 64, 0.6); border-radius: 6px; padding: 6px; }
+.logWindow { position: absolute; left: 12px; top: 44px; width: 66%; max-width: 980px; height: 52%; background-color: rgba(8, 10, 14, 0.88); border-width: 1px; border-color: rgba(255, 196, 64, 0.6); border-radius: 6px; padding: 6px; }
+.narrow .logWindow { top: 82px; right: 12px; width: auto; }
+.menu .logWindow { top: 44px; }
+/* Minimised log (LogWindow.cs): LOG, a world-loading progress bar with a short text, the warning count. Click or F2 opens. */
+.logMini { flex-direction: row; align-items: center; flex-shrink: 1; min-width: 0; overflow: hidden; height: 22px; padding: 0 8px; background-color: rgba(0, 0, 0, 0.55); border-width: 1px; border-color: rgba(255, 196, 64, 0.6); border-radius: 4px; }
+.logMini:hover { border-color: rgb(255, 196, 64); }
+.logMini.on { background-color: rgba(60, 45, 10, 0.85); border-color: rgb(255, 196, 64); }
+.logMiniTitle { font-size: 10px; color: rgb(255, 196, 64); margin: 0 6px 0 0; padding: 0; -unity-text-align: middle-left; }
+.logTrack { flex-shrink: 0; width: 90px; height: 6px; background-color: rgba(255, 255, 255, 0.15); border-radius: 3px; overflow: hidden; }
+.logProgress { height: 100%; width: 0%; background-color: rgb(255, 196, 64); }
+.logProgress.done { background-color: rgb(120, 200, 120); }
+.logMiniText { font-size: 9px; color: rgb(220, 220, 220); margin: 0 0 0 6px; padding: 0; -unity-text-align: middle-left; flex-shrink: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.logMiniWarn { flex-shrink: 0; font-size: 9px; color: rgb(255, 90, 70); margin: 0 0 0 6px; padding: 0; -unity-text-align: middle-left; }
 .logBar { flex-direction: row; align-items: center; margin-bottom: 4px; flex-shrink: 0; }
 .logTitle { font-size: 11px; color: rgb(255, 196, 64); margin-right: 10px; }
 .logSpacer { flex-grow: 1; }
@@ -54,19 +79,21 @@
 .logLine.err { color: rgb(255, 90, 70); }
 
 /* Start-screen options, controls list, cache line (index.html .start-options / .start-controls / .start-cache). */
-.startOptions { margin-top: 14px; }
+.startOptions { margin-top: 8px; flex-wrap: wrap; justify-content: center; }
 /* Car chooser on the start screen (HudController.SetCars): one card per car, the chosen one outlined. */
-.carCards { flex-direction: row; flex-wrap: wrap; justify-content: center; max-width: 1000px; margin-bottom: 4px; }
+.carCards { flex-direction: row; flex-wrap: wrap; justify-content: center; max-width: 1000px; }
+.narrow .carCards { max-width: 440px; }
+.narrow .carCard { width: 104px; }
+.narrow .carPicture { width: 96px; height: 53px; }
 .carCard { width: 112px; margin: 2px; padding: 3px; background-color: rgba(0, 0, 0, 0.55); border-width: 2px; border-color: rgba(255, 196, 64, 0.25); border-radius: 6px; align-items: center; }
 .carCard:hover { border-color: rgba(255, 196, 64, 0.6); }
 .carCard.selected { border-color: rgb(255, 196, 64); background-color: rgba(60, 45, 10, 0.75); }
 .carPicture { width: 104px; height: 58px; -unity-background-scale-mode: scale-to-fit; border-radius: 3px; }
 .carName { font-size: 10px; color: rgb(255, 196, 64); margin-top: 3px; -unity-text-align: middle-center; white-space: normal; }
 .carStats { font-size: 8px; color: rgb(220, 220, 220); -unity-text-align: middle-center; white-space: normal; }
-.carHint { font-size: 9px; color: rgb(200, 200, 200); margin-bottom: 12px; }
+.carHint { font-size: 10px; color: rgb(200, 200, 200); margin: 4px 0 12px 0; }
 .toggleButton { font-size: 11px; padding: 7px 12px; margin: 3px; background-color: rgba(0, 0, 0, 0.55); color: rgb(255, 196, 64); border-width: 1px; border-color: rgb(255, 196, 64); border-radius: 4px; }
-.startControls { font-size: 9px; color: rgb(220, 220, 220); margin-top: 12px; white-space: normal; -unity-text-align: middle-center; max-width: 760px; }
-.cacheRow { margin-top: 10px; }
+.startControls { font-size: 10px; color: rgb(220, 220, 220); margin-top: 8px; white-space: normal; -unity-text-align: middle-center; max-width: 760px; }
 .cacheInfo { font-size: 9px; color: rgb(200, 200, 200); margin-right: 6px; }
 /* Debug panel (F10 / F3, or three quick taps on the speed): main.js debug window. */
 .debugPanel { position: absolute; right: 12px; top: 120px; width: 340px; padding: 8px 10px; font-size: 10px; color: rgb(210, 230, 210); background-color: rgba(8, 10, 14, 0.85); border-radius: 6px; white-space: normal; display: none; }
@@ -76,9 +103,8 @@
 .touchSide { flex-direction: row; }
 .touchButton { width: 84px; height: 84px; margin: 6px; font-size: 16px; background-color: rgba(0, 0, 0, 0.45); color: rgb(255, 196, 64); border-width: 2px; border-color: rgba(255, 196, 64, 0.7); border-radius: 42px; }
 .touchButton.held { background-color: rgba(255, 196, 64, 0.55); color: rgb(20, 20, 20); }
-.mapButton { left: 290px; }
 /* Help screen (H / F1, the ? buttons): over everything, scrolls on small screens; touch-sized buttons. */
-.helpButton { left: 350px; min-width: 34px; -unity-text-align: middle-center; }
+.helpButton { min-width: 34px; -unity-text-align: middle-center; }
 .helpOverlay { position: absolute; left: 0; top: 0; right: 0; bottom: 0; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 0.6); display: none; }
 .helpPanel { width: 92%; max-width: 860px; max-height: 90%; padding: 10px 14px; background-color: rgba(8, 10, 14, 0.94); border-width: 1px; border-color: rgba(255, 196, 64, 0.7); border-radius: 6px; }
 .helpBar { flex-direction: row; align-items: center; flex-shrink: 0; margin-bottom: 6px; }

@@ -206,3 +206,14 @@
   job run to the end first. Measure time-to-ready of the start tile, not only frame times.
 - A cache entry replaced for one consumer (a way graded again) must invalidate everything cut from the old entry; a test
   that permutes arrival orders (6 orders, compare the final world) found the 20 m seam that one-order tests never saw.
+
+## 2026-11-20 — start screen / rename: waiting loops and Chrome window sizes
+- `until ! pgrep -f "BuildDevFromMenu"; do sleep 3; done` never ends: pgrep -f matches the waiting shell's own command
+  line. Wait on the Unity command itself (run it with run_in_background and take its notification), or match a pattern
+  the waiter does not contain (`pgrep -f "Unity.*-executeMethod"` from a script file).
+- The automation Chrome window was maximised on a 4K screen (DPR 2.5): `resize_window` changed nothing and every
+  "1280×720" shot was really 1536×807. Check `innerWidth` after resizing; for exact sizes load the page in an iframe of
+  that CSS size (scaled to fit) from a same-origin harness, which also keeps the iframe's DOM reachable from JS.
+- "Esc doesn't work" was not reproducible in the build; before changing input code, test the real build with trusted
+  key events and different focus states, then fix what the test shows (no touch counterpart, missing hint) instead of
+  rewriting the key path.

@@ -1,8 +1,31 @@
 # Changes
 
-_Updated 2026-11-20 (tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-20 (Unity game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: "Grand Tour Norway", a tidy start screen, the log minimised with a progress bar, Esc / MENU back to it
+- **Renamed** the Unity game to Grand Tour Norway (productName, page title, loader, start-screen logo "GRAND TOUR" /
+  "N O R W A Y", debug window, docs). The JS game in legacy-js keeps its name. Kept on purpose: namespaces `Rally.*`,
+  `_Rally`, repo URL, room ids, localStorage `rally.*` and IndexedDB `rally-cache` — the web game uses no Unity
+  PlayerPrefs / persistentDataPath, so saved car, settings and the tile cache survive the rename.
+- **Start screen**: one centred column (title, cards, START ENGINE, status line under it, one options row, a short keys
+  line, a compact DRIVE WITH FRIENDS row, cache + credits in one small footer) that scrolls when it does not fit. The
+  driving HUD (clock, speed, gear, OFF ROAD, status line, MENU / MAP / ?) is hidden under it; the status line no longer
+  overlaps the friends hint, the cache row no longer overlaps the credits, credits show once (the page footer only while
+  the page loads). The UI panel now scales with width and height alike (`RallyPanel.match` 0.5): on a 390×844 phone the
+  HUD was drawn at 0.3× (1280-wide panel), now ~0.6×, with the buttons under the clock and the cards 4 + 4.
+- **Log minimised by default** (also while loading): a LOG bar in the top row with a progress bar — the start area while
+  loading (full when the stage can start), then every tile streaming around the car — a short text
+  ("WORLD 85% · terrain 37/41 · roads 30/37 · 2 fetching · 3 queued") and new warnings in red. Click or F2 opens the
+  window, X or F2 minimises it. The tile numbers left the start-screen status line.
+- **Esc / MENU**: a MENU button on the HUD (works on touch) next to MAP and ?; Esc and MENU go back to the start screen
+  from the countdown, racing and finished (route, endless, free drive), closing an open map or help first. There the car,
+  gearbox, sliding, route and room can be changed and START ENGINE restarts the same stage with the chosen car. Esc did
+  work in the web build when tested (any page focus, after mouse clicks, after the room-code field); it had no visible
+  counterpart on touch screens and no hint beyond the long keys line. Going back to the menu now plans the stage's
+  animals and people again like R does (an endless stage had none after Esc), and Enter typed in the room-code field no
+  longer starts the engine.
 
 ### Unity: no steps between tiles, and the landscape streams in without lags
 - **Shared edges** (`TileWorld.Stitch`): every tile's DTM is its own Kartverket request, and neighbours disagreed on their

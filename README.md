@@ -10,7 +10,7 @@ real-road routing through OSRM from a map you open by clicking the minimap.
 
 - `legacy-js/` — the live Three.js game (this README describes it). All
   `npm` commands below run inside that folder.
-- `unity/` — the Unity 6 / WebAssembly rewrite in progress (GPU clipmap
+- `unity/` — **Grand Tour Norway**, the Unity 6 / WebAssembly rewrite in progress (GPU clipmap
   terrain, compute carving, URP, WebGPU-first, PhysX collisions, damage,
   animals and pedestrians, endless stages). All layers are written but not
   yet compiled: open `unity/` in Unity 6000.6 and follow `unity/README.md`,
