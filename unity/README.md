@@ -1,6 +1,6 @@
 # Retro Norway Rally — Unity 6 web build
 
-_Updated 2026-11-19 (real road signs; help screen, collision log lines, exhaust)._
+_Updated 2026-11-20 (car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game. The JS original lives in `../legacy-js/` and is still what
 `npm run build` deploys to GitHub Pages; the Unity build is served next to it at
@@ -176,6 +176,42 @@ request. The car can hit the posts. Code: `Runtime/World/Signs` (catalog, painte
 [README-world.md](README-world.md#road-signs-2026-11-19). Check the designs: menu **Rally → Sign faces sheet** (or
 `-executeMethod Rally.Editor.SignFacesSheet.Run -signSheet out.png`, works headless).
 
+## Cars
+
+The start screen shows a card per car (picture, power, weight, driven wheels, gears): click or tap one, or press
+`←` / `→` (gamepad d-pad). The choice is kept in localStorage `rally.car` (the JS game's key; `porsche` is shared) and
+sent to the room, so friends see the right car. It can only change on the start screen (`Esc` from a stage).
+
+| Car | Game hp | kg | Drive | Gears | Character | Model (CC BY 4.0) |
+|---|---|---|---|---|---|---|
+| Porsche 911 | 300 | 1180 | RWD | 5 | the original | WoTiger (Philipp Busse) |
+| 911 Carrera 3.2 | 365 | 1210 | RWD | 5 | a touch more grip on tarmac | cepela |
+| 911 Turbo (930) | 473 | 1300 | RWD | 4 | fastest, turbo lag 1.2 s | Lexyc16, improved by Wolf Hal |
+| Volvo 240 Turbo | 245 | 1300 | RWD | 5 | soft, front-engined, small turbo | Libau Media |
+| MV6 '83 Group B | 563 | 1050 | 4WD | 5 | short gears, planted on gravel | Daniel Zhabotinsky |
+| Ford Ranger Offroad | 316 | 2100 | 4WD | 6 | long travel, 1 m tyres, climbs 60° | CursedCrown |
+| Baja Bug | 236 | 850 | RWD | 5 | the buggy: 0.77 m tyres, long travel, 100 km/h off road | duanesmind ("Off Road 4X4 racer") |
+| Buggy Type 736 | 94 | 700 | RWD | 4 | Skoda 736 beach buggy: small and slow, 125 km/h | Andre_rmntc |
+
+Top speed on flat asphalt is the real car's (`CarSpec.TopSpeed`: 225 / 245 / 260 / 195 / 210 / 175 / 160 / 125 km/h):
+`CarSpec.Aero` scales the air drag per car so full power balances it there (car.js's one drag for every car held the
+911 to ~175 km/h). Off the road each car has its own limit (`CarSpec.OffroadMax`: 911s 45–50 km/h as in car.js, Volvo
+50, MV6 75, 736 70, Ranger 90, Baja Bug 100). A car on any drawn road counts as on the road, not only within the
+one-lane stage line (see CHANGES: that was the 50 km/h bug). A Q/E press switches the gearbox to manual for the visit only;
+the gear then reads e.g. `3 M`, and a manual box on the limiter for 1.5 s says how to shift up.
+
+Engines are the real car's power × 1.58, the arcade factor the original 911 already had. The prefabs come from
+`Editor/CarGarageBuilder.cs` (**Rally → Build Car Prefabs**, or `-executeMethod Rally.Editor.CarGarageBuilder.Build`;
+`BuildSceneAndPictures` with a display also rebuilds the scene and the card pictures, `-carShots DIR` writes side / top /
+front / rear views for checking). It scales each FBX to the real car's length, turns it nose-forward, hangs the wheels
+(splitting a mesh that holds all four), bakes the paint panels into one car-space mesh for the dents and puts the exhaust on
+the tailpipes; it logs the measured wheelbase, track, wheel radius and body box, which `CarSpec` must match.
+
+A new model: unpack it into `Art/Cars/<name>/` with a LICENSE.txt, list its parts with
+`-executeMethod Rally.Editor.CarGarageBuilder.ProbeFbx -probeFbx PATH`, add a `Model` entry (wheels, paint panels, nose
+direction, length, tailpipes, textures; every texture a car uses is imported at most 1024² and crunched, `CompressTextures`), a `CarKind`, a `CarSpec` and a `Garage`
+line, run `BuildSceneAndPictures`, copy the logged geometry into the spec and check the `-carShots` views.
+
 ## Log window
 
 Press **F2** (or the LOG button next to the clock) in the game to open the scrolling log: tile requests and
@@ -215,6 +251,7 @@ overlays. Keep it in step with the controls table below.
 | `F2` | Log window |
 | `Esc` | Close the help screen or the route map, or back to the start screen |
 | `Enter` | Start the engine |
+| `←` / `→` (start screen) | Choose the car (gamepad: d-pad) |
 
 Mouse and touch: the **MAP** button (and PICK A ROUTE ON THE MAP on the start screen) opens the Leaflet route
 map in the web build; pins snap to the nearest road of the chosen profile within 1 km, GENERATE ROUTE and

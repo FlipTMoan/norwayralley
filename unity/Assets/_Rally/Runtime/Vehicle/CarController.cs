@@ -105,7 +105,7 @@ namespace Rally.Vehicle
             box = GetComponent<BoxCollider>();
             var size = Spec.BodySize;
             box.size = size;
-            box.center = new Vector3(0f, size.y * 0.5f + 0.1f, Spec.FrontAxle - Spec.Wheelbase * 0.5f);
+            box.center = new Vector3(0f, size.y * 0.5f + 0.1f, Spec.BodyZ);
             // Actors report their own hits (disc test in Rally.Actors): never double count through PhysX.
             int actors = FirstLayer(ActorLayers);
             if (actors >= 0) Physics.IgnoreLayerCollision(gameObject.layer, actors, true);

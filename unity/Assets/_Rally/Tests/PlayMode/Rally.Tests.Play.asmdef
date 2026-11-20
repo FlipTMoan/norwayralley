@@ -3,6 +3,7 @@
   "rootNamespace": "Rally.Tests.Play",
   "references": [
     "Rally.Core",
+    "Rally.Geo",
     "Rally.Gameplay",
     "Rally.Vehicle",
     "Rally.Track",

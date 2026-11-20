@@ -130,3 +130,19 @@
   `TryAddCharacters` batch.
 - Editor (Mono, debug) timings of CPU painting are ~20× the IL2CPP WebGL ones (60 ms vs 2.6 ms per face); measure in the
   player before optimising further.
+
+## 2026-11-20 — car chooser: killed builds, one-lane stage lines, one drag for all cars
+- Stopping a WebDev build mid-way (TaskStop) skipped BuildDevFromMenu's `finally`: ProjectSettings kept
+  `webGLDebugSymbols: 2`. After any interrupted Unity run, `git status unity/ProjectSettings` and restore. SceneBuilder
+  also rewrites GraphicsSettings/QualitySettings and the pine impostor: revert those unless the change is intended.
+- "Max 50 km/h": the sim decided on-road against the stage line's fixed one-lane half width, while the world draws
+  wider roads. Rule: any on-road / surface decision in the sim must agree with what is drawn (IGround.SurfaceAt) — the
+  same "derive from the same function" rule as the road heights.
+- A top-speed test on the sloped test terrain failed for physics that was fine: the 0.8 m crests launched the car at
+  250 km/h. Use level ground for speed tests; check torque at the top gear's rpm too (two cars were torque-limited).
+- Log component fields before DestroyImmediate (again): the builder's "body 'none'" log line was only a log bug.
+- SceneBuilder saved the scene with `m_PanelSettings: {fileID: 0}`: no HUD at all in the web build, while every EditMode
+  and PlayMode test passed (none looked at the UI). The panel was loaded early, then the tree rebake / car reimports
+  refreshed the asset database and left a dead reference. Create scene-referenced assets last, right before BuildScene;
+  diff the regenerated scene's `{fileID: 0}` count against HEAD; GarageSceneTests now asserts the panel and the cards.
+  And look at the web build in Chrome before calling it done: only that showed it.

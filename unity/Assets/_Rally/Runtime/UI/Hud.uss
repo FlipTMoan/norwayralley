@@ -55,6 +55,15 @@
 
 /* Start-screen options, controls list, cache line (index.html .start-options / .start-controls / .start-cache). */
 .startOptions { margin-top: 14px; }
+/* Car chooser on the start screen (HudController.SetCars): one card per car, the chosen one outlined. */
+.carCards { flex-direction: row; flex-wrap: wrap; justify-content: center; max-width: 1000px; margin-bottom: 4px; }
+.carCard { width: 112px; margin: 2px; padding: 3px; background-color: rgba(0, 0, 0, 0.55); border-width: 2px; border-color: rgba(255, 196, 64, 0.25); border-radius: 6px; align-items: center; }
+.carCard:hover { border-color: rgba(255, 196, 64, 0.6); }
+.carCard.selected { border-color: rgb(255, 196, 64); background-color: rgba(60, 45, 10, 0.75); }
+.carPicture { width: 104px; height: 58px; -unity-background-scale-mode: scale-to-fit; border-radius: 3px; }
+.carName { font-size: 10px; color: rgb(255, 196, 64); margin-top: 3px; -unity-text-align: middle-center; white-space: normal; }
+.carStats { font-size: 8px; color: rgb(220, 220, 220); -unity-text-align: middle-center; white-space: normal; }
+.carHint { font-size: 9px; color: rgb(200, 200, 200); margin-bottom: 12px; }
 .toggleButton { font-size: 11px; padding: 7px 12px; margin: 3px; background-color: rgba(0, 0, 0, 0.55); color: rgb(255, 196, 64); border-width: 1px; border-color: rgb(255, 196, 64); border-radius: 4px; }
 .startControls { font-size: 9px; color: rgb(220, 220, 220); margin-top: 12px; white-space: normal; -unity-text-align: middle-center; max-width: 760px; }
 .cacheRow { margin-top: 10px; }

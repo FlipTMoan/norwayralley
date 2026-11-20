@@ -1,6 +1,47 @@
 # Changes
 
-_Updated 2026-11-19 (real road signs in the Unity game)._
+_Updated 2026-11-20 (car chooser in the Unity game)._
+
+## 2026-11-20
+
+### Unity: the car no longer stops at 50 km/h; every car reaches its own top speed
+- **Cause (confirmed by test):** the car counted as "off the road" whenever it was more than the stage line's half width
+  + 1 m from the line. Stage lines are one lane wide (`OneLaneHalf` 2.25 m) and the endless line follows one road, so on
+  the right lane of a two-lane road, a wide road, a junction or a parallel road the car was "on rough ground": surface
+  OFF ROAD and car.js's 50 km/h off-road cap. Now the car is on the road when it is on any road the world draws
+  (`IGround.SurfaceAt`, the same road network as the ribbons) and takes that road's surface.
+- **Real top speeds:** car.js used one air drag for every car, which held the 911 to ~175 km/h whatever its gearing. Each
+  car now has `CarSpec.TopSpeed` (the real car's) and `Aero` set so full power balances drag there: 911 225, Carrera 245,
+  930 260, Volvo 195, MV6 210, Ranger 175, Baja Bug 160, Type 736 125 km/h (tested within 10 %).
+- **Off road per car** (`CarSpec.OffroadMax`): the 911s 45–50 km/h as before, the MV6 75, the 736 70, the Ranger 90 and
+  the Baja Bug 100 km/h.
+- **Gearbox:** a Q/E (RB/LB) press still switches to manual, but only for this visit; only G / the GEARBOX button is saved.
+  The HUD gear reads `3 M` in manual, and 1.5 s on the limiter in manual shows "E (RB) shifts up, G automatic". (A box
+  saved as manual made the 911 run out at ~60 km/h in 1st.)
+- Tests: `TopSpeedTests` (every car's top speed and 0–100, a car on a drawn two-lane road beside the stage line is on the
+  road and passes 120 km/h, buggies / Ranger / MV6 faster off road than the 911).
+
+### Unity: choose among eight cars
+- **Car cards on the start screen:** Porsche 911 (the original), 911 Carrera 3.2, 911 Turbo (930), Volvo 240 Turbo,
+  MV6 '83 Group B, Ford Ranger Offroad and two buggies, the Baja Bug ("Off Road 4X4 racer" by duanesmind) and the Buggy
+  Type 736 (Andre_rmntc, a Skoda 736 beach buggy), each with a rendered picture and power · weight · drive · gears. Click or
+  tap a card, or ←/→ (gamepad d-pad); only on the start screen. Kept in localStorage `rally.car` and sent to the room
+  (state packets carry the kind), so friends see the right car; a JS player's `buggy` shows as the Baja Bug.
+- **Own handling per car** (`CarSpec`): mass, power (real × 1.58 like the 911), gearbox, driven wheels (`DriveType`,
+  4WD = all weight on driven wheels), grip per surface, suspension travel and springs, climb limit, and a turbo for the
+  930 (1.2 s) and the Volvo (0.8 s): off boost 55 % of torque and power (`CarState.Boost`). The 911's engine, gears and
+  body box are as before (the box is now stored in `CarSpec.Body`/`BodyZ`); only its air drag changed (above).
+- **Prefabs built from the CC BY models** by `Editor/CarGarageBuilder`: real lengths, wheels on their axles (the
+  Carrera's one-mesh wheels split into four), paint panels baked into one car-space mesh so dents land where the car was
+  hit, the Volvo file's second trim and camera dropped, exhaust on each car's tailpipe (`CarExhaustSetup.Apply`).
+- **Buggies:** Baja Bug 850 kg, rear drive, 0.77 m tyres, long travel, gravel grip; Type 736 700 kg, modest engine.
+  Every new car's textures are imported at 1024² at most and crunch-compressed (the 2K/4K sources had nearly tripled
+  the web data file); LICENSE.txt added to both buggy folders.
+- Help screen: CARS section and car model credits; README credits and a car table.
+- Tests: `GarageTests` (spec sanity, the 911 unchanged, wire ids, every car drives 100 m and a hurt engine pulls less,
+  turbo spool and lag, offroaders outclimb road cars, every prefab's wheels / body box / baked body / exhaust) and PlayMode
+  `GarageSceneTests` (every car chosen, respawned, remembered, drives off the line and takes damage; no change mid-stage;
+  the choice survives a reload).
 
 ## 2026-11-19
 

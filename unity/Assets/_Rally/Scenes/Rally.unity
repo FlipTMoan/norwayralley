@@ -37,7 +37,7 @@ RenderSettings:
   m_ReflectionBounces: 1
   m_ReflectionIntensity: 1
   m_CustomReflection: {fileID: 0}
-  m_Sun: {fileID: 51452235}
+  m_Sun: {fileID: 1479913465}
   m_UseRadianceAmbientProbe: 0
 --- !u!157 &3
 LightmapSettings:
@@ -119,7 +119,7 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &32988655
+--- !u!1 &20679153
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -127,49 +127,37 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 32988657}
-  - component: {fileID: 32988656}
+  - component: {fileID: 20679155}
+  - component: {fileID: 20679154}
   m_Layer: 0
-  m_Name: Game
+  m_Name: Sky
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &32988656
+--- !u!114 &20679154
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 32988655}
+  m_GameObject: {fileID: 20679153}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3d518e92cfa45eb65b7aa742882c6cb7, type: 3}
+  m_Script: {fileID: 11500000, guid: 206253e1577d92cc99778d4fddaa3a4c, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Rally.Gameplay::Rally.Gameplay.GameController
-  Style: {fileID: 11400000, guid: b5de7d7d47dad74efb22c7b61bd85dff, type: 2}
-  CarveShader: {fileID: 7200000, guid: 3f7e2e05fb2ffebaea8b1c730d5ae49c, type: 3}
-  CarPrefab: {fileID: 6897086039889128246, guid: 765a3691cd384ee2db131f7fbeebaf45, type: 3}
-  ActorSet: {fileID: 11400000, guid: 62b4d4ac923a19aceabe3e6f27ceb3d0, type: 2}
-  TarmacMaterial: {fileID: 2100000, guid: 071ef06444af8925988a21102d79902c, type: 2}
-  GravelMaterial: {fileID: 2100000, guid: cd24da5164fa0460da8ed1ac150788ce, type: 2}
-  MainCamera: {fileID: 694476234}
-  Rig: {fileID: 694476233}
-  Sky: {fileID: 51452234}
-  Hud: {fileID: 142891897}
-  Ghosts: {fileID: 1101366289}
-  UseFakeSources: 1
-  EditorQuery: ?drive=59.032,6.065
-  ActorDensity: 2
-  FineTileHoldDistance: 30
---- !u!4 &32988657
+  m_EditorClassIdentifier: Rally.World::Rally.World.SkyBinder
+  SkyMaterial: {fileID: 2100000, guid: 7ed52f0131fe273e29f032576f61acad, type: 2}
+  Wind: {x: 0.004, y: 0.0015}
+  AmbientScale: 0.45
+--- !u!4 &20679155
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 32988655}
+  m_GameObject: {fileID: 20679153}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -178,7 +166,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &51452233
+--- !u!1 &185481265
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -186,9 +174,141 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 51452236}
-  - component: {fileID: 51452235}
-  - component: {fileID: 51452234}
+  - component: {fileID: 185481267}
+  - component: {fileID: 185481266}
+  m_Layer: 0
+  m_Name: Game
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &185481266
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 185481265}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3d518e92cfa45eb65b7aa742882c6cb7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Rally.Gameplay::Rally.Gameplay.GameController
+  Style: {fileID: 11400000, guid: b5de7d7d47dad74efb22c7b61bd85dff, type: 2}
+  CarveShader: {fileID: 7200000, guid: 3f7e2e05fb2ffebaea8b1c730d5ae49c, type: 3}
+  CarPrefab: {fileID: 6897086039889128246, guid: 765a3691cd384ee2db131f7fbeebaf45, type: 3}
+  CarPrefabs:
+  - {fileID: 6897086039889128246, guid: 765a3691cd384ee2db131f7fbeebaf45, type: 3}
+  - {fileID: 3455147383317600014, guid: 7fbbb2992b1715b86bafb846a2d665ff, type: 3}
+  - {fileID: 3794089506475641256, guid: ea28b5bbf47bdbadfa22aa4c557a1333, type: 3}
+  - {fileID: 1118474437522267709, guid: 2a5e96d9c30b2ba4bb970c4906bb97e3, type: 3}
+  - {fileID: 1858789363460239334, guid: 558573c45a19927a8b5361f64d7e81f6, type: 3}
+  - {fileID: 3790517454407218251, guid: c4fa99ea742153e7085bc9ace2ba18c5, type: 3}
+  - {fileID: 6991031635662600091, guid: 78c90dd7e28146a99bf8129a642c944b, type: 3}
+  - {fileID: 2122518026193580394, guid: a479c9240d541eb42a3ddbd5aba6fe9a, type: 3}
+  ActorSet: {fileID: 11400000, guid: 62b4d4ac923a19aceabe3e6f27ceb3d0, type: 2}
+  TarmacMaterial: {fileID: 2100000, guid: 071ef06444af8925988a21102d79902c, type: 2}
+  GravelMaterial: {fileID: 2100000, guid: cd24da5164fa0460da8ed1ac150788ce, type: 2}
+  MainCamera: {fileID: 1782157438}
+  Rig: {fileID: 1782157437}
+  Sky: {fileID: 1479913464}
+  Hud: {fileID: 1672098440}
+  Ghosts: {fileID: 383377857}
+  UseFakeSources: 1
+  EditorQuery: ?drive=59.032,6.065
+  ActorDensity: 2
+  FineTileHoldDistance: 30
+--- !u!4 &185481267
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 185481265}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &383377856
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 383377858}
+  - component: {fileID: 383377857}
+  m_Layer: 0
+  m_Name: Ghosts
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &383377857
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 383377856}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 95ade7585cf5016ba943e47a85228622, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Rally.Net::Rally.Net.GhostCarView
+  Prefabs:
+  - Kind: porsche
+    Prefab: {fileID: 6897086039889128246, guid: 765a3691cd384ee2db131f7fbeebaf45, type: 3}
+  - Kind: carrera
+    Prefab: {fileID: 3455147383317600014, guid: 7fbbb2992b1715b86bafb846a2d665ff, type: 3}
+  - Kind: turbo930
+    Prefab: {fileID: 3794089506475641256, guid: ea28b5bbf47bdbadfa22aa4c557a1333, type: 3}
+  - Kind: volvo240
+    Prefab: {fileID: 1118474437522267709, guid: 2a5e96d9c30b2ba4bb970c4906bb97e3, type: 3}
+  - Kind: mv6
+    Prefab: {fileID: 1858789363460239334, guid: 558573c45a19927a8b5361f64d7e81f6, type: 3}
+  - Kind: ranger
+    Prefab: {fileID: 3790517454407218251, guid: c4fa99ea742153e7085bc9ace2ba18c5, type: 3}
+  - Kind: baja
+    Prefab: {fileID: 6991031635662600091, guid: 78c90dd7e28146a99bf8129a642c944b, type: 3}
+  - Kind: type736
+    Prefab: {fileID: 2122518026193580394, guid: a479c9240d541eb42a3ddbd5aba6fe9a, type: 3}
+  - Kind: buggy
+    Prefab: {fileID: 6991031635662600091, guid: 78c90dd7e28146a99bf8129a642c944b, type: 3}
+  StaleSeconds: 5
+--- !u!4 &383377858
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 383377856}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1479913463
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1479913466}
+  - component: {fileID: 1479913465}
+  - component: {fileID: 1479913464}
   m_Layer: 0
   m_Name: Sun
   m_TagString: Untagged
@@ -196,32 +316,35 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &51452234
+--- !u!114 &1479913464
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 51452233}
+  m_GameObject: {fileID: 1479913463}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b605433498f4bc4c9b8b854c0b0b6a6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Rally.Presentation::Rally.Presentation.SkyAndTime
-  Sun: {fileID: 51452235}
+  Sun: {fileID: 1479913465}
   Hour: 15
   Month: 7
   LatitudeDeg: 59
   SunIntensityNoon: 2.2
   Horizon: {r: 1, g: 0.72, b: 0.45, a: 1}
   Zenith: {r: 1, g: 0.97, b: 0.9, a: 1}
---- !u!108 &51452235
+  AmbientSky: {r: 0.5, g: 0.6, b: 0.78, a: 1}
+  AmbientEquator: {r: 0.42, g: 0.45, b: 0.44, a: 1}
+  AmbientGround: {r: 0.24, g: 0.22, b: 0.17, a: 1}
+--- !u!108 &1479913465
 Light:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 51452233}
+  m_GameObject: {fileID: 1479913463}
   m_Enabled: 1
   serializedVersion: 13
   m_Type: 1
@@ -280,13 +403,13 @@ Light:
   m_LightUnit: 1
   m_LuxAtDistance: 1
   m_EnableSpotReflector: 1
---- !u!4 &51452236
+--- !u!4 &1479913466
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 51452233}
+  m_GameObject: {fileID: 1479913463}
   serializedVersion: 2
   m_LocalRotation: {x: -0.052217018, y: 0.9392279, z: -0.2961374, w: -0.16561124}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -295,7 +418,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &142891896
+--- !u!1 &1672098439
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -303,9 +426,9 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 142891899}
-  - component: {fileID: 142891898}
-  - component: {fileID: 142891897}
+  - component: {fileID: 1672098442}
+  - component: {fileID: 1672098441}
+  - component: {fileID: 1672098440}
   m_Layer: 0
   m_Name: HUD
   m_TagString: Untagged
@@ -313,25 +436,26 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &142891897
+--- !u!114 &1672098440
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 142891896}
+  m_GameObject: {fileID: 1672098439}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7f4220809187c93ca9e92ede3bfc2c09, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Rally.UI::Rally.UI.HudController
---- !u!114 &142891898
+  KeepRunningUnderHelp: 0
+--- !u!114 &1672098441
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 142891896}
+  m_GameObject: {fileID: 1672098439}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 19102, guid: 0000000000000000e000000000000000, type: 0}
@@ -348,13 +472,13 @@ MonoBehaviour:
   m_PivotReferenceSize: 0
   m_Pivot: 0
   m_WorldSpaceCollider: {fileID: 0}
---- !u!4 &142891899
+--- !u!4 &1672098442
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 142891896}
+  m_GameObject: {fileID: 1672098439}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -363,7 +487,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &694476232
+--- !u!1 &1782157436
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -371,11 +495,11 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 694476237}
-  - component: {fileID: 694476234}
-  - component: {fileID: 694476236}
-  - component: {fileID: 694476235}
-  - component: {fileID: 694476233}
+  - component: {fileID: 1782157441}
+  - component: {fileID: 1782157438}
+  - component: {fileID: 1782157440}
+  - component: {fileID: 1782157439}
+  - component: {fileID: 1782157437}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -383,13 +507,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &694476233
+--- !u!114 &1782157437
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 694476232}
+  m_GameObject: {fileID: 1782157436}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b45bf8845e9bd206fba43f5151154910, type: 3}
@@ -402,15 +526,19 @@ MonoBehaviour:
   ChaseUp: 2.4
   ChaseLookUp: 1
   ChaseDamp: 6
+  LookAhead: 0.3
+  FovGain: 9
+  FovFullSpeed: 45
+  ShakeDegrees: 0.35
   OverheadHeight: 60
   OverheadBack: 25
---- !u!20 &694476234
+--- !u!20 &1782157438
 Camera:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 694476232}
+  m_GameObject: {fileID: 1782157436}
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 1
@@ -455,13 +583,13 @@ Camera:
   m_OcclusionCulling: 1
   m_StereoConvergence: 10
   m_StereoSeparation: 0.022
---- !u!114 &694476235
+--- !u!114 &1782157439
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 694476232}
+  m_GameObject: {fileID: 1782157436}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
@@ -499,21 +627,21 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
---- !u!81 &694476236
+--- !u!81 &1782157440
 AudioListener:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 694476232}
+  m_GameObject: {fileID: 1782157436}
   m_Enabled: 1
---- !u!4 &694476237
+--- !u!4 &1782157441
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 694476232}
+  m_GameObject: {fileID: 1782157436}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 6, z: -12}
@@ -522,7 +650,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1101366288
+--- !u!1 &2072963329
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -530,55 +658,8 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1101366290}
-  - component: {fileID: 1101366289}
-  m_Layer: 0
-  m_Name: Ghosts
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1101366289
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1101366288}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 95ade7585cf5016ba943e47a85228622, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Rally.Net::Rally.Net.GhostCarView
-  PorschePrefab: {fileID: 6897086039889128246, guid: 765a3691cd384ee2db131f7fbeebaf45, type: 3}
-  BuggyPrefab: {fileID: 6897086039889128246, guid: 765a3691cd384ee2db131f7fbeebaf45, type: 3}
-  StaleSeconds: 5
---- !u!4 &1101366290
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1101366288}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1440396003
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1440396005}
-  - component: {fileID: 1440396004}
+  - component: {fileID: 2072963331}
+  - component: {fileID: 2072963330}
   m_Layer: 0
   m_Name: Volume
   m_TagString: Untagged
@@ -586,13 +667,13 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1440396004
+--- !u!114 &2072963330
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1440396003}
+  m_GameObject: {fileID: 2072963329}
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
@@ -603,60 +684,13 @@ MonoBehaviour:
   blendDistance: 0
   weight: 1
   sharedProfile: {fileID: 11400000, guid: b53e79cae0d934a9994df43b629d79c3, type: 2}
---- !u!4 &1440396005
+--- !u!4 &2072963331
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1440396003}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1853457810
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1853457812}
-  - component: {fileID: 1853457811}
-  m_Layer: 0
-  m_Name: Sky
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1853457811
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1853457810}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 206253e1577d92cc99778d4fddaa3a4c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Rally.World::Rally.World.SkyBinder
-  SkyMaterial: {fileID: 2100000, guid: 7ed52f0131fe273e29f032576f61acad, type: 2}
-  Wind: {x: 0.004, y: 0.0015}
-  AmbientScale: 0.45
---- !u!4 &1853457812
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1853457810}
+  m_GameObject: {fileID: 2072963329}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -669,10 +703,10 @@ Transform:
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 694476237}
-  - {fileID: 51452236}
-  - {fileID: 1853457812}
-  - {fileID: 1440396005}
-  - {fileID: 142891899}
-  - {fileID: 1101366290}
-  - {fileID: 32988657}
+  - {fileID: 1782157441}
+  - {fileID: 1479913466}
+  - {fileID: 20679155}
+  - {fileID: 2072963331}
+  - {fileID: 1672098442}
+  - {fileID: 383377858}
+  - {fileID: 185481267}

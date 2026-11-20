@@ -26,13 +26,14 @@ namespace Rally.Editor
     /// <c>-previewBench</c> first measures frames at 1920×1080 at the chase, hillside, overview and forest-edge poses (3 s
     /// each) and over a 60 s ScriptedDriver drive: frame time avg / p95, batches, SetPass calls, triangles, tree instances
     /// drawn and GC bytes per frame, written to DIR/bench.txt. <c>-previewDrive SECONDS [-previewDriveKmh K]</c> skips the shots
-    /// and only drives (a trace line per second, the car's <c>collision:</c> lines in the log); <c>-previewExhaust</c> adds
+    /// and only drives (a trace line per second, the car's <c>collision:</c> lines in the log); <c>-previewCar ID</c> picks the car (Garage ids:
+    /// porsche, carrera, turbo930, volvo240, mv6, ranger, baja, type736), and a drive saves its last chase frame; <c>-previewExhaust</c> adds
     /// exhaust shots at idle and under full throttle; <c>-previewRoadDebug</c> also logs the edge fit and water-on-road survey.
     /// </summary>
     public static class PreviewShots
     {
         const int W = 1280, H = 720;
-        static string outDir, query;
+        static string outDir, query, carId;
         static bool live, noCompute, bench, roadDebug;
         static float driveSecs, driveKmh;
         static double nextTrace, exhaustT0;
@@ -70,6 +71,8 @@ namespace Rally.Editor
             // No domain reload on entering play mode, so this class keeps its state and its update hook.
             oldOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled; oldOptions = EditorSettings.enterPlayModeOptions;
             EditorSettings.enterPlayModeOptionsEnabled = true;
+            carId = Arg(args, "-previewCar");
+            if (carId != null) Rally.Geo.BrowserDom.LocalSet("rally.car", carId);   // the start-screen choice (Garage ids), kept across play mode (no domain reload)
             EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
             step = 0;
             EditorApplication.update += Tick;
@@ -194,7 +197,11 @@ namespace Rally.Editor
                         benchName = null;
                         {
                             var dc = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
-                            Debug.Log($"PreviewShots drive: {dc.State.Distance:0} m driven, {dc.Diagnostics.Contacts} contacts, {dc.Diagnostics.SuddenStops} sudden slow-downs, damage {dc.Damage * 100:0} %");
+                            Debug.Log($"PreviewShots drive: {dc.Kind}, {dc.State.Distance:0} m driven, {dc.Diagnostics.Contacts} contacts, {dc.Diagnostics.SuddenStops} sudden slow-downs, damage {dc.Damage * 100:0} %");
+                            // The chase view at the end of the drive (one frame of the game camera), named after the car.
+                            if (rt == null) rt = new RenderTexture(W, H, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
+                            cam.targetTexture = rt; cam.Render();
+                            Save($"drive_{dc.Kind}_{dc.State.SpeedKmh:0}kmh");
                         }
                         Finish(0);
                         return;

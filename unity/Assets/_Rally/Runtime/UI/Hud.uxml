@@ -25,6 +25,8 @@
     <ui:VisualElement name="startScreen" class="startScreen">
       <ui:Label text="RETRO NORWAY RALLY" class="title" />
       <ui:Label name="startInfo" text="" class="startInfo" />
+      <ui:VisualElement name="carCards" class="carCards" />
+      <ui:Label name="carHint" text="CHOOSE YOUR CAR: click a card, or LEFT / RIGHT (gamepad d-pad)" class="carHint" />
       <ui:Button name="startButton" text="START ENGINE" class="bigButton" />
       <ui:VisualElement class="row startOptions">
         <ui:Button name="gearboxBtn" text="GEARBOX: AUTOMATIC" class="toggleButton" />
@@ -32,7 +34,7 @@
         <ui:Button name="mapBtn" text="PICK A ROUTE ON THE MAP" class="toggleButton" />
         <ui:Button name="helpBtn" text="? HELP" class="toggleButton" />
       </ui:VisualElement>
-      <ui:Label text="WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 or C camera · M mute · H help · F10 debug · F2 log" class="startControls" />
+      <ui:Label text="LEFT / RIGHT choose the car here · WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gear · G auto/manual · R restart · N new stage · ESC menu · 1/2/3 or C camera · M mute · H help · F10 debug · F2 log" class="startControls" />
       <ui:VisualElement name="friends" class="friends">
         <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
         <ui:Button name="hostButton" text="HOST A ROOM" class="smallButton" />
@@ -84,7 +86,9 @@
           <ui:VisualElement class="helpRow"><ui:Label text="Handbrake (drift)" class="helpCell helpCol0" /><ui:Label text="Shift" class="helpCell helpCol1" /><ui:Label text="B (east)" class="helpCell helpCol2" /><ui:Label text="DRIFT" class="helpCell helpCol3" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="Jump" class="helpCell helpCol0" /><ui:Label text="Space" class="helpCell helpCol1" /><ui:Label text="A (south)" class="helpCell helpCol2" /><ui:Label text="-" class="helpCell helpCol3" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="Gear up / down" class="helpCell helpCol0" /><ui:Label text="E / Q" class="helpCell helpCol1" /><ui:Label text="RB / LB" class="helpCell helpCol2" /><ui:Label text="-" class="helpCell helpCol3" /></ui:VisualElement>
-          <ui:Label text="Q / E (or RB / LB) switch an automatic gearbox to manual; G switches back. On the start screen: START ENGINE (or Enter), GEARBOX, SLIDING (how easily the tail steps out, 0-3) and PICK A ROUTE ON THE MAP." class="helpText" />
+          <ui:Label text="Q / E (or RB / LB) switch an automatic gearbox to manual for this visit (the gear shows M; on the limiter press E or G); G switches and is remembered. On the start screen: the car cards (click, or LEFT / RIGHT), START ENGINE (or Enter), GEARBOX, SLIDING (how easily the tail steps out, 0-3) and PICK A ROUTE ON THE MAP." class="helpText" />
+          <ui:Label text="CARS" class="helpHead" />
+          <ui:Label text="Pick your car on the start screen: click or tap a card, or LEFT / RIGHT (gamepad d-pad); ESC returns there from a stage. The game remembers the choice, and friends in a room see the car you drive. Each car handles differently: Porsche 911 and 911 Carrera 3.2 (rear engine, light and lively), 911 Turbo (930, fastest on tarmac, the turbo wakes up late), Volvo 240 Turbo (heavy, soft, predictable), MV6 '83 Group B (four-wheel drive, short gears, huge power), Ford Ranger Offroad (heavy 4WD truck on long springs: slow on tarmac, climbs almost anything), Baja Bug (light buggy on big tyres, 100 km/h across open ground), Buggy Type 736 (small, slow and nimble). Every car reaches its real top speed on the road; off the road the road cars stop pulling at 45-50 km/h, the buggies and the Ranger go much faster. Card stats: power, weight, driven wheels, gears." class="helpText" />
           <ui:Label text="GAME KEYS" class="helpHead" />
           <ui:VisualElement class="helpRow"><ui:Label text="H or F1" class="helpCell helpKey helpCol0" /><ui:Label text="this help (game paused)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="C" class="helpCell helpKey helpCol0" /><ui:Label text="next camera - 1 overhead, 2 chase, 3 seat" class="helpCell helpKey helpCol1" /></ui:VisualElement>
@@ -102,6 +106,8 @@
           <ui:Label text="Route stage: pick start and finish on the MAP; the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts. Every stage is a link in the address bar you can share." class="helpText" />
           <ui:Label text="DATA" class="helpHead" />
           <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces and road signs Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
+          <ui:Label text="CAR MODELS (CC BY 4.0, Sketchfab)" class="helpHead" />
+          <ui:Label text="Porsche 911 by WoTiger (Philipp Busse) · Porsche 911 3.2 Carrera Coupe by cepela · Porsche 911 (930) Turbo 1975 by Lexyc16, improved by Wolf Hal (WolfGames36) · Volvo 240 styled sedan by Libau Media · Placeholder MV6 '83 by Daniel Zhabotinsky · Ford Ranger Offroad by CursedCrown · Off Road 4X4 racer (Baja Bug) by duanesmind · Buggy type 736 by Andre_rmntc. Scaled, re-rigged and recoloured for the game." class="helpText" />
         </ui:ScrollView>
       </ui:VisualElement>
     </ui:VisualElement>

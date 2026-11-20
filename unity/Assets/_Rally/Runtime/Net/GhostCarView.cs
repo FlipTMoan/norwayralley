@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Rally.Net
 {
     /// <summary>
-    /// Draws the other players as cars: one instance of the prefab for their car kind per peer, placed
+    /// Draws the other players as cars: one instance of the prefab for their car kind (<see cref="Prefabs"/>) per peer, placed
     /// every frame from the peer's <see cref="GhostTrack"/> (120 ms behind, interpolated). The wire
     /// frame is the JS local projection (x east, y up, z south, yaw 0 = south, π/2 = east); the World
     /// layer sets <see cref="ToWorld"/> to map it into the current floating-origin frame — the default
@@ -14,8 +14,10 @@ namespace Rally.Net
     /// </summary>
     public sealed class GhostCarView : MonoBehaviour
     {
-        public GameObject PorschePrefab;
-        public GameObject BuggyPrefab;
+        /// <summary>A peer's car kind (the wire id: "porsche", "volvo240", "buggy" …) and the prefab drawn for it.</summary>
+        [Serializable] public struct KindPrefab { public string Kind; public GameObject Prefab; }
+        [Tooltip("One entry per car kind; the first entry is drawn for a kind that is not listed (an older or newer build's car).")]
+        public KindPrefab[] Prefabs = new KindPrefab[0];
         public float StaleSeconds = 5f;
         [NonSerialized] public Session Session;
         /// <summary>Wire pose → world position and rotation (set by the World layer).</summary>
@@ -63,7 +65,7 @@ namespace Rally.Net
                 return ghost;
             }
             if (ghost != null) { Destroy(ghost.Go); ghosts.Remove(id); } // kind changed: rebuild from the other prefab
-            var prefab = peer.Kind == "buggy" ? BuggyPrefab : PorschePrefab;
+            var prefab = PrefabFor(peer.Kind);
             if (prefab == null) return null;
             var go = Instantiate(prefab, transform);
             go.name = $"ghost {peer.Name}";
@@ -76,6 +78,13 @@ namespace Rally.Net
                 OnPaint(go, new Color(((hex >> 16) & 255) / 255f, ((hex >> 8) & 255) / 255f, (hex & 255) / 255f));
             }
             return ghost;
+        }
+
+        /// <summary>The prefab for a wire kind; the first entry for an unknown one; null with no entries.</summary>
+        public GameObject PrefabFor(string kind)
+        {
+            foreach (var e in Prefabs) if (e.Prefab != null && string.Equals(e.Kind, kind, StringComparison.OrdinalIgnoreCase)) return e.Prefab;
+            return Prefabs.Length > 0 ? Prefabs[0].Prefab : null;
         }
 
         void OnDestroy() { foreach (var g in ghosts.Values) if (g.Go != null) Destroy(g.Go); ghosts.Clear(); }

@@ -24,7 +24,7 @@ namespace Rally.Vehicle
         public const float SubstepDt = 1f / 120f;      // car.js:942
         public const float WaterDrag = 0.22f;          // car.js:32 — v² drag per metre of wetted depth (m⁻¹)
         public const float WaterDragMax = 16f;         // car.js:33 — m/s²: deep water stops a car hard, not instantly
-        public const float OffroadMaxSpeed = 50f / 3.6f; // car.js:34 — rough ground is a 50 km/h surface, whatever the car
+        public const float OffroadMaxSpeed = 50f / 3.6f; // car.js:34 — the JS cars' rough-ground limit; per car now: CarSpec.OffroadMax
         public const float SinkDepth = 1.3f;           // car.js:35 — roof under: the engine is dead
         public const float SinkTime = 2.5f;            // car.js:36 — seconds under before the car is fished out
         public const float CarRadius = 1.05f;          // car.js:37 — the car as a disc, for house walls
@@ -32,6 +32,8 @@ namespace Rally.Vehicle
         public const float WallScrape = 0.85f;         // car.js:39 — speed kept after a hit
         public const int Reverse = 0;                  // car.js:44
         public const float ShiftTime = 0.24f;          // car.js:51
+        /// <summary>Share of torque and power a turbo engine makes with no boost (CarSpec.TurboLag &gt; 0).</summary>
+        public const float OffBoost = 0.55f;
         public const float MaxSteerLow = 0.6f;         // car.js:110 — rad of front-wheel angle at walking pace
         public const float MaxSteerHigh = 0.08f;       // car.js:111 — rad at 50 m/s
         /// <summary>Damage: the speed an engine at damage 1 could still reach is nil; healthy it is above any gear (m/s).</summary>
@@ -120,6 +122,7 @@ namespace Rally.Vehicle
             s.WrongWay = false;
             s.Gear = 1;
             s.Rpm = spec.Idle;
+            s.Boost = 0f;
             s.ShiftTimer = 0f;
             s.AirborneAt = -1f;
             s.VisualPos = s.Pos;
@@ -202,11 +205,22 @@ namespace Rally.Vehicle
             }
             float health = s.Damage.Wrecked ? 0f : 1f - 0.6f * s.Damage.Engine;
 
+            // Turbo: boost builds over TurboLag seconds under throttle once the revs are past ~40 %, and drops three times as fast.
+            float boost = 1f;
+            if (spec.TurboLag > 0f)
+            {
+                float revs = math.saturate((s.Rpm - spec.Idle) / (spec.Redline - spec.Idle));
+                float want = powerInput * math.smoothstep(0.3f, 0.6f, revs);
+                float rate = (want > s.Boost ? 1f : 3f) / spec.TurboLag;
+                s.Boost = math.clamp(s.Boost + math.clamp(want - s.Boost, -rate * dt, rate * dt), 0f, 1f);
+                boost = OffBoost + (1f - OffBoost) * s.Boost;
+            }
+
             // Torque at the wheels, minus a clutch cut while shifting.
             bool shifting = s.ShiftTimer > 0.12f;
-            float torque = EngineTorque(spec, s.Rpm) * powerInput * (shifting ? 0.15f : 1f) * (s.Grounded ? 1f : 0.35f) * (s.Limiter ? 0f : 1f);
+            float torque = EngineTorque(spec, s.Rpm) * boost * powerInput * (shifting ? 0.15f : 1f) * (s.Grounded ? 1f : 0.35f) * (s.Limiter ? 0f : 1f);
             // Damage: drive force × (1 − 0.6·Engine), the power limit included, so a sick engine is weak at speed too.
-            float driveForce = math.min((torque * ratio) / spec.WheelRadius, spec.Power / math.max(wheelSpeed, 3f)) * health * (reversing ? -1f : 1f);
+            float driveForce = math.min((torque * ratio) / spec.WheelRadius, spec.Power * boost / math.max(wheelSpeed, 3f)) * health * (reversing ? -1f : 1f);
             float engineBrake = powerInput == 0f && math.abs(s.VF) > 1f
                 ? -(Sign(s.VF) * (28f + s.Rpm * 0.012f) * math.abs(ratio) * 0.16f)
                 : 0f;
@@ -249,6 +263,9 @@ namespace Rally.Vehicle
                 q = route.Nearest(s.Pos.xz, 120f);
                 half = q.HalfWidth > 0f ? q.HalfWidth : route.RoadWidth;
                 s.OnRoad = q.Distance <= half + 1.0f;
+                // A stage line is one lane wide (and the endless line follows one road): a car on any drawn road is on the road,
+                // or the right lane of a two-lane road or a parallel road counted as rough ground and held the car at 50 km/h.
+                if (!s.OnRoad) { var gs = ground.SurfaceAt(s.Pos.xz); if (gs == Surface.Asphalt || gs == Surface.Gravel) { s.OnRoad = true; q.Surface = gs; } }
                 s.Progress = q.Progress;
                 s.RoadLift = RoadConstants.SurfaceLift(q.Distance, half);
             }
@@ -351,8 +368,8 @@ namespace Rally.Vehicle
                     surface.Mu * bonus * spec.DriveLoad * 9.81f * cosF * (input.Handbrake ? 0.3f : 1f) * drowned,
                     holdF);
                 float driveAccel = math.clamp(drivetrain.DriveForce / spec.Mass, -maxDrive, maxDrive);
-                // Off the road the ground takes the power: no drive past 50 km/h (car.js:1031).
-                if (!s.OnRoad && math.abs(vF) >= OffroadMaxSpeed && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
+                // Off the road the ground takes the power: no drive past the car's rough-ground speed (car.js:1031, 50 km/h there).
+                if (!s.OnRoad && math.abs(vF) >= spec.OffroadMax && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
                 // Damage: a sick engine runs out of breath early.
                 float damageCap = DamageSpeedCapHealthy * (1f - s.Damage.Engine);
                 if (math.abs(vF) >= damageCap && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
@@ -370,12 +387,12 @@ namespace Rally.Vehicle
 
                 // Rolling resistance, aero drag and the extra cost of rough ground.
                 vF -= Sign(vF) * surface.Rolling * h;
-                vF -= vF * math.abs(vF) * surface.Drag * h;
+                vF -= vF * math.abs(vF) * surface.Drag * spec.Aero * h;   // per car: CarSpec.Aero
                 vF -= vF * (s.OnRoad ? 0.02f : 0.12f) * h;
                 if (!s.OnRoad)
                 {
-                    // Rough ground bleeds off anything above 50 km/h (downhill, or arriving fast from the road).
-                    float over = math.abs(vF) - OffroadMaxSpeed;
+                    // Rough ground bleeds off anything above the car's rough-ground speed (downhill, or arriving fast from the road).
+                    float over = math.abs(vF) - spec.OffroadMax;
                     if (over > 0f) vF -= Sign(vF) * math.min(over, math.min(8f, 2f + over) * h);
                 }
                 if (s.WaterDepth > 0f)

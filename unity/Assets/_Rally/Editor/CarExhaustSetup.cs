@@ -53,7 +53,10 @@ namespace Rally.Editor
             Debug.Log("CarExhaustSetup probe:\n" + sb);
         }
 
-        public static void Run()
+        public static void Run() => Apply(Prefab, Pipes);
+
+        /// <summary>The exhaust on any car prefab: one particle system per tailpipe (car space), the flash light, CarExhaust and CarEffects wired.</summary>
+        public static void Apply(string prefab, Vector3[] pipes)
         {
             var tex = PuffTexture(Dir + "/ExhaustPuff.png");
             var mat = AssetDatabase.LoadAssetAtPath<Material>(Dir + "/ExhaustSmoke.mat");
@@ -63,18 +66,18 @@ namespace Rally.Editor
             mat.renderQueue = 3000;
             EditorUtility.SetDirty(mat);
 
-            var root = PrefabUtility.LoadPrefabContents(Prefab);
+            var root = PrefabUtility.LoadPrefabContents(prefab);
             try
             {
                 if (!root.TryGetComponent<CarExhaust>(out var exhaust)) exhaust = root.AddComponent<CarExhaust>();
                 var systems = new List<ParticleSystem>();
-                for (int i = 0; i < Pipes.Length; i++)
+                for (int i = 0; i < pipes.Length; i++)
                 {
-                    string name = Pipes.Length == 1 ? "Exhaust" : i == 0 ? "ExhaustL" : "ExhaustR";
+                    string name = pipes.Length == 1 ? "Exhaust" : i == 0 ? "ExhaustL" : "ExhaustR";
                     var t = root.transform.Find(name);
                     if (t == null) { t = new GameObject(name).transform; t.SetParent(root.transform, false); }
                     t.gameObject.layer = root.layer;
-                    t.localPosition = Pipes[i];
+                    t.localPosition = pipes[i];
                     t.localRotation = Quaternion.LookRotation(new Vector3(0f, 0.12f, -1f));   // backwards, a little up
                     if (!t.TryGetComponent<ParticleSystem>(out var ps)) ps = t.gameObject.AddComponent<ParticleSystem>();
                     var r = t.GetComponent<ParticleSystemRenderer>();
@@ -84,15 +87,15 @@ namespace Rally.Editor
                 exhaust.Pipes = systems.ToArray();
                 var flashT = root.transform.Find("ExhaustFlash");
                 if (flashT == null) { flashT = new GameObject("ExhaustFlash").transform; flashT.SetParent(root.transform, false); }
-                flashT.localPosition = Pipes[0] + new Vector3(0f, 0f, -0.15f);
+                flashT.localPosition = pipes[0] + new Vector3(0f, 0f, -0.15f);
                 if (!flashT.TryGetComponent<Light>(out var flash)) flash = flashT.gameObject.AddComponent<Light>();
                 flash.type = LightType.Point; flash.range = 1.6f; flash.intensity = 2.5f; flash.color = new Color(1f, 0.55f, 0.2f);
                 flash.shadows = LightShadows.None; flash.enabled = false;
                 exhaust.Flash = flash;
                 var fx = root.GetComponent<CarEffects>();
                 if (fx != null) fx.Exhaust = systems[0];
-                PrefabUtility.SaveAsPrefabAsset(root, Prefab);
-                Debug.Log($"CarExhaustSetup: {systems.Count} tailpipe(s) at {string.Join(", ", Pipes.Select(p => p.ToString("F2")))}");
+                PrefabUtility.SaveAsPrefabAsset(root, prefab);
+                Debug.Log($"CarExhaustSetup: {systems.Count} tailpipe(s) at {string.Join(", ", pipes.Select(p => p.ToString("F2")))}");
             }
             finally { PrefabUtility.UnloadPrefabContents(root); }
             AssetDatabase.SaveAssets();

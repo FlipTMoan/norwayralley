@@ -69,6 +69,38 @@ namespace Rally.UI
             if (speed != null) speed.pickingMode = PickingMode.Position;
         }
 
+        /// <summary>One car on the start-screen chooser.</summary>
+        public struct CarCard { public string Name, Stats; public Texture2D Picture; }
+
+        /// <summary>A car card was clicked or tapped (index into the list given to <see cref="SetCars"/>).</summary>
+        public event System.Action<int> CarClicked;
+        readonly System.Collections.Generic.List<VisualElement> carCards = new System.Collections.Generic.List<VisualElement>();
+
+        /// <summary>Fill the car chooser: a card per car (picture, name, stats), <paramref name="selected"/> outlined.</summary>
+        public void SetCars(System.Collections.Generic.IReadOnlyList<CarCard> cards, int selected)
+        {
+            var row = root?.Q("carCards");
+            if (row == null) return;
+            row.Clear(); carCards.Clear();
+            for (int i = 0; i < cards.Count; i++)
+            {
+                int index = i;
+                var card = new VisualElement { name = "car" + i };
+                card.AddToClassList("carCard");
+                var pic = new VisualElement();
+                pic.AddToClassList("carPicture");
+                if (cards[i].Picture != null) pic.style.backgroundImage = new StyleBackground(cards[i].Picture);
+                card.Add(pic);
+                var name = new Label(cards[i].Name); name.AddToClassList("carName"); card.Add(name);
+                var stats = new Label(cards[i].Stats); stats.AddToClassList("carStats"); card.Add(stats);
+                card.RegisterCallback<ClickEvent>(_ => CarClicked?.Invoke(index));
+                row.Add(card); carCards.Add(card);
+            }
+            SelectCar(selected);
+        }
+
+        public void SelectCar(int index) { for (int i = 0; i < carCards.Count; i++) carCards[i].EnableInClassList("selected", i == index); }
+
         /// <summary>Show or hide the start screen; `info` is the loading/stage line under the title.</summary>
         public void ShowStartScreen(bool visible, string info = null)
         {
@@ -152,7 +184,7 @@ namespace Rally.UI
         public void Show(in HudFrame f)
         {
             speed.text = ((int)f.SpeedKmh).ToString();
-            gear.text = f.Gear == 0 ? "R" : f.Gear.ToString();
+            gear.text = (f.Gear == 0 ? "R" : f.Gear.ToString()) + (f.Manual ? " M" : "");
             rpmBar.style.width = Length.Percent(Mathf.Clamp01(f.Rpm / f.Redline) * 100f);
             rpmBar.EnableInClassList("redline", f.Rpm > f.Redline * 0.92f);
             clock.text = Clock(f.StageTime + f.PenaltyTime);

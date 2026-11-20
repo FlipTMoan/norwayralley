@@ -48,15 +48,18 @@ namespace Rally.Editor
                 EnsureFolder(d);
 
             ApplyProjectSettings();
+            // The cars first: their texture / model reimports refresh the asset database, which left the panel settings and
+            // other assets loaded before it as dead references (the scene was saved with no PanelSettings: no HUD at all).
+            var car = CreateCarPrefab();
+            var garage = CarGarageBuilder.BuildAll(false);
             EnsureArrowSprite();
             CreatePipeline();
             var profile = CreateVolumeProfile();
-            var panel = CreatePanelSettings();
             var (tarmac, gravel) = RoadMaterials();
             var style = CreateWorldStyle(profile);
             var actorSet = CreateActorSet();
-            var car = CreateCarPrefab();
-            BuildScene(profile, panel, style, actorSet, car, tarmac, gravel);
+            var panel = CreatePanelSettings();   // last: an asset reimport after loading it left a dead reference (scene saved with no PanelSettings)
+            BuildScene(profile, panel, style, actorSet, car, garage, tarmac, gravel);
             AssetDatabase.SaveAssets();
             Debug.Log("SceneBuilder: done. Press Play (UseFakeSources is on) or run Rally → Build Web.");
         }
@@ -388,7 +391,7 @@ namespace Rally.Editor
 
             var rb = root.AddComponent<Rigidbody>(); rb.isKinematic = true; rb.useGravity = false;
             var box = root.AddComponent<BoxCollider>();
-            box.size = spec.BodySize; box.center = new Vector3(0f, spec.BodySize.y * 0.5f + 0.1f, spec.FrontAxle - spec.Wheelbase * 0.5f);
+            box.size = spec.BodySize; box.center = new Vector3(0f, spec.BodySize.y * 0.5f + 0.1f, spec.BodyZ);
             var ctl = root.AddComponent<CarController>();
             ctl.Kind = CarKind.Porsche; ctl.WheelPivots = pivots; ctl.WheelSpins = spins;
             var dmg = root.AddComponent<CarDamageVisual>();
@@ -453,7 +456,7 @@ namespace Rally.Editor
 
         // ---- scene -------------------------------------------------------------------------------------------
 
-        static void BuildScene(VolumeProfile profile, PanelSettings panel, WorldStyleSO style, ActorSetSO actors, GameObject car, Material tarmac, Material gravel)
+        static void BuildScene(VolumeProfile profile, PanelSettings panel, WorldStyleSO style, ActorSetSO actors, GameObject car, GameObject[] garage, Material tarmac, Material gravel)
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -489,13 +492,18 @@ namespace Rally.Editor
 
             var ghostsGo = new GameObject("Ghosts");
             var ghosts = ghostsGo.AddComponent<GhostCarView>();
-            ghosts.PorschePrefab = car; ghosts.BuggyPrefab = car;      // no buggy model yet: the same body, recoloured by the room paint
+            // Every garage car by its wire id (the 911 first: drawn for unknown kinds); the JS game's "buggy" as our buggy, else the Ranger.
+            var entries = garage.Select(p => new GhostCarView.KindPrefab { Kind = Garage.Info(p.GetComponent<CarController>().Kind).Id, Prefab = p }).ToList();
+            var offroad = garage.FirstOrDefault(p => p.GetComponent<CarController>().Kind == CarKind.Baja) ?? garage.FirstOrDefault(p => p.GetComponent<CarController>().Kind == CarKind.Ranger) ?? car;
+            entries.Add(new GhostCarView.KindPrefab { Kind = "buggy", Prefab = offroad });
+            ghosts.Prefabs = entries.ToArray();
 
             var gameGo = new GameObject("Game");
             var game = gameGo.AddComponent<GameController>();
             game.Style = style;
             game.CarveShader = AssetDatabase.LoadAssetAtPath<ComputeShader>(CarveCompute);
             game.CarPrefab = car;
+            game.CarPrefabs = garage;
             game.ActorSet = actors;
             game.TarmacMaterial = tarmac; game.GravelMaterial = gravel;
             game.MainCamera = cam; game.Rig = rig; game.Sky = sky; game.Hud = hud; game.Ghosts = ghosts;

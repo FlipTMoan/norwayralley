@@ -35,8 +35,10 @@ namespace Rally.Gameplay
         public WorldStyleSO Style;
         [Tooltip("Carve.compute (WebGPU); with none, or without compute support, the Burst CarveJob runs instead.")]
         public ComputeShader CarveShader;
-        [Tooltip("Prefab with CarController (+ CarEffects, CarDamageVisual, CarAudio). Its Kind field picks the garage car.")]
+        [Tooltip("Prefab with CarController (+ CarEffects, CarDamageVisual, CarAudio). Its Kind field picks the garage car. Used when CarPrefabs is empty.")]
         public GameObject CarPrefab;
+        [Tooltip("The cars on the start-screen chooser, in order (each prefab's CarController.Kind says which car it is). The choice is kept in localStorage rally.car.")]
+        public GameObject[] CarPrefabs;
         public ActorSetSO ActorSet;
         [Tooltip("Road ribbon materials: sub-mesh 0 tarmac, 1 gravel (RibbonMesh).")]
         public Material TarmacMaterial, GravelMaterial;
@@ -148,8 +150,10 @@ namespace Rally.Gameplay
                 Hud.MapClicked += OpenMap;
                 Hud.CacheClearClicked += ClearCache;
                 Hud.DebugTapped += () => Hud.DebugVisible = !Hud.DebugVisible;
+                Hud.CarClicked += ChooseCar;
             }
             LoadSettings();
+            ShowCarCards();
             var mapGo = new GameObject("Map");                     // the name the template's SendMessage targets
             mapGo.AddComponent<MapEvents>().Handler = OnMapEvent;
             flow.PhaseChanged += p => { Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading); if (p == Phase.Countdown) Hud?.GetComponent<Rally.UI.LogWindow>()?.AutoHide(); };
@@ -542,10 +546,10 @@ namespace Rally.Gameplay
         /// <summary>The car prefab on the start line, driving on the world's ground, colliding with the world's layers.</summary>
         void SpawnCar()
         {
-            car = Instantiate(CarPrefab).GetComponent<CarController>();
+            car = Instantiate(ChosenPrefab).GetComponent<CarController>();
             if (car == null) throw new Exception("CarPrefab has no CarController");
             audio = car.GetComponent<CarAudio>();
-            kindName = car.Kind == CarKind.Buggy ? "buggy" : "porsche";
+            kindName = Garage.Info(car.Kind).Id;
             int carLayer = LayerMask.NameToLayer("Car");
             if (carLayer >= 0) car.gameObject.layer = carLayer;
             car.SolidLayers = RallyLayers.SolidMask;
@@ -556,19 +560,22 @@ namespace Rally.Gameplay
             car.Frozen = true;
             car.AutoShift = autoShift;
             car.GripMode = (SlideMode)sliding;
-            car.GearboxChanged += auto => { autoShift = auto; SaveSettings(); Hud?.SetGearbox(auto); Say("GEARBOX: MANUAL — Q/E to shift, G for automatic", 3f); };
+            car.GearboxChanged += auto => { autoShift = auto; Hud?.SetGearbox(auto); Say("GEARBOX: MANUAL — Q/E to shift, G for automatic", 3f); };
             car.SetRoute(route);
             car.OnWaterEnter += p => world.Wake?.Add(new float2(p.x, p.z), 1f);
         }
 
+        void WireCamera()
+        {
+            if (Rig == null) return;
+            Rig.Target = car.transform;
+            Rig.GroundHeight = world.HeightAt;
+            Rig.SeatEye = (Vector3)car.Spec.Eye;
+        }
+
         void WireSystems()
         {
-            if (Rig != null)
-            {
-                Rig.Target = car.transform;
-                Rig.GroundHeight = world.HeightAt;
-                Rig.SeatEye = (Vector3)car.Spec.Eye;
-            }
+            WireCamera();
             if (Sky != null && Sky.Sun != null) RenderSettings.sun = Sky.Sun;
             if (Sky != null) Sky.LatitudeDeg = (float)Proj.ToLatLon(anchor).Lat;
             if (Ghosts != null) Ghosts.ToWorld = WireToWorld;
@@ -714,7 +721,10 @@ namespace Rally.Gameplay
             if (car != null)
             {
                 ref var s = ref car.State;
-                hud.SpeedKmh = s.SpeedKmh; hud.Rpm = s.Rpm; hud.Redline = car.Spec.Redline; hud.Gear = s.Gear;
+                hud.SpeedKmh = s.SpeedKmh; hud.Rpm = s.Rpm; hud.Redline = car.Spec.Redline; hud.Gear = s.Gear; hud.Manual = !car.AutoShift;
+                // On the limiter in manual for a while: say how to get out of it (Q/E had switched the box to manual unnoticed).
+                limiterTime = s.Limiter && !car.AutoShift && flow.Phase == Phase.Racing ? limiterTime + Time.deltaTime : 0f;
+                if (limiterTime > 1.5f) { limiterTime = -6f; Say("MANUAL GEARBOX ON THE LIMITER — E (RB) shifts up, G automatic", 4f); }
                 hud.Damage = car.Damage;
                 hud.Surface = s.OnRoad ? (s.SurfaceKind == Surface.Asphalt ? "ASPHALT" : "GRAVEL") : (s.WaterDepth > 0.3f ? "WATER" : "OFF ROAD");
                 hud.DistanceLeft = stage != null && walk == null ? math.max(0f, stage.Length - q.S) : 0f;
@@ -767,8 +777,10 @@ namespace Rally.Gameplay
 
         #region Controls (main.js:1467 keys, start-screen options, route map, debug window)
 
-        // Saved per browser like the JS (localStorage): gearbox, sliding level, mute.
-        bool autoShift = true, muted, mapOpen;
+        // Saved per browser like the JS (localStorage): gearbox, sliding level, mute. Only G / the GEARBOX button saves the
+        // gearbox: a Q/E press switches to manual for this visit only, so nobody comes back to a box stuck in 1st.
+        bool autoShift = true, autoShiftSaved = true, muted, mapOpen;
+        float limiterTime;
         int sliding;
         float fps = 60f, nextDebug;
         readonly FrameStats frames = new FrameStats();
@@ -797,10 +809,11 @@ namespace Rally.Gameplay
 
         void LoadSettings()
         {
-            autoShift = BrowserDom.LocalGet("rally.gearbox") != "manual";
+            autoShift = autoShiftSaved = BrowserDom.LocalGet("rally.gearbox") != "manual";
             int.TryParse(BrowserDom.LocalGet("rally.sliding") ?? "0", out sliding);
             sliding = math.clamp(sliding, 0, GripMode.SlideLevels.Length - 1);
             muted = BrowserDom.LocalGet("rally.muted") == "1";
+            carIndex = Math.Max(0, Array.IndexOf(ChooserKinds(), Garage.Parse(BrowserDom.LocalGet("rally.car"))));
             AudioListener.volume = muted ? 0f : 1f;
             Hud?.SetGearbox(autoShift);
             Hud?.SetSliding(sliding, GripMode.SlideLevels[sliding]);
@@ -808,9 +821,56 @@ namespace Rally.Gameplay
 
         void SaveSettings()
         {
-            BrowserDom.LocalSet("rally.gearbox", autoShift ? "auto" : "manual");
+            BrowserDom.LocalSet("rally.gearbox", autoShiftSaved ? "auto" : "manual");
             BrowserDom.LocalSet("rally.sliding", sliding.ToString());
             BrowserDom.LocalSet("rally.muted", muted ? "1" : "0");
+        }
+
+        // ---- car chooser (start screen) ----
+
+        int carIndex;
+
+        /// <summary>The chooser's prefabs: CarPrefabs, or the single CarPrefab of an older scene.</summary>
+        GameObject[] Chooser => CarPrefabs != null && CarPrefabs.Length > 0 ? CarPrefabs : new[] { CarPrefab };
+        GameObject ChosenPrefab => Chooser[math.clamp(carIndex, 0, Chooser.Length - 1)];
+        CarKind[] ChooserKinds() => Array.ConvertAll(Chooser, p => p != null && p.TryGetComponent<CarController>(out var c) ? c.Kind : CarKind.Porsche);
+
+        /// <summary>The car the player has chosen (for tests and tools).</summary>
+        public CarKind ChosenCar => ChooserKinds()[math.clamp(carIndex, 0, Chooser.Length - 1)];
+
+        void ShowCarCards()
+        {
+            if (Hud == null) return;
+            var kinds = ChooserKinds();
+            var cards = new List<HudController.CarCard>();
+            foreach (var k in kinds)
+                cards.Add(new HudController.CarCard { Name = Garage.Info(k).Name, Stats = Garage.Stats(CarSpec.For(k)), Picture = Resources.Load<Texture2D>("UI/Cars/" + k) });
+            Hud.SetCars(cards, carIndex);
+        }
+
+        /// <summary>
+        /// Start screen: pick car <paramref name="index"/> of the chooser (wraps). Remembered in localStorage rally.car; on the
+        /// start screen the car on the line is replaced at once and the room hears the new kind. Ignored once the stage runs.
+        /// </summary>
+        public void ChooseCar(int index)
+        {
+            if (flow.Phase != Phase.Loading && flow.Phase != Phase.Intro) { Say("ESC back to the start screen to change the car", 2.5f); return; }
+            int n = Chooser.Length;
+            carIndex = ((index % n) + n) % n;
+            var kind = ChosenCar;
+            BrowserDom.LocalSet("rally.car", Garage.Info(kind).Id);
+            Hud?.SelectCar(carIndex);
+            if (car != null && car.Kind == kind) return;
+            if (car != null && world != null)
+            {
+                var old = car;
+                old.gameObject.SetActive(false);
+                Destroy(old.gameObject);
+                SpawnCar();
+                WireCamera();
+                if (session != null) { session.Kind = kindName; if (mySlot >= 0) OnSlot(mySlot); }
+            }
+            RallyLog.Info($"car: {Garage.Info(kind).Name}");
         }
 
         /// <summary>
@@ -819,6 +879,12 @@ namespace Rally.Gameplay
         /// </summary>
         void HandleKeys()
         {
+            var gp = Gamepad.current;
+            if (gp != null && (flow.Phase == Phase.Intro || flow.Phase == Phase.Loading) && (Hud == null || !Hud.HelpVisible))
+            {
+                if (gp.dpad.left.wasPressedThisFrame) ChooseCar(carIndex - 1);
+                if (gp.dpad.right.wasPressedThisFrame) ChooseCar(carIndex + 1);
+            }
             var kb = Keyboard.current;
             if (kb == null || (Hud != null && Hud.IsTyping)) return;
             if (Hud != null)
@@ -826,6 +892,11 @@ namespace Rally.Gameplay
                 Hud.KeepRunningUnderHelp = session != null && !session.Closed;
                 if (kb.hKey.wasPressedThisFrame || kb.f1Key.wasPressedThisFrame) Hud.HelpVisible = !Hud.HelpVisible;
                 if (Hud.HelpVisible) { if (kb.escapeKey.wasPressedThisFrame) Hud.HelpVisible = false; return; }   // keys stay with the help screen
+            }
+            if (flow.Phase == Phase.Intro || flow.Phase == Phase.Loading)
+            {
+                if (kb.leftArrowKey.wasPressedThisFrame) ChooseCar(carIndex - 1);
+                if (kb.rightArrowKey.wasPressedThisFrame) ChooseCar(carIndex + 1);
             }
             if (kb.gKey.wasPressedThisFrame) ToggleGearbox();
             if (kb.mKey.wasPressedThisFrame) ToggleMute();
@@ -842,7 +913,7 @@ namespace Rally.Gameplay
 
         void ToggleGearbox()
         {
-            autoShift = !autoShift;
+            autoShift = autoShiftSaved = !autoShift;
             if (car != null) car.AutoShift = autoShift;
             SaveSettings();
             Hud?.SetGearbox(autoShift);
@@ -866,7 +937,7 @@ namespace Rally.Gameplay
         }
 
         /// <summary>main.js returnToMenu: the car back on the start line, the start screen up, the clock reset.</summary>
-        void ToMenu()
+        public void ToMenu()
         {
             car.Repair();
             car.SetRoute(route);
@@ -1046,6 +1117,7 @@ namespace Rally.Gameplay
         void NewSession(bool host)
         {
             session?.Close();
+            mySlot = -1;
             session = new Session(null, kindName);
             session.Status += m => { Say(m, 5f); ShowRoom(m); };
             session.Error += m => Say(m, 6f);
@@ -1174,8 +1246,11 @@ namespace Rally.Gameplay
         }
 
         /// <summary>multiplayer.js spawnOffset: slot 0 on the line, pairs every 6 m back, so nobody spawns inside anybody.</summary>
+        int mySlot = -1;
+
         void OnSlot(int slot)
         {
+            mySlot = slot;
             if (car == null) return;
             var (back, side) = RoomCodes.SpawnOffset(slot);
             var p = route.StartPose();

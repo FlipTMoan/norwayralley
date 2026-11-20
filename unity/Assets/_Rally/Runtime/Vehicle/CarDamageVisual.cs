@@ -108,7 +108,7 @@ namespace Rally.Vehicle
             SetBodySize(spec.BodySize);
             var n = ev.NormalLocal;
             // The contact point: where the car's box meets the obstacle, i.e. the face opposite the push-out normal.
-            var point = new float3(-n.x * bodySize.x * 0.5f, 0.55f, -n.z * bodySize.z * 0.5f);
+            var point = new float3(-n.x * bodySize.x * 0.5f, 0.55f, spec.BodyZ - n.z * bodySize.z * 0.5f);
             float depth = math.clamp(ev.SpeedInto / 15f, 0f, 1f) * 0.14f;
             if (depth > 0.01f) AddImpact(point, 0.45f + depth * 3f, depth);
             if (Sparks != null && ev.SpeedInto < 3f) Sparks.Emit(12);

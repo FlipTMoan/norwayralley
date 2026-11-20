@@ -14,11 +14,14 @@ Only CC0 or CC BY models go here (the files are public in this repo); see
 | `placeholder-mv6-83-low-poly-model/` | Placeholder MV6 '83, generic Group B (FBX) | CC BY 4.0 | Placeholder MV6 '83 by Daniel Zhabotinsky, CC BY 4.0 |
 | `low-poly-1980-porsche-911-turbo/` | Low Poly 1980 Porsche 911 Turbo (.blend only: export to FBX) | CC BY 4.0 | Low Poly 1980 Porsche 911 Turbo by 3DShinobi, CC BY 4.0 |
 | `ford-ranger-offroad/` | Ford Ranger Offroad (FBX, 62 k faces) | CC BY 4.0 | Ford Ranger Offroad by CursedCrown, CC BY 4.0 |
+| `off-road-4x4-racer-with-4-different-skins/` | Off Road 4X4 racer, Baja Bug (FBX, skin TXTR4) | CC BY 4.0 | Off Road 4X4 racer by duanesmind, CC BY 4.0 |
+| `buggy-type-736/` | Buggy type 736, Skoda 736 beach buggy (FBX, PBR) | CC BY 4.0 | Buggy type 736 by Andre_rmntc, CC BY 4.0 |
 
 Each folder has a `LICENSE.txt` with the same line. Archives (`*.zip`,
 `*.rar`) are gitignored: unpack, commit the model files only.
 
-After import: set the model scale so the wheelbase matches `CarSpec`
+The game prefabs are built by `Editor/CarGarageBuilder.cs` (see unity/README.md, Cars). Historical note for the first car:
+after import: set the model scale so the wheelbase matches `CarSpec`
 (Porsche 2.45 m), make a prefab with the body mesh under `Body`, the four
 wheels under `WheelFL/FR/RL/RR`, and assign it to `CarController` (slots are
 documented in `Runtime/Vehicle/CarController.cs`).

@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-19 (Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-20 (Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -200,7 +200,7 @@ flowchart TB
 | World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, real road signs (NVDB plates placed on the shoulders, Norwegian faces painted into a shared atlas, one mesh per near tile), physics colliders (buildings mesh, pooled tree capsules, sign posts as props, water triggers), procedural sky. |
 | Roads | OSM road graph with NVDB attributes, grading, carve segments, ribbon meshes, `Nearest`. |
 | Track | Stage line (4 m samples, segment-nearest), pace notes (positive = left in Unity's frame), the seeded `RoadWalk` endless-stage generator. |
-| Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. |
+| Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. The garage: one `CarSpec` per car (mass, power, gears, driven wheels, grip, travel, turbo lag, body box measured off the model) and `Garage` (wire ids, names, credits, card stats). |
 | Actors | Seeded encounters by land cover (moose, deer, sheep, reindeer north of 65°, pedestrians, dogs, cyclists, tractors), crossing state machine, hits and near misses. |
 | Gameplay | Phases, clock, penalties, retirement, share links in the JS formats, the bootstrap `GameController`. |
 | Net | PeerJS rooms byte-compatible with the JS wire format, ghost cars, ICE config with a TURN slot. |
@@ -208,3 +208,25 @@ flowchart TB
 
 Car art: `unity/Assets/_Rally/Art/Cars/<name>/` with a `LICENSE.txt` each
 (CC BY 4.0 models only; list in `unity/docs/car-models.md`).
+
+### Unity car chooser (2026-11-20)
+
+```mermaid
+flowchart LR
+    FBX[Art/Cars/*.fbx] -->|CarGarageBuilder: drop 2nd trim, nose to +Z, scale to real length,<br/>split/hang wheels, bake paint panels to car space, exhaust| PF[Prefabs/Car_KIND.prefab]
+    PF -->|Pictures| PNG[Resources/UI/Cars/KIND.png]
+    PF --> SB[SceneBuilder]
+    SB -->|CarPrefabs in chooser order| GC[GameController]
+    SB -->|wire id → prefab| GV[GhostCarView]
+    PNG --> HUD[HudController car cards]
+    HUD -->|CarClicked / ← →| GC
+    GC -->|ChooseCar: localStorage rally.car,<br/>respawn on the line, Session.Kind| NET[Session state packets k=id]
+    NET --> GV
+    SPEC[CarSpec.For kind + Garage] --> GC
+```
+
+Each prefab's `CarController.Kind` picks its `CarSpec`; the wheel pivots sit at the spec's axles, so the builder logs the
+geometry it measures and warns when CarSpec drifts from the model. A car whose model is not in Art/Cars yet (the buggy)
+is left out of the scene list and so out of the chooser. On the road a car is "on the road" when it is within the stage
+line's lane or on any road the world draws (`IGround.SurfaceAt`); top speed comes from `CarSpec.Aero`, the off-road limit
+from `CarSpec.OffroadMax`.

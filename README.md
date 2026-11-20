@@ -411,6 +411,10 @@ SR16 (a sparse default forest is used), no houses, or no signs.
 - Road signs and speed limits: *Inneholder data under norsk lisens for offentlige
   data (NLOD) tilgjengeliggjort av Statens vegvesen* (NVDB API Les v4).
 - Scene packaging: the bundled **3d_terrain** project.
+- Car models in the Unity build (Sketchfab, CC BY 4.0): Porsche 911 by WoTiger (Philipp Busse); Porsche 911 3.2 Carrera
+  Coupe by cepela; Porsche 911 (930) Turbo 1975 by Lexyc16, improved by Wolf Hal (WolfGames36); Volvo 240 styled sedan by
+  Libau Media; Placeholder MV6 '83 by Daniel Zhabotinsky; Ford Ranger Offroad by CursedCrown; Off Road 4X4 racer (Baja Bug)
+  by duanesmind; Buggy type 736 by Andre_rmntc (scaled, re-rigged, recoloured).
 - Built with **Three.js** and **Vite**.
 
 ## Deploying to GitHub Pages

@@ -56,6 +56,8 @@ namespace Rally.Vehicle
         public int Gear;
         public bool AutoShift;
         public float Rpm, ShiftTimer, EngineLoad;
+        /// <summary>Turbo boost 0..1 (cars with CarSpec.TurboLag &gt; 0): builds under throttle above mid revs, collapses off it.</summary>
+        public float Boost;
         public bool Limiter;
         public float AirborneAt, AirControl, RoadLift;
         public bool HandbrakeOn;
