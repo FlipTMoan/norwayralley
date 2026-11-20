@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using Rally.Core;
 using Rally.Vehicle;
 using Unity.Mathematics;
 
@@ -8,7 +9,7 @@ namespace Rally.Tests.Edit.Vehicle
     /// <summary>Port of legacy-js/tests/gearbox.test.mjs.</summary>
     public class GearboxTests
     {
-        static TestCar FlatRoad() => new TestCar(Worlds.FlatRoad(roadWidth: 3.2f));
+        static TestCar FlatRoad() => new TestCar(Worlds.FlatRoad(Surface.Asphalt, roadWidth: 3.2f));   // asphalt: gravel stops at 120 km/h (2026-11-20)
 
         [Test]
         public void AutomaticBoxRunsThe911GearSpansUpToA12000RpmRedline()

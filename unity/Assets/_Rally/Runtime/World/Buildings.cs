@@ -21,6 +21,8 @@ namespace Rally.World
     {
         public Mesh Mesh;
         public readonly List<FootprintBox> Boxes = new List<FootprintBox>();
+        /// <summary>Each house's footprint ring (counter-clockwise, metres from its box centre), same order as <see cref="Boxes"/>.</summary>
+        public readonly List<float2[]> Rings = new List<float2[]>();
         public readonly List<CarveSegment> Pads = new List<CarveSegment>();
         public int Count;
     }
@@ -212,6 +214,9 @@ namespace Rally.World
                     b.Face(face, new float3(0, 1, 0), roof, scratch2, scratchTris);
                 }
                 set.Boxes.Add(new FootprintBox { Centre = new double2(cUtm.E, cUtm.N), Yaw = math.atan2(u.x, u.y), HalfLength = length / 2, HalfWidth = width / 2, Height = eaves + rise });
+                var rel = new float2[ring.Count];
+                for (int i = 0; i < ring.Count; i++) rel[i] = ring[i] - c;
+                set.Rings.Add(rel);
                 set.Pads.Add(new CarveSegment { A = c, B = c, Ha = h, Hb = h, HalfWidth = math.max(length, width) / 2 + 1f, Shoulder = 6f });
                 set.Count++;
             }

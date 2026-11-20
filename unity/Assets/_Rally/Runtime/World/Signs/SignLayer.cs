@@ -133,9 +133,17 @@ namespace Rally.World
             RallyLog.Info($"signs: {t.Key} built {t.Posts.Count} posts, {plates} plates ({Atlas.FaceCount} faces in {Atlas.PageCount} atlas pages, {Atlas.Painted} painted in {Atlas.PaintMs:0} ms so far)");
         }
 
+        readonly List<(float d2, TileSigns tile, float3 w, float height, float radius)> nearPosts = new List<(float, TileSigns, float3, float, float)>();
+        bool warnedFull;
+
+        /// <summary>
+        /// Posts within <see cref="ColliderRadius"/> get the pooled capsules, nearest first: when the pool runs out (a town
+        /// full of signs) the far posts go without one, never the post in front of the car, and the log says so once.
+        /// </summary>
         void UpdateColliders(float3 carWorld)
         {
             if (colliders == null) return;
+            nearPosts.Clear();
             foreach (var t in tiles.Values)
             {
                 foreach (var h in t.Handles) colliders.Release(h);
@@ -145,10 +153,21 @@ namespace Rally.World
                 foreach (var (foot, height, radius) in t.Feet)
                 {
                     var w = origin + foot;
-                    if (math.distancesq(w.xz, carWorld.xz) > ColliderRadius * ColliderRadius) continue;
-                    int h = colliders.Acquire(PropShape.Capsule, w, quaternion.identity, new float3(math.max(radius, 0.06f), height, 0));
-                    if (h != 0) t.Handles.Add(h);
+                    float d2 = math.distancesq(w.xz, carWorld.xz);
+                    if (d2 <= ColliderRadius * ColliderRadius) nearPosts.Add((d2, t, w, height, radius));
                 }
+            }
+            nearPosts.Sort((a, b) => a.d2.CompareTo(b.d2));
+            for (int i = 0; i < nearPosts.Count; i++)
+            {
+                var (d2, t, w, height, radius) = nearPosts[i];
+                int h = colliders.Acquire(PropShape.Capsule, w, quaternion.identity, new float3(math.max(radius, 0.06f), height, 0));
+                if (h == 0)
+                {
+                    if (!warnedFull) { warnedFull = true; RallyLog.Warn($"signs: collider pool full, {nearPosts.Count - i} posts beyond {math.sqrt(d2):0} m have no collision (nearest first)"); }
+                    break;
+                }
+                t.Handles.Add(h);
             }
         }
 

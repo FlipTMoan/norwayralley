@@ -217,3 +217,17 @@
 - "Esc doesn't work" was not reproducible in the build; before changing input code, test the real build with trusted
   key events and different focus states, then fix what the test shows (no touch counterpart, missing hint) instead of
   rewriting the key path.
+
+## 2026-11-20 — obstacles and minor-road speed: survey drivers and shared test helpers
+- The first minor-road survey drove full throttle with a plain pursuit driver: every car flew off the road at the first
+  bend and spent 30–70 % "off road", which looked like a road-detection bug. A survey driver must brake for the bends
+  ahead (lateral limit from the line's curvature) and log its own deviation; only then the off-road time is the car's.
+  The careful run showed 0 % "on the ribbon but off road" — the real cause was the edge rule, not missing roads.
+- Probing the drawn road's steepest 4 m per link found what speed logs could not: graded steps of 6–20 m where two ways
+  meet end to end (every car stuck at 10–20 km/h). Log the ground profile at the worst spot, not only speeds.
+- `Worlds.FlatRoad()` defaults to gravel: a new gravel speed limit broke the gearbox and engine-damage tests, which
+  were about the drivetrain, not the surface. When a rule depends on a surface, grep the shared test helpers' defaults.
+- A P-controller (gain on lateral error and yaw) to hold a line beside a road oscillated off at 150 km/h; aim at a point
+  30 m + 1 s ahead and steer by the heading error (the ScriptedDriver way).
+- To show a test fails on the old code without a worktree: copy the new files aside, `git show HEAD:<file> > <file>`
+  for just the files under test, run the filtered tests, copy back (diff to confirm the restore).

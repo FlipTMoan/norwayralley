@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Rally.Core;
 using Rally.Vehicle;
 using Unity.Mathematics;
 
@@ -51,7 +52,7 @@ namespace Rally.Tests.Edit.Vehicle
 
         static (float top, float at8s) Drive(float engineDamage)
         {
-            var car = new TestCar(Worlds.FlatRoad());
+            var car = new TestCar(Worlds.FlatRoad(Surface.Asphalt));   // asphalt: the healthy top is above the gravel limit
             car.S.Damage.Engine = engineDamage;
             var input = TestCar.Input(1f);
             float top = 0f, at8 = 0f;

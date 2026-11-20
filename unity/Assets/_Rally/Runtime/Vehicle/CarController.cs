@@ -87,8 +87,15 @@ namespace Rally.Vehicle
 
         Rigidbody rb;
         BoxCollider box;
-        readonly Collider[] overlaps = new Collider[16];
-        readonly RaycastHit[] castHits = new RaycastHit[16];
+        // Room for a dense spot (a forest edge by a house with a sign): 16 used to drop contacts silently.
+        readonly Collider[] overlaps = new Collider[64];
+        readonly RaycastHit[] castHits = new RaycastHit[64];
+        readonly Collider[] startOverlaps = new Collider[64];
+        int placedResets = -1;
+        /// <summary>The car's house test reaches this deep (m) before the footprint push takes over from the wall mesh's own push-out.</summary>
+        public const float FootprintDeep = 0.5f;
+        /// <summary>A spin faster than this per frame (rad) is swept in steps, so a corner does not swing through a trunk or post.</summary>
+        public const float YawStep = 15f * Mathf.Deg2Rad;
         bool jumpLatch;
         readonly CarDiagnostics diag = new CarDiagnostics();
         /// <summary>Contact / sudden slow-down counters behind the "collision:" log lines.</summary>
@@ -133,12 +140,13 @@ namespace Rally.Vehicle
         public void SetRoute(IRoute route)
         {
             Route = route;
-            if (Ground != null) { CarSim.Reset(ref state, Spec, Ground, route); ApplyPose(); }
+            if (Ground != null) { CarSim.Reset(ref state, Spec, Ground, route); Place(); ApplyPose(); }
         }
 
         public void ResetTo(float2 xz, float yaw)
         {
             CarSim.Reset(ref state, Spec, Ground, xz, yaw);
+            Place();
             ApplyPose();
         }
 
@@ -164,6 +172,10 @@ namespace Rally.Vehicle
             lastInput = input;
             int gearBefore = state.Gear;
             var before = state.Pos.xz;
+            float yawBefore = state.Yaw;
+            var visBefore = state.VisualPos;
+            var rotBefore = state.VisualRotation;
+            int resetsBefore = state.Resets;
             float damageBefore = state.Damage.Total;
             // On a bridge the ground answers for the car's own height: the deck while it is up there, the river bed under it.
             var layered = Ground as ILayeredGround;
@@ -171,9 +183,17 @@ namespace Rally.Vehicle
             CarSim.Step(ref state, Spec, input, Ground, Route, ReadOnlySpan<WallBox>.Empty, dt);
             // Colliders moved this frame (the tree pool, a FloatingOrigin rebase of the tile roots) reach PhysX queries only
             // at the next simulation step with autoSyncTransforms off: sync first, or the car tests stale positions.
+            long solidsT0 = System.Diagnostics.Stopwatch.GetTimestamp();
             Physics.SyncTransforms();
-            SweepWalls(before);
+            if (state.Resets != resetsBefore) Place();   // the sim fished the car out of deep water (CarSim sink recovery)
+            else
+            {
+                SweepYaw(before, yawBefore, visBefore, rotBefore);
+                SweepWalls(before);
+            }
+            PushOutOfHouses(FootprintDeep);
             ResolveCollisions();
+            diag.SolidsTime(System.Diagnostics.Stopwatch.GetTimestamp() - solidsT0);
             diag.Watch(ref state, input, Ground, dt, damageBefore);
             if (layered != null) layered.ReferenceY = float.NaN;
             if (state.Gear != gearBefore) Shifted?.Invoke(gearBefore, state.Gear);
@@ -256,6 +276,114 @@ namespace Rally.Vehicle
             state.Pos.z = from.y + move.y / len * keep;
             state.VisualPos.x = state.Pos.x + offset.x;
             state.VisualPos.z = state.Pos.z + offset.y;
+        }
+
+        /// <summary>
+        /// Every placement goes through here (spawn, restart, new stage, ESC / MENU restart, multiplayer slot, sink recovery,
+        /// any <see cref="ResetTo"/>): the pooled colliders are moved to the new spot first, and when the car box there overlaps
+        /// a solid (a house footprint, a tree, a sign post, a bridge rail) the car goes to the nearest free spot along the road
+        /// (2 m steps, both ways, up to 60 m). With nothing free it stays and the per-frame push-out frees it.
+        /// </summary>
+        void Place()
+        {
+            placedResets = state.Resets;
+            if (Ground == null || box == null) return;
+            (Ground as ISolidGround)?.RefreshColliders(state.Pos);
+            Physics.SyncTransforms();
+            var start = state.Pos.xz; float yaw = state.Yaw;
+            if (IsFree(start, yaw)) return;
+            var along = CarSim.Forward(yaw);
+            if (Route != null) { var q = Route.Nearest(start, 60f); if (q.Hit) along = q.Tangent; }
+            for (int i = 1; i <= 60; i++)
+            {
+                var p = start + along * (((i + 1) / 2) * 2f * ((i & 1) == 1 ? 1f : -1f));
+                if (!Ground.IsLoaded(p) || !IsFree(p, yaw)) continue;
+                CarSim.Reset(ref state, Spec, Ground, p, yaw);
+                placedResets = state.Resets;
+                diag.Placed(start, p);
+                return;
+            }
+        }
+
+        /// <summary>The car box at a pose on the ground (10 cm clearance) touches no solid and no house footprint.</summary>
+        public bool IsFree(float2 xz, float yaw)
+        {
+            const float clear = 0.1f;
+            var rot = Quaternion.Euler(0f, yaw * Mathf.Rad2Deg, 0f);
+            var pos = new Vector3(xz.x, Ground.HeightAt(xz), xz.y);
+            if (Ground is ISolidGround solids)
+            {
+                var c = xz + CarSim.Forward(yaw) * box.center.z;
+                if (solids.FootprintPush(c, yaw, box.size.z * 0.5f + clear, box.size.x * 0.5f + clear, 0f, out _)) return false;
+            }
+            if (SolidLayers.value == 0) return true;
+            int n = Physics.OverlapBoxNonAlloc(pos + rot * box.center, box.size * 0.5f + Vector3.one * clear, overlaps, rot, SolidLayers, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n; i++) if (overlaps[i] != box && !IsShrub(overlaps[i])) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Houses as solids in plan view (<see cref="ISolidGround.FootprintPush"/>): a car deeper than <paramref name="minDepth"/> in a
+        /// footprint — wholly inside a house that streamed in around it, or more than half way through a wall, where the wall
+        /// mesh's nearest triangle would push it inward — is moved the shortest way out of the house, with the wall rule for its
+        /// speed (no damage: the car did not hit it). Shallow contacts stay with <see cref="ResolveCollisions"/>.
+        /// </summary>
+        void PushOutOfHouses(float minDepth)
+        {
+            if (!(Ground is ISolidGround solids)) return;
+            var c = state.Pos.xz + CarSim.Forward(state.Yaw) * box.center.z;
+            if (!solids.FootprintPush(c, state.Yaw, box.size.z * 0.5f, box.size.x * 0.5f, minDepth, out var push)) return;
+            float len = math.length(push);
+            CarSim.ApplyWallHit(ref state, push / len, len);
+            CarSim.SyncBodyVelocity(ref state);
+            state.VisualPos.xz = state.Pos.xz;
+            diag.HousePush(len);
+        }
+
+        /// <summary>
+        /// A spin of more than <see cref="YawStep"/> in one frame is checked in steps: the first intermediate pose (position and
+        /// rotation interpolated) that touches a solid the car was not already touching stops the turn there (refined by
+        /// bisection), so <see cref="ResolveCollisions"/> pushes the car out of a shallow contact instead of the corner having
+        /// swung through a trunk or past a wall.
+        /// </summary>
+        void SweepYaw(float2 fromXZ, float fromYaw, float3 fromVis, quaternion fromRot)
+        {
+            if (SolidLayers.value == 0) return;
+            float dYaw = CarSim.WrapAngle(state.Yaw - fromYaw);
+            int steps = (int)math.ceil(math.abs(dYaw) / YawStep);
+            if (steps < 2) return;
+            var toXZ = state.Pos.xz; var toVis = state.VisualPos; var toRot = state.VisualRotation;
+            var half = box.size * 0.5f;
+            int already = Physics.OverlapBoxNonAlloc((Vector3)fromVis + (Quaternion)fromRot * box.center, half, startOverlaps, fromRot, SolidLayers, QueryTriggerInteraction.Ignore);
+            bool Hits(float t)
+            {
+                var rot = (Quaternion)math.slerp(fromRot, toRot, t);
+                var vis = (Vector3)math.lerp(fromVis, toVis, t);
+                int n = Physics.OverlapBoxNonAlloc(vis + rot * box.center, half, overlaps, rot, SolidLayers, QueryTriggerInteraction.Ignore);
+                for (int i = 0; i < n; i++)
+                {
+                    var o = overlaps[i];
+                    if (o == box || IsShrub(o)) continue;
+                    bool old = false;
+                    for (int j = 0; j < already && !old; j++) old = startOverlaps[j] == o;
+                    if (!old) return true;
+                }
+                return false;
+            }
+            for (int k = 1; k < steps; k++)
+            {
+                float t = (float)k / steps;
+                if (!Hits(t)) continue;
+                float lo = (k - 1f) / steps, hi = t;
+                for (int b = 0; b < 4; b++) { float mid = (lo + hi) * 0.5f; if (Hits(mid)) hi = mid; else lo = mid; }
+                state.Yaw = fromYaw + dYaw * hi;
+                state.Pos.xz = math.lerp(fromXZ, toXZ, hi);
+                state.VisualPos = math.lerp(fromVis, toVis, hi);
+                state.VisualRotation = math.slerp(fromRot, toRot, hi);
+                state.YawVel *= 0.5f;
+                CarSim.SyncBodyVelocity(ref state);
+                return;
+            }
         }
 
         bool IsShrub(Collider c) => (TreeLayers.value & (1 << c.gameObject.layer)) != 0 && c is CapsuleCollider cap && cap.height < ThinTreeHeight;

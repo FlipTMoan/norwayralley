@@ -19,6 +19,8 @@ namespace Rally.Vehicle
         public float GroundVy;
         public float PrevGroundY;
         public bool HasPrevGroundY;
+        /// <summary>Counts <see cref="CarSim.Reset(ref CarState, in CarSpec, IGround, float2, float)"/> calls: CarController checks every new placement for solids.</summary>
+        public int Resets;
         public float Yaw, SpawnYaw, YawVel, VerticalVel, Bounce, BounceVel;
         public bool Grounded;
         public float Steer, SteerVisual, VF, VR, Speed;

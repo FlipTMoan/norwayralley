@@ -13,7 +13,7 @@ namespace Rally.Vehicle
     public sealed class CarDiagnostics
     {
         public const float DropKmh = 15f, Window = 0.2f;
-        public int Contacts, SuddenStops;
+        public int Contacts, SuddenStops, Placements, HousePushes;
         public string LastContact = "", LastSuddenStop = "";
         readonly float[] times = new float[64], speeds = new float[64];
         int head, count;
@@ -39,6 +39,31 @@ namespace Rally.Vehicle
             if (other == lastLogged && clock - lastLogAt < 0.5f) return;
             lastLogged = other; lastLogAt = clock;
             RallyLog.Info($"collision: {(snapped ? "broke through" : "hit")} {LastContact}, {speedInto * 3.6f:0} km/h into it, overlap {depth:0.00} m, car {s.SpeedKmh:0} km/h {s.SurfaceKind} at {Where(s)}");
+        }
+
+        /// <summary>Main-thread time of the car's solid tests (sync, sweeps, house push, overlap push-out): total, frames, worst (ms).</summary>
+        public double SolidsMs, SolidsMaxMs;
+        public int SolidsFrames;
+        public void SolidsTime(long ticks)
+        {
+            double ms = ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            SolidsMs += ms; SolidsFrames++; if (ms > SolidsMaxMs) SolidsMaxMs = ms;
+        }
+
+        /// <summary>A placement (spawn, reset) found a solid at the pose and moved the car along the road.</summary>
+        public void Placed(float2 from, float2 to)
+        {
+            Placements++;
+            RallyLog.Info($"collision: placed the car {math.distance(from, to):0} m along the road, the spot was inside a solid");
+        }
+
+        /// <summary>The car was deep in a house footprint (streamed in around it, or past a wall) and was moved out.</summary>
+        public void HousePush(float distance)
+        {
+            HousePushes++;
+            if (clock - lastLogAt < 0.5f) return;
+            lastLogAt = clock;
+            RallyLog.Info($"collision: pushed {distance:0.00} m out of a house footprint");
         }
 
         /// <summary>Once per frame after the sim and the collision pass.</summary>

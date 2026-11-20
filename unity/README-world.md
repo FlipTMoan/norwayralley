@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-20 (tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-20 (house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -8,6 +8,10 @@ Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 1. **Layers** (Project Settings → Tags and Layers): `Buildings`, `Trees`, `Props`, `Water`, `Actors`.
    The terrain has no collider — ground height comes from `IGround.HeightAt` (HeightGrid). Collision matrix:
    Actors ↔ Buildings/Trees/Props/Actors collide; Water is trigger-only.
+   Houses also keep their footprint rings (`BuildingSet.Rings`, metres from each `FootprintBox` centre): `TileWorld`
+   implements `ISolidGround.FootprintPush` over the coarse tiles within 50 m of the car (`Footprints`), which the car uses
+   where the wall mesh cannot judge (inside a house, past half way through a wall). `RefreshColliders` moves the tree pool
+   at once after a teleport. Sign posts take the prop pool nearest first; full pools are logged once.
 2. **WorldStyle asset** (Create → Rally → World Style): assign
    - `TerrainMaterial`: a material on `Rally/TerrainClipmap` with `_Albedo` (alpha = height) / `_Normals` Texture2DArrays of
      9 slices in `LandcoverSplat.Layer*` order: grass, conifer floor, birch floor, field, rock, heath, bog, snow, sand/gravel.

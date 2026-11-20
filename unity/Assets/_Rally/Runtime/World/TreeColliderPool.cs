@@ -17,6 +17,9 @@ namespace Rally.World
     public sealed class TreeColliderPool : System.IDisposable
     {
         public const float Radius = 40f;
+        /// <summary>A tree nearer than this without a collider is worth a warning (the car covers it in a few frames).</summary>
+        public const float WarnWithin = 15f;
+        bool warned;
         readonly CapsuleCollider[] pool;
         readonly Transform root;
         readonly TreeIndex index;
@@ -42,7 +45,14 @@ namespace Rally.World
         {
             hits.Clear();
             index.Query(carWorld.xz, Radius, hits);
-            if (hits.Length > pool.Length) hits.Sort(new ByDistance { Car = FloatingOrigin.ToUtm(carWorld.xz) });
+            if (hits.Length > pool.Length)
+            {
+                var car = FloatingOrigin.ToUtm(carWorld.xz);
+                hits.Sort(new ByDistance { Car = car });
+                // The pool covers the nearest trees; say so once if even trees close to the car were left without one.
+                float first = (float)math.distance(hits[pool.Length].Position, new double2(car.E, car.N));
+                if (first < WarnWithin && !warned) { warned = true; RallyLog.Warn($"trees: collider pool ({pool.Length}) full, trees from {first:0} m have no collision"); }
+            }
             int n = math.min(hits.Length, pool.Length);
             for (int i = 0; i < n; i++)
             {

@@ -38,6 +38,8 @@ namespace Rally.Vehicle
         public const float MaxSteerHigh = 0.08f;       // car.js:111 — rad at 50 m/s
         /// <summary>Damage: the speed an engine at damage 1 could still reach is nil; healthy it is above any gear (m/s).</summary>
         public const float DamageSpeedCapHealthy = 80f;
+        /// <summary>Gravel roads (tracks included): no car drives faster than this (m/s); asphalt is limited only by the car itself.</summary>
+        public const float GravelMaxSpeed = 120f / 3.6f;
         /// <summary>Wheelspin: m/s of slip per unit of drive demand over the surface's spin point (× Spin × SpinGain).</summary>
         public const float SlipPerGrip = 3f;
         /// <summary>Slip (m/s) at which a spinning wheel has lost the surface's full SpinLoss of traction (quadratic below it).</summary>
@@ -113,6 +115,7 @@ namespace Rally.Vehicle
         public static void Reset(ref CarState s, in CarSpec spec, IGround ground, float2 xz, float yaw)
         {
             s.Pos = new float3(xz.x, ground.HeightAt(xz), xz.y);
+            s.Resets++;
             s.Vel = float2.zero;
             s.GroundVy = 0f;
             s.HasPrevGroundY = false;
@@ -285,10 +288,15 @@ namespace Rally.Vehicle
             {
                 q = route.Nearest(s.Pos.xz, 120f);
                 half = q.HalfWidth > 0f ? q.HalfWidth : route.RoadWidth;
-                s.OnRoad = q.Distance <= half + 1.0f;
+                // On the road while a wheel is still on the drawn ribbon (carriageway + shoulder): on a 4.5 m minor road the
+                // centre used to leave the ribbon (3.25–3.75 m out) with the inside wheels still on it, and the rough-ground
+                // limit braked the car to its OffroadMax at up to 8 m/s² — "the car slows down on minor roads".
+                float wheelReach = RoadConstants.RoadShoulder + spec.Track * 0.5f;
+                s.OnRoad = q.Distance <= half + wheelReach;
                 // A stage line is one lane wide (and the endless line follows one road): a car on any drawn road is on the road,
                 // or the right lane of a two-lane road or a parallel road counted as rough ground and held the car at 50 km/h.
                 if (!s.OnRoad) { var gs = ground.SurfaceAt(s.Pos.xz); if (gs == Surface.Asphalt || gs == Surface.Gravel) { s.OnRoad = true; q.Surface = gs; } }
+                if (!s.OnRoad) { var gs = InnerWheelSurface(s, spec, ground); if (gs == Surface.Asphalt || gs == Surface.Gravel) { s.OnRoad = true; q.Surface = gs; } }
                 s.Progress = q.Progress;
                 s.RoadLift = RoadConstants.SurfaceLift(q.Distance, half);
             }
@@ -345,6 +353,21 @@ namespace Rally.Vehicle
 
             UpdateVisual(ref s, spec, ground, dt);
             UpdateWater(ref s, spec, ground, route, dt, speed);
+        }
+
+        /// <summary>
+        /// The surface under the front and rear wheel on one side: the side nearer the road when the centre is just off it
+        /// (a road the route does not know, e.g. a minor road beside the stage line). Water and rough ground answer Offroad.
+        /// </summary>
+        static Surface InnerWheelSurface(in CarState s, in CarSpec spec, IGround ground)
+        {
+            var f = Forward(s.Yaw); var r = Right(s.Yaw);
+            for (int i = 0; i < 4; i++)
+            {
+                var gs = ground.SurfaceAt(WheelWorld(s, spec, i, f, r));
+                if (gs == Surface.Asphalt || gs == Surface.Gravel) return gs;
+            }
+            return Surface.Offroad;
         }
 
         /* ---------------- substep (car.js:989 simulateStep) ---------------- */
@@ -406,6 +429,8 @@ namespace Rally.Vehicle
                 // Damage: a sick engine runs out of breath early.
                 float damageCap = DamageSpeedCapHealthy * (1f - s.Damage.Engine);
                 if (math.abs(vF) >= damageCap && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
+                // Gravel road: no drive past 120 km/h (a slower car tops out below it by itself).
+                if (s.OnRoad && s.SurfaceKind == Surface.Gravel && math.abs(vF) >= GravelMaxSpeed && Sign(driveAccel) == Sign(vF)) driveAccel = 0f;
                 vF += driveAccel * h;
                 if (drivetrain.Brake > 0f)
                 {
@@ -427,6 +452,12 @@ namespace Rally.Vehicle
                     // Rough ground bleeds off anything above the car's rough-ground speed (downhill, or arriving fast from the road).
                     float over = math.abs(vF) - spec.OffroadMax;
                     if (over > 0f) vF -= Sign(vF) * math.min(over, math.min(8f, 2f + over) * h);
+                }
+                else if (s.SurfaceKind == Surface.Gravel)
+                {
+                    // Onto gravel from asphalt above 120, or downhill: eased back to the limit (gentler than rough ground).
+                    float over = math.abs(vF) - GravelMaxSpeed;
+                    if (over > 0f) vF -= Sign(vF) * math.min(over, math.min(4f, 1f + over * 0.5f) * h);
                 }
                 if (s.WaterDepth > 0f)
                 {

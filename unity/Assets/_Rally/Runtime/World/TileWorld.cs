@@ -16,7 +16,7 @@ namespace Rally.World
     /// Height lookup order is stream.js: the 1 m tiles along the roads first, then the 8 m tiles, then the
     /// road profile and ribbon lift on top, exactly as car.js groundAt does it.
     /// </summary>
-    public sealed class TileWorld : IGround, ILayeredGround, IDisposable
+    public sealed class TileWorld : IGround, ILayeredGround, ISolidGround, IDisposable
     {
         public const int CoarseSlices = 96, FineSlices = 32, SplatRes = 128;
         /// <summary>
@@ -665,6 +665,37 @@ namespace Rally.World
             if (GroundRoad(p, 12, out var q) && q.Distance <= q.Half + RoadConstants.Shoulder) return WaterSample.Dry;
             var t = TileFor(TileKind.Coarse, p);
             return Water.WaterAt(t != null ? ((TileView)t.UserData).Water : null, p, CarvedHeightAt(p));
+        }
+
+        public void RefreshColliders(float3 world) { TreeColliders?.Update(world); Physics.SyncTransforms(); }
+
+        readonly List<TerrainTile> footprintTiles = new List<TerrainTile>(4);
+
+        /// <summary>
+        /// <see cref="ISolidGround.FootprintPush"/> over the houses of the coarse tiles within 50 m of the car (a house belongs to
+        /// the tile holding its centroid and is at most 90 m long): each house the car is deeper in than
+        /// <paramref name="minDepth"/> pushes it out of its outline box (<see cref="Footprints"/>); a few passes, since one push
+        /// can move the car into a neighbour.
+        /// </summary>
+        public bool FootprintPush(float2 centre, float yaw, float halfLength, float halfWidth, float minDepth, out float2 push)
+        {
+            push = 0f;
+            var u = FloatingOrigin.ToUtm(centre);
+            footprintTiles.Clear();
+            for (int i = 0; i < 4; i++)
+            {
+                var p = new Utm33(u.E + ((i & 1) == 0 ? -50 : 50), u.N + ((i & 2) == 0 ? -50 : 50));
+                if (Tiles.TryGetValue(TileKey.At(TileKind.Coarse, p), out var t) && !footprintTiles.Contains(t)) footprintTiles.Add(t);
+            }
+            var forward = new float2(math.sin(yaw), math.cos(yaw));
+            for (int pass = 0; pass < 4; pass++)
+            {
+                bool moved = false;
+                foreach (var t in footprintTiles)
+                    moved |= Footprints.PushOutOfSet(((TileView)t.UserData).Buildings, new double2(u.E, u.N), forward, halfLength, halfWidth, minDepth, ref push);
+                if (!moved) break;
+            }
+            return math.any(push != 0f);
         }
 
         public bool IsLoaded(float2 xz) => TileFor(TileKind.Coarse, FloatingOrigin.ToUtm(xz)) != null;

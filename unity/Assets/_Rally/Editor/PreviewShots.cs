@@ -71,6 +71,7 @@ namespace Rally.Editor
             lookSpots = Arg(args, "-previewLook");
             seams = Array.IndexOf(args, "-previewSeams") >= 0;
             glide = Array.IndexOf(args, "-previewGlide") >= 0;
+            minorSurvey = Array.IndexOf(args, "-previewMinor") >= 0;
             if (float.TryParse(Arg(args, "-previewBudgetMs"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var budgetMs)) WorkBudget.BaseMs = WorkBudget.FrameMs = budgetMs;   // A/B of the streaming budget (inf: no slicing)
             seamSpotsFile = Arg(args, "-previewSeamSpots");
             driveSecs = float.TryParse(Arg(args, "-previewDrive"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ds) ? ds : 0f;
@@ -120,6 +121,7 @@ namespace Rally.Editor
                         if (!settled && now - started < (live ? 200 : 40)) return;
                         Debug.Log($"PreviewShots: {world.Trees.Count} trees indexed, shooting");
                         if (roadDebug) RoadReport();
+                        if (minorSurvey) { MinorRoadReport(); Finish(0); return; }   // -previewMinor: the speed survey only
                         if (driveSecs > 0) { cam = game.MainCamera != null ? game.MainCamera : Camera.main; BenchPlan(); benchPoses.Clear(); step = 10; return; }   // -previewDrive: no shots, just the drive
                         if (mud) { MudPlan(); step = 30; return; }   // -previewMud: launches on each surface, no other shots
                         Plan();
@@ -245,7 +247,7 @@ namespace Rally.Editor
                         benchName = null;
                         {
                             var dc = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
-                            Debug.Log($"PreviewShots drive: {dc.Kind}, {dc.State.Distance:0} m driven, {dc.Diagnostics.Contacts} contacts, {dc.Diagnostics.SuddenStops} sudden slow-downs, damage {dc.Damage * 100:0} %");
+                            Debug.Log($"PreviewShots drive: {dc.Kind}, {dc.State.Distance:0} m driven, {dc.Diagnostics.Contacts} contacts, {dc.Diagnostics.SuddenStops} sudden slow-downs, damage {dc.Damage * 100:0} %, solids {dc.Diagnostics.SolidsMs / System.Math.Max(1, dc.Diagnostics.SolidsFrames):0.000} ms/frame avg, {dc.Diagnostics.SolidsMaxMs:0.00} ms max over {dc.Diagnostics.SolidsFrames} frames, {dc.Diagnostics.HousePushes} house pushes, {dc.Diagnostics.Placements} placements");
                             // The chase view at the end of the drive (one frame of the game camera), named after the car.
                             if (rt == null) rt = new RenderTexture(W, H, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
                             cam.targetTexture = rt; cam.Render();

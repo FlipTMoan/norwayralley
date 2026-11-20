@@ -1,8 +1,43 @@
 # Changes
 
-_Updated 2026-11-20 (Unity game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-20 (Unity: the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: the car always stays outside objects; full speed on minor roads, gravel roads max 120 km/h
+- **Houses were not solid at speed.** A car driven head-on (150 km/h) or sideways (100 km/h) into a house on 20 fps frames
+  ended inside it (new PlayMode test on the old code), a car wholly inside a house touches no wall triangle so nothing
+  pushed it out, and a car more than half way through a wall was pushed along the nearest triangle, which can be inward.
+  Each house now also keeps its footprint ring (`BuildingSet.Rings`); `Footprints` measures how deep the car box is in it
+  and pushes it the shortest way out of the house's outline box. `CarController` does that every frame once the car is
+  more than 0.5 m in (a house that streams in around the car, a wall passed through), shallow scrapes stay with the wall
+  mesh as before (`ISolidGround`, implemented by `TileWorld`).
+- **Every placement checks for solids**: spawn, restart, new stage, Esc / MENU restart, multiplayer slot, sink recovery,
+  any `ResetTo` (`CarState.Resets` counts `CarSim.Reset`). The tree colliders are moved to the new spot first; when the
+  car box overlaps a house, tree, sign post or bridge rail there, the car goes to the nearest free spot along the road
+  (2 m steps both ways, up to 60 m).
+- **Spins** of more than 15° in one frame are swept in steps: the first pose that touches something new stops the turn
+  there (refined by bisection), so a corner no longer swings through a trunk, post or wall.
+- **Pools never run out silently**: sign posts get the 128 pooled capsules nearest first (they went in tile order, so a
+  town could leave the post in front of the car without one) and a full pool is logged once; the tree pool logs when a
+  tree within 15 m is left without a collider; the car's overlap buffers grew from 16 to 64.
+- **Minor roads**: a survey (`PreviewShots -previewMinor`, every car along the longest links of every road class near
+  Sauda, live data) showed every minor road kind is in the road graph and drawn, and a car inside the drawn ribbon is on
+  the road. The slowdown came from the edge: the car counted as off road once its *centre* left the drawn ribbon
+  (3.25–3.75 m from the centre line of a 4.5 m road) and rough ground then braked it to its OffroadMax (50 km/h for the
+  911s) at up to 8 m/s² while the inside wheels were still on the road. Now the car is on the road while a wheel is on
+  the ribbon (`CarSim`: carriageway + shoulder + half the track, and the wheels' surface for roads the route does not know).
+- **Speed rules**: asphalt — only the car itself (its real top speed); gravel roads and tracks — at most 120 km/h (no
+  drive above it, a car arriving faster is eased back at up to 4 m/s²; slower cars stay a little under their asphalt top
+  on gravel); real off road (every wheel off the road) keeps each car's OffroadMax. The HUD surface tag follows the same
+  test. Help text updated.
+- Found, not fixed (road grading, not the car): two of 18 surveyed links have a graded step where two ways meet end to
+  end — 20 m at E 18718 N 6642102 (ways 616529092 / 616529632) and 6 m at E 10572 N 6643457 — that stops every car.
+- Tests: EditMode `MinorRoadSpeedTests` (per car asphalt = spec, gravel ≤ 120 and ≥ 85 % of min(spec, 120); eased back
+  from 200 km/h; inside wheels on a narrow ribbon = on the road, real off road = OffroadMax; every minor OSM kind is a
+  road with the right surface), `FootprintTests`; PlayMode `ObstacleTests` (head-on and sideways into a house, sideways
+  into a bridge rail, head-on into a sign post, spinning against a wall, spawned in a house / on a tree / on a post, a house
+  streamed in over a car partly and wholly inside, 20 fps). The gearbox and engine-damage tests now drive on asphalt.
 
 ### Unity: "Grand Tour Norway", a tidy start screen, the log minimised with a progress bar, Esc / MENU back to it
 - **Renamed** the Unity game to Grand Tour Norway (productName, page title, loader, start-screen logo "GRAND TOUR" /

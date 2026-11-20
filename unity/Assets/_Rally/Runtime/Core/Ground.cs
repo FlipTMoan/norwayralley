@@ -36,6 +36,21 @@ namespace Rally.Core
         float ReferenceY { get; set; }
     }
 
+    /// <summary>
+    /// Solids the car must stay out of beyond what a PhysX overlap can judge (CarController asks its ground for this, as it
+    /// does for <see cref="ILayeredGround"/>): building footprints in plan view, and pooled colliders that follow the car.
+    /// </summary>
+    public interface ISolidGround
+    {
+        /// <summary>Retarget the pooled colliders (trees) to a world position now: after a teleport, before testing it.</summary>
+        void RefreshColliders(float3 world);
+        /// <summary>
+        /// The shortest move (world xz) that takes the car box (centre, yaw, half extents) out of every house it reaches more than
+        /// <paramref name="minDepth"/> m into (its centre inside a footprint counts as infinitely deep); false when there is none.
+        /// </summary>
+        bool FootprintPush(float2 centre, float yaw, float halfLength, float halfWidth, float minDepth, out float2 push);
+    }
+
     /// <summary>A flat or analytic ground for tests and the editor.</summary>
     public sealed class FlatGround : IGround
     {

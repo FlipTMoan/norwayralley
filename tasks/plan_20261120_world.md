@@ -6,7 +6,7 @@ selection add a new mode: search for place names for start and end." + "Addition
 down onto the road ahead of car." + "Make a plan for all this before executing".
 
 Scope: the Unity game (unity/). Paths below are relative to unity/Assets/_Rally/Runtime.
-Order (one Unity instance at a time): A tiles → B streaming → H start screen + log bar + I rename → C obstacles + G minor-road speed → D road arrow + F finish banner. E (place search) needs no
+Order (one Unity instance at a time): A tiles → B streaming → H start screen + log bar + I rename → C obstacles + G minor-road speed → J tunnels + bridges → D road arrow + F finish banner. E (place search) needs no
 Unity editor and runs alongside A. One commit per section after my own test rerun + Chrome check.
 
 ## What the code does today (survey 2026-11-20)
@@ -51,14 +51,14 @@ Unity editor and runs alongside A. One commit per section after my own test reru
       Chrome); avg frame time not worse. Numbers before/after in the Review.
 
 ## C. The car always stays outside objects
-- [ ] One depenetration step that every placement goes through (spawn, restart, new stage, reset, sink recovery,
+- [x] One depenetration step that every placement goes through (spawn, restart, new stage, reset, sink recovery,
       teleport): if the car box overlaps a solid, move it to the nearest free spot along the road.
-- [ ] Stream-in guard: a building/bridge/sign collider that appears around the car pushes the car out along the shortest
+- [x] Stream-in guard: a building/bridge/sign collider that appears around the car pushes the car out along the shortest
       way out of the object's footprint (not the nearest triangle, which can be inward); a car fully inside a building
       mesh is detected (convex per-building colliders, or a footprint point-in-polygon test).
-- [ ] Spins: sweep the yaw change too (sub-step the overlap test when yaw changes > ~15° in a frame).
-- [ ] Pools: never run out silently — nearest objects first, grow or warn; overlap buffer bigger than 16.
-- [ ] Tests (PlayMode): high speed head-on and sideways into a building wall, bridge rail and sign post; spinning
+- [x] Spins: sweep the yaw change too (sub-step the overlap test when yaw changes > ~15° in a frame).
+- [x] Pools: never run out silently — nearest objects first, grow or warn; overlap buffer bigger than 16.
+- [x] Tests (PlayMode): high speed head-on and sideways into a building wall, bridge rail and sign post; spinning
       against a wall; spawn inside a building / tree / sign; a building streamed in on top of the car; 20 fps frames.
       Each ends with the car outside every solid. Frame-time cost checked with the bench.
 
@@ -94,14 +94,14 @@ User: "Also make sure the finish line is marked with a checkered banner over roa
 ## G. Full speed on minor roads; gravel max 120 km/h
 User: "It also seems like the car slows down when driving off on minor roads, it should allow the full speed range for the
 car model, but gravel roads max 120 while only limited by car make on asphalt."
-- [ ] Reproduce first: drive each car (scripted, flat and real terrain) onto minor roads of every OSM kind (unclassified,
+- [x] Reproduce first: drive each car (scripted, flat and real terrain) onto minor roads of every OSM kind (unclassified,
       residential, service, track grades 1–5, gravel/asphalt per NVDB Vegdekke) and log speed, OnRoad, surface, the cap that
       binds (OffroadMax, damage cap, drag, gravel grip) and whether a ribbon/road-graph entry exists there.
-- [ ] Likely causes to check: minor ways not in the road graph / not drawn (counted as off road → OffroadMax), the road
+- [x] Likely causes to check: minor ways not in the road graph / not drawn (counted as off road → OffroadMax), the road
       overlay of a tile not loaded yet when the car arrives (→ ties in with B), extra rolling drag or grip on gravel.
-- [ ] Rules after the fix: asphalt → only the car's own TopSpeed (power/aero); gravel (any drawn gravel road incl. tracks)
+- [x] Rules after the fix: asphalt → only the car's own TopSpeed (power/aero); gravel (any drawn gravel road incl. tracks)
       → min(car TopSpeed, 120 km/h); real off road keeps the car's OffroadMax. The HUD surface tag matches what binds.
-- [ ] Tests (EditMode, per car): top speed on asphalt = car spec; on gravel = min(spec, 120); on each minor road kind the
+- [x] Tests (EditMode, per car): top speed on asphalt = car spec; on gravel = min(spec, 120); on each minor road kind the
       car is OnRoad. Help text ("gravel: max 120 km/h"), README, CHANGES. Done with C (car code).
 
 ## H. Tidy start screen; log window minimised with a progress bar
@@ -144,6 +144,31 @@ User: "Also rename game to "Grand Tour Norway"".
       path — check that the game's cache and saved settings survive the rename (they use our own keys).
 - [x] Logo: the start-screen title restyled for the new name (same retro look, fits on a phone). Done with H.
 
+## J. Tunnels and bridges from the map
+User: "game needs to handle bridges and tunnels as well. when a tunnel or bridge is marked on map it should be generated"
+Today (checked 2026-11-20): bridges exist since 44add6f — a way tagged `bridge=*` is a span end to end, untagged roads
+get a bridge where they cross water; deck + rails + piers by BridgeMesh, car rides the deck (ILayeredGround). Tunnels are
+NOT handled: `tunnel=yes` ways are only kept out of random stages (RoadGraph.IsBarred) but are graded and carved like
+any road, i.e. a trench or a road draped over the mountain where the real road goes inside it; OSRM routes and free
+drive can still follow them.
+- [ ] Tunnels: a way tagged `tunnel=yes|building_passage|avalanche_protector` (not `culvert`, `no`) is graded as a straight
+      gentle profile between its two portals (no terrain following), the terrain above is NOT carved (the mountain stays),
+      the portals get a cut into the slope + a concrete portal face, and the tube is drawn (walls, roof, road ribbon inside,
+      lamps along the roof, darker lighting / exposure inside). The car drives on the tunnel floor, the mountain above is
+      not ground for it (ILayeredGround reference height, as for bridges), and the tube walls are solid (section C rules).
+      Camera: the chase camera stays inside the tube (no clipping into the mountain). Long tunnels (Lærdal 24.5 km) work.
+      `avalanche_protector` (rasoverbygg): an open-sided gallery roof instead of a full tube.
+- [ ] Tunnels in stages: OSRM routes and endless/free drive may go through tunnels now that they exist (keep random
+      stage picks preferring open roads); pace notes and the road arrow work inside.
+- [ ] Bridges: check that every tagged bridge is generated, not only over water: over roads (overpasses), railways,
+      valleys / gorges, and long viaducts; road under a bridge passes under its deck (no carve conflict); bridges on
+      `layer=*` ways. Fix what is missing (piers in valleys, railings, deck materials by `bridge:structure` if cheap).
+- [ ] Tests: a tunnel through a ridge (terrain above unchanged, floor height follows the portal profile, the car drives
+      through and is inside the tube), portals at load-order permutations / tile borders, an overpass bridge over another
+      road (both drivable), a valley bridge. Before/after shots at real places (e.g. a short Vestland road tunnel, an
+      E39 / Rv overpass, Atlanterhavsvegen's Storseisundbrua), bench cost, WebDev in Chrome.
+- [ ] Docs, help text (tunnels), CHANGES. Done after C+G (needs the collision rules), before D+F unless the user says otherwise.
+
 ## Next (separate plan)
 - Landmarks, photo camera and photo album: tasks/plan_20261120_landmarks.md (after A–H).
 
@@ -152,6 +177,44 @@ User: "Also rename game to "Grand Tour Norway"".
 - Collisions with ghost cars of other players, and new object kinds (fences, poles, rocks) that don't exist today.
 
 ## Review
+
+### C. Obstacles + G. Minor-road speed (done 2026-11-20)
+- **Survey checked first.** True: box sweep + overlap push-out, 96 tree capsules (nearest first already), per-tile
+  non-convex building MeshColliders (one-sided wall quads), bridge rails on layer Buildings, 128 sign capsules, no check at
+  any placement, yaw not swept, 16-overlap buffer, silent pools. Worse than listed: on 20 fps frames a car driven head-on
+  (150 km/h) or sideways (100 km/h) into a house ended **inside** it (new PlayMode test, old code: 6 of 8 obstacle tests
+  fail; sign post and rail held).
+- **C changed:** `World/Footprints.cs` (depth of the car box in a footprint ring; separating-axis push out of the house's
+  outline box), `BuildingSet.Rings`, `ISolidGround` (Core) implemented by `TileWorld` (`FootprintPush` over the coarse tiles
+  within 50 m, `RefreshColliders` = tree pool now). `CarController`: `Place()` on `SetRoute` / `ResetTo` / sink recovery
+  (`CarState.Resets`): refresh pools, `IsFree` (OverlapBox + footprint), else nearest free spot along the road (2 m steps,
+  ±60 m); `SweepYaw` (spins > 15°/frame stepped, bisected to the first new contact); `PushOutOfHouses` (> 0.5 m deep →
+  shortest way out, wall rule, no damage; shallow stays with the mesh); buffers 64. `SignLayer` acquires nearest first and
+  logs a full pool once; `TreeColliderPool` logs a tree < 15 m left without a collider. Diagnostics: placement / house push
+  lines, solids time per frame.
+- **G cause (measured, `PreviewShots -previewMinor`, every car along the 18 longest links of each class/surface at Sauda,
+  live):** all minor kinds (unclassified, residential, living_street, service, track) are fetched, graded and drawn; with a
+  careful driver the car is on the road 100 % and "on the ribbon but counted off road" is 0 %. The slowdown is the edge
+  rule: off road once the car's centre leaves the ribbon (3.25 m on the stage line, 3.75 m drawn, on a 4.5 m road) while
+  the inside wheels are still on it, and then rough ground bleeds the car to OffroadMax (50 km/h for the 911s) at up to
+  8 m/s². No damage cap, drag or grip effect bound on drawn roads. Second cause found, **not fixed** (road grading, section
+  A territory): graded steps where two ways meet end to end — 20 m at E 18718 N 6642102 (ways 616529092 704.2 m /
+  616529632 723.7 m, DTM 714.7 m; every car stuck at 10–20 km/h) and 6 m at E 10572 N 6643457 (517168907 / 238636705).
+  Two other >100 % "steps" were the probe reading a bridge deck's top (cars there see the right surface).
+- **G changed:** `CarSim`: on the road while a wheel is on the ribbon (half + shoulder + track/2 on the route; else
+  `SurfaceAt` at the centre and the four wheels); `GravelMaxSpeed` 120 km/h (no drive above it on a gravel road, eased
+  back at ≤ 4 m/s²). HUD tag uses the same `OnRoad`/`SurfaceKind`. Help text, unity/README, ARCHITECTURE (mermaid),
+  README-world, CHANGES. After: on gravel links every car tops at 120 (736 105–107, Volvo 117–120), asphalt unchanged.
+- **Frame cost** (live Sauda, `-previewDrive 60`, A/B with the old CarController + the same timer, GPU 93 % busy):
+  solids work 0.053 / 0.058 → 0.067 / 0.067 ms per frame avg (+0.01 ms), max 3.0–4.9 ms either way (Physics.SyncTransforms
+  after a streaming frame). Frame time avg 10.6 / 8.7 → 9.6 / 10.4 ms: noise of the busy GPU.
+- **Tests:** EditMode `MinorRoadSpeedTests` (4; 3 fail on the old CarSim: Porsche 191 km/h on gravel, 224 after 12 s,
+  narrow-road wheel), `FootprintTests` (5); PlayMode `ObstacleTests` (8; 6 fail on the old CarController). Gearbox and
+  engine-damage tests moved to asphalt (they drove on the gravel default above 120). EditMode 230/230, PlayMode 23/23. WebDev build checked in Chrome: loads, start screen, help line, START drives, HUD (GRAVEL tag), no console errors.
+- **Open:** junction steps in road grading (above); bridge rails are still one non-convex MeshCollider (a car straddling a
+  rail goes to the side its centre is on); L-shaped houses push out of their outline box (can move the car further than
+  the wall when deep in the notch side); `IsFree` ignores sign posts not yet in the pool (0.2 s refresh), the next frame's
+  push-out frees the car.
 
 ### H. Start screen, LOG bar, Esc / MENU + I. Rename to Grand Tour Norway (done 2026-11-20)
 - **Esc, checked in the real WebDev build first (Chrome, trusted key events):** Esc → start screen worked from racing

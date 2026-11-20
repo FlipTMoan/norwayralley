@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-20 (Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-20 (Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -294,9 +294,28 @@ flowchart LR
 
 Each prefab's `CarController.Kind` picks its `CarSpec`; the wheel pivots sit at the spec's axles, so the builder logs the
 geometry it measures and warns when CarSpec drifts from the model. A car whose model is not in Art/Cars yet (the buggy)
-is left out of the scene list and so out of the chooser. On the road a car is "on the road" when it is within the stage
-line's lane or on any road the world draws (`IGround.SurfaceAt`); top speed comes from `CarSpec.Aero`, the off-road limit
-from `CarSpec.OffroadMax`.
+is left out of the scene list and so out of the chooser. A car is "on the road" while a wheel is on the stage
+line's ribbon or on any road the world draws (`IGround.SurfaceAt` at the centre and the wheels); top speed on asphalt comes
+from `CarSpec.Aero`, gravel roads stop at `CarSim.GravelMaxSpeed` (120 km/h), the off-road limit is `CarSpec.OffroadMax`.
+
+### Unity solids: the car stays outside objects (2026-11-20)
+
+```mermaid
+flowchart TD
+    PLACE[SetRoute / ResetTo / sink recovery<br/>CarState.Resets changed] --> REF[ISolidGround.RefreshColliders:<br/>tree pool at the new spot]
+    REF --> FREE{IsFree: OverlapBox on Buildings/Trees/Props<br/>+ FootprintPush depth 0}
+    FREE -->|blocked| ALONG[next spot along the road<br/>2 m steps both ways, ≤ 60 m]
+    ALONG --> FREE
+    STEP[CarSim.Step] --> YAW[SweepYaw: spin over 15°/frame<br/>stepped overlap, bisect to first new contact]
+    YAW --> SWEEP[SweepWalls: box cast along the move]
+    SWEEP --> HOUSE[PushOutOfHouses: deeper than 0.5 m in a footprint ring<br/>→ shortest way out of the outline box, TileWorld → Footprints]
+    HOUSE --> RES[ResolveCollisions: OverlapBox + ComputePenetration,<br/>wall rule + damage]
+```
+
+Houses are `BuildingSet` per coarse tile: a combined wall/roof mesh with a MeshCollider (layer Buildings), an outline box
+(`FootprintBox`) and the footprint ring per house. PhysX alone cannot tell a car wholly inside a house (no triangle touched)
+and pushes a car past half way through a wall along the nearest triangle; the ring test catches both, so a house that
+streams in on top of the car, a replaced overlay or a fast hit always ends with the car outside.
 
 ### Unity start screen, LOG bar and MENU (2026-11-20)
 
