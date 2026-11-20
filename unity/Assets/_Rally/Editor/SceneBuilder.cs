@@ -52,7 +52,6 @@ namespace Rally.Editor
             // other assets loaded before it as dead references (the scene was saved with no PanelSettings: no HUD at all).
             var car = CreateCarPrefab();
             var garage = CarGarageBuilder.BuildAll(false);
-            EnsureArrowSprite();
             CreatePipeline();
             var profile = CreateVolumeProfile();
             var (tarmac, gravel) = RoadMaterials();
@@ -514,30 +513,6 @@ namespace Rally.Editor
             EditorSceneManager.SaveScene(scene, ScenePath);
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };   // the only scene: BuildWeb builds every enabled one
             Debug.Log("SceneBuilder: scene saved to " + ScenePath);
-        }
-
-        /// <summary>Hud.uss shows the pace note with resource('UI/arrow'); a plain 64 px arrow until an artist replaces it.</summary>
-        static void EnsureArrowSprite()
-        {
-            const string dir = "Assets/_Rally/Runtime/UI/Resources/UI", path = dir + "/arrow.png";
-            if (File.Exists(path)) return;
-            Directory.CreateDirectory(dir);
-            const int n = 64;
-            var tex = new Texture2D(n, n, TextureFormat.RGBA32, false);
-            var px = new Color32[n * n];
-            for (int y = 0; y < n; y++)
-                for (int x = 0; x < n; x++)
-                {
-                    // Pointing up: a triangle head (top 55 %) over a shaft.
-                    bool head = y >= n * 0.45f && Mathf.Abs(x - n * 0.5f) <= (n - y) * 0.9f;
-                    bool shaft = y < n * 0.45f && Mathf.Abs(x - n * 0.5f) <= n * 0.14f && y > n * 0.08f;
-                    px[y * n + x] = head || shaft ? new Color32(255, 196, 64, 255) : new Color32(0, 0, 0, 0);
-                }
-            tex.SetPixels32(px); tex.Apply();
-            File.WriteAllBytes(path, tex.EncodeToPNG());
-            UnityEngine.Object.DestroyImmediate(tex);
-            AssetDatabase.ImportAsset(path);
-            if (AssetImporter.GetAtPath(path) is TextureImporter ti) { ti.alphaIsTransparency = true; ti.mipmapEnabled = false; ti.SaveAndReimport(); }
         }
 
         // ---- helpers -----------------------------------------------------------------------------------------

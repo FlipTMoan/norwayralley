@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-20 (Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-20 (Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -204,7 +204,7 @@ flowchart TB
 | Track | Stage line (4 m samples, segment-nearest), pace notes (positive = left in Unity's frame), the seeded `RoadWalk` endless-stage generator. |
 | Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. The garage: one `CarSpec` per car (mass, power, gears, driven wheels, grip, travel, turbo lag, body box measured off the model) and `Garage` (wire ids, names, credits, card stats). |
 | Actors | Seeded encounters by land cover (moose, deer, sheep, reindeer north of 65°, pedestrians, dogs, cyclists, tractors), crossing state machine, hits and near misses. |
-| Gameplay | Phases, clock, penalties, retirement, share links in the JS formats, the bootstrap `GameController`. |
+| Gameplay | Phases, clock, penalties, retirement, share links in the JS formats, the bootstrap `GameController`. The road marks it owns: `RoadArrow` (the direction arrow lying on the road 15–30 m ahead, following the stage line or, in free drive, the road under the car; heights from the layered ground every frame, Rally/RoadMark) and `FinishGate` (checkered banner on two solid posts over the finish line, a checkered line painted across the road; re-placed twice a second). |
 | Net | PeerJS rooms byte-compatible with the JS wire format, ghost cars, ICE config with a TURN slot. |
 | UI / Presentation | HUD, start screen hooks, three cameras, CRT presenter, sun by hour/month/latitude. |
 

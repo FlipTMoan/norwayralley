@@ -157,7 +157,7 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   sends up to 48 tube pieces near the camera (where the rock over them is less than a cell's height above the crown, plus
   8 m out of each portal over the road) as `_TunnelA/_TunnelB`; `TerrainClipmap.shader TunnelClip` discards terrain pixels
   inside a piece between 0.25 m over its floor and 1 m over its crown in every pass (so light gets in at the mouth too).
-- **Querying a tunnel** (for the road arrow, finish banner, anything drawn on the road): `world.TunnelAt(xz, out spot)` (or
+- **Querying a tunnel** (the road arrow and the finish gate use it, as should anything drawn on the road): `world.TunnelAt(xz, out spot)` (or
   `(ground as ILayeredGround).TunnelAt`) with `ReferenceY` NaN (or the asker's height) gives `Floor` (the drivable surface),
   `Roof` (the arch's inside at that lateral offset), `Crown`, `Centre`/`Tangent` (world xz), `Lateral` and `Half` (wall face).
   Anything placed with `HeightAt` and NaN in a tube's plan sits on its floor (the stage line's `Y`); `RoadSample.Tunnel` /

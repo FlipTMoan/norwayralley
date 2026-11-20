@@ -63,13 +63,13 @@ Unity editor and runs alongside A. One commit per section after my own test reru
       Each ends with the car outside every solid. Frame-time cost checked with the bench.
 
 ## D. Direction arrow on the road ahead
-- [ ] A flat arrow mesh (unlit, semi-transparent, retro style) lying on the drawn road surface 15–30 m ahead (further
+- [x] A flat arrow mesh (unlit, semi-transparent, retro style) lying on the drawn road surface 15–30 m ahead (further
       at speed), following the road height and slope, pointing along the route towards the next turn; it bends with
       the corner for tighter turns. It is drawn on top of the road (no z-fight), never through the car, and fades near the
       car, under bridges/in water, and after the finish.
-- [ ] The HUD box keeps the distance and turn kind text (e.g. "120 HAIRPIN RIGHT"); the small HUD arrow goes away.
-- [ ] Free drive: points along the current road (no route line there).
-- [ ] Help text, README; tests for position (on the road, ahead of the car) and direction (matches the next turn).
+- [x] The HUD box keeps the distance and turn kind text (e.g. "120 HAIRPIN RIGHT"); the small HUD arrow goes away.
+- [x] Free drive: points along the current road (no route line there).
+- [x] Help text, README; tests for position (on the road, ahead of the car) and direction (matches the next turn).
 
 ## E. Route map: search place names for START and FINISH
 - [x] Two search boxes (START, FINISH) above the map; suggestions from Kartverket's stedsnavn API
@@ -82,13 +82,13 @@ Unity editor and runs alongside A. One commit per section after my own test reru
 
 ## F. Checkered finish banner over the road
 User: "Also make sure the finish line is marked with a checkered banner over road."
-- [ ] Today no gate is drawn in Unity (`StageRoute.Gate` exists but is unused). Build a finish gate at the finish pose:
+- [x] Today no gate is drawn in Unity (`StageRoute.Gate` exists but is unused). Build a finish gate at the finish pose:
       two posts beside the carriageway (spanning the drawn road width, standing on the ground, not in the ditch), a
       black-and-white checkered banner across the road at ~5 m clearance, and a checkered line painted across the road.
-- [ ] Posts are solids (section C rules); the banner is high enough for every car incl. the Ranger; visible from ~300 m
+- [x] Posts are solids (section C rules); the banner is high enough for every car incl. the Ranger; visible from ~300 m
       (LOD or simple mesh), lit like the world, no z-fight on the road line.
-- [ ] Placed for every stage (new stage, restart, shared links, endless sectors' finish); removed when the stage changes.
-- [ ] Test: gate centred on the route at the finish distance, banner above the road, posts outside the carriageway.
+- [x] Placed for every stage (new stage, restart, shared links, endless sectors' finish); removed when the stage changes.
+- [x] Test: gate centred on the route at the finish distance, banner above the road, posts outside the carriageway.
       Done together with D.
 
 ## G. Full speed on minor roads; gravel max 120 km/h
@@ -383,3 +383,41 @@ drive can still follow them.
 - **WebDev (WebGL 2, CPU carve) in Chrome**, `?drive=59.64314,6.319` on port 8093: loads, start screen with the car in
   Nestunnelen behind it, START ENGINE → chase view in the lamp-lit tube with the far portal open, HUD shown, no console
   errors (`scratchpad/tunnels/webdev_nestunnelen_chase.jpg`). The HUD surface tag read GRAVEL there (not checked further).
+
+### D. Road arrow + F. Finish gate + the GRAVEL tag in Nestunnelen (done 2026-11-20)
+- **Checked first** (`PreviewShots -previewStage`, new: car placed on the stage line with the engine running, any camera,
+  logs the car's surface, `SurfaceAt`, the arrow and the gate). Stage: OSRM Sauda → Saudasjøen through Nestunnelen
+  (5.1 km, pre-seeded in the file cache). Before: no gate; the HUD arrow only; and on the stage the car read **Gravel on
+  every asphalt road** (`SurfaceAt` Asphalt): the stage line's samples carry the stage default (gravel), so every stage was
+  held to the gravel 120 km/h. Free drive at `?drive=59.6433,6.3185`: ASPHALT while racing, but GRAVEL during the countdown
+  (a frozen car's `SurfaceKind` stayed the `Offroad` it was created with; on the road and not asphalt → GRAVEL). The tunnel
+  way is `surface=asphalt` in OSM; NVDB Vegdekke has a gap over the tube (fallback to the OSM tag works).
+- **Changed:** `Gameplay/RoadArrow.cs` (path along the stage line from the car's s, or a walk along the road in free drive;
+  3 vertices across per 1.5 m station on the layered ground at the car's level; fades near the car, dims under decks / in
+  water, ends at the finish), `Gameplay/FinishGate.cs` (layout + posts/banner on Rally/Tunnel, line paint, box colliders on
+  Buildings, re-placed every 0.5 s), `Gameplay/Resources/Marks/RoadMark.shader` (blend, Offset −2/−4, no depth write, lit
+  option), `GameController` (`FinishBefore`, `UpdateMarkers`, `GateS` incl. endless sector ends, chase camera ≥ 1 m over the
+  car's roof, `DebugMarkers`), `CarSim` (surface from the drawn road; `SurfaceKind` set before the frozen return), HUD arrow
+  removed (uxml/uss/HudController/HudSource.NoteAngle, `UI/arrow.png`, `SceneBuilder.EnsureArrowSprite`), help text, docs.
+- **Found on the way:** the Ranger's chase camera (2.4 m) looked along its 2.06 m roof: no road visible for ~40 m, the arrow
+  hidden at any distance on flat road and in tunnels. The rig's `ChaseUp` is now max(2.4, roof + 1 m) = 3.06 m for the Ranger.
+- **Numbers:** markers cost 0.23 ms/frame avg (max 8.4 ms, the first frame) over 9 300 frames of a 90 km/h glide (Porsche and
+  Ranger, live, GPU 48 % busy). Gate: posts ±4.55 m on a 2.25 m road (outside the shoulder, on the apron), banner 5.0 m up.
+  Surface on the stage before/after: Gravel → Asphalt at all 12 spots (bend, hairpin, tunnel, bridge, finish).
+- **Shots** (`scratchpad/arrow/`): `before_after.jpg`; full sets `before_{ranger,porsche}`, `after_ranger2`, `after_porsche`,
+  `after_free` (contact.jpg in each): bend in cameras 1/2/3, hairpin, tunnel (chase/seat/overhead), approach, bridge, finish
+  from 300 m / 50 m / passing under (chase + seat) and from the side.
+- **Tests:** EditMode `RoadMarkerTests` (6: on the road ahead incl. slope/tilt and distances, bends the way of the pace note
+  both sides, ends at the finish and fades near the car, free drive follows the road both ways, gate centred / posts solid
+  and outside the carriageway / follows a regrade, under a tunnel arch), `StageSurfaceTests` (1; fails on the old CarSim:
+  Offroad on the start line, Gravel after). EditMode 254/254, PlayMode 25/25.
+- **Open:** the overhead camera in a tunnel shows the mountain (the arrow is under it); on a crest the arrow beyond it is
+  hidden (as the road is); the gate stands where the OSRM line ends, which can be off the drawn road's centre by 1–2 m;
+  the gate at an overpass finish would stand on the upper deck (it asks the top surface); the post foot heights flicker
+  by ~0.5 m between refreshes at one spot (a fine tile fading in), harmless (buried) but rebuilds the mesh each 0.5 s there.
+- **WebDev in Chrome** (port 8095): the OSRM stage loads, START ENGINE → countdown with the yellow arrow on the road ahead,
+  the turn box reads `350 HAIRPIN LEFT` without the old arrow, tag ASPHALT during the countdown; no console errors seen.
+  `?drive=59.6433,6.3185` on a cold browser cache started the car on the mountain over Nestunnelen (its roads 3/38 in at
+  the start, J's open point); there it reads ASPHALT and on-road because free drive's `RoadNetworkRoute.Nearest` takes the
+  tube under the car (any layer) — not fixed here (route layer awareness belongs with J's tunnel code).
+

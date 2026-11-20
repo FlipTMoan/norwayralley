@@ -71,6 +71,7 @@ namespace Rally.Editor
             lookSpots = Arg(args, "-previewLook");
             poseSpec = Arg(args, "-previewPoses");
             carAtSpec = Arg(args, "-previewCarAt");
+            stageSpec = Arg(args, "-previewStage");
             seams = Array.IndexOf(args, "-previewSeams") >= 0;
             glide = Array.IndexOf(args, "-previewGlide") >= 0;
             minorSurvey = Array.IndexOf(args, "-previewMinor") >= 0;
@@ -127,7 +128,7 @@ namespace Rally.Editor
                         if (driveSecs > 0) { cam = game.MainCamera != null ? game.MainCamera : Camera.main; BenchPlan(); benchPoses.Clear(); step = 10; return; }   // -previewDrive: no shots, just the drive
                         if (mud) { MudPlan(); step = 30; return; }   // -previewMud: launches on each surface, no other shots
                         Plan();
-                        step = 2;
+                        step = stageSpec != null ? 40 : 2;
                         return;
                     case 2:   // pose → render one frame into the target → read back
                         if (now < waitUntil) return;
@@ -155,6 +156,10 @@ namespace Rally.Editor
                         if (!bench) { Finish(0); return; }
                         BenchPlan();
                         step = 10;
+                        return;
+                    case 40:   // -previewStage: the engine runs (live race HUD state, the arrow), then the shots
+                        if (game.Phase != Phase.Racing) return;
+                        step = 2;
                         return;
                     case 20:   // wait for the countdown, then the car floors it from rest
                         if (game.Phase != Phase.Racing) return;
@@ -249,7 +254,7 @@ namespace Rally.Editor
                         benchName = null;
                         {
                             var dc = UnityEngine.Object.FindAnyObjectByType<Rally.Vehicle.CarController>();
-                            Debug.Log($"PreviewShots drive: {dc.Kind}, {dc.State.Distance:0} m driven, {dc.Diagnostics.Contacts} contacts, {dc.Diagnostics.SuddenStops} sudden slow-downs, damage {dc.Damage * 100:0} %, solids {dc.Diagnostics.SolidsMs / System.Math.Max(1, dc.Diagnostics.SolidsFrames):0.000} ms/frame avg, {dc.Diagnostics.SolidsMaxMs:0.00} ms max over {dc.Diagnostics.SolidsFrames} frames, {dc.Diagnostics.HousePushes} house pushes, {dc.Diagnostics.Placements} placements");
+                            Debug.Log($"PreviewShots drive: {dc.Kind}, {dc.State.Distance:0} m driven, {dc.Diagnostics.Contacts} contacts, {dc.Diagnostics.SuddenStops} sudden slow-downs, damage {dc.Damage * 100:0} %, solids {dc.Diagnostics.SolidsMs / System.Math.Max(1, dc.Diagnostics.SolidsFrames):0.000} ms/frame avg, {dc.Diagnostics.SolidsMaxMs:0.00} ms max over {dc.Diagnostics.SolidsFrames} frames, {dc.Diagnostics.HousePushes} house pushes, {dc.Diagnostics.Placements} placements; {game.DebugMarkers()}");
                             // The chase view at the end of the drive (one frame of the game camera), named after the car.
                             if (rt == null) rt = new RenderTexture(W, H, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
                             cam.targetTexture = rt; cam.Render();
@@ -324,6 +329,7 @@ namespace Rally.Editor
             float3 c = car.position;
             float2 fwd = math.normalizesafe(((float3)car.forward).xz);
             float2 hillDir = HillDir(c, fwd);
+            if (stageSpec != null) { StageShots(rig); game.StartEngine(); return; }
             if (lookSpots != null || poseSpec != null || carAtSpec != null) { if (lookSpots != null) LookShots(lookSpots); PoseShots(rig); return; }
             if (seams) { SeamReport(); return; }
             shots.Enqueue(("02_hillside", () => Look(c.xz - hillDir * 30, 4, c.xz + hillDir * 600, 0.45f)));
@@ -835,6 +841,7 @@ namespace Rally.Editor
 
         static void Save(string name)
         {
+            if (name.StartsWith("skip")) { cam.targetTexture = null; return; }   // -previewStage: frames for the rig to settle
             if (name.EndsWith("_capture")) name = name.Substring(0, name.Length - 8);
             else if (name == "01_chase") { cam.targetTexture = null; return; }   // first frame: let the rig settle into the target
             var prev = RenderTexture.active;

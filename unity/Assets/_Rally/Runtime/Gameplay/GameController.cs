@@ -104,6 +104,11 @@ namespace Rally.Gameplay
         /// <summary>An endless stage starts on a road at most this far from the pin, else free drive.</summary>
         const double EndlessStartRadius = 1000;
         RoadGraphEdges edges;
+        /// <summary>The clock stops (and the finish gate stands) this far before the end of a stage line.</summary>
+        public const float FinishBefore = 6f;
+        RoadArrow arrow;                     // the direction arrow on the road ahead (RoadArrow)
+        FinishGate gate;                     // the checkered banner over the finish (an endless stage: over the end of the car's sector)
+        float gateTimer;
         readonly List<Utm33> stagePoints = new List<Utm33>();
         readonly List<float> sectorEnds = new List<float>();
         readonly List<Utm33> prefetchPath = new List<Utm33>();
@@ -119,6 +124,9 @@ namespace Rally.Gameplay
         public bool FreeDrive => flow.FreeDrive;
         /// <summary>Pace notes of the current stage line; −1 in free drive (for tests and tools).</summary>
         public int PaceNoteCount => turns?.Count ?? -1;
+        /// <summary>The road arrow and the finish gate (null until first shown), for tests and tools.</summary>
+        public RoadArrow Arrow => arrow;
+        public FinishGate Gate => gate;
         ActorManager actors;
         readonly Dictionary<CrossingActor, ActorView> actorViews = new Dictionary<CrossingActor, ActorView>();
         Session session;
@@ -560,17 +568,12 @@ namespace Rally.Gameplay
         {
             var draw = TunnelMesh.Build(lines, key.Origin, p => world.BaseHeightAt(p), out var solid, key.Bounds);
             if (draw == null) return;
-            if (tunnelMaterial == null)
-            {
-                var shader = Resources.Load<Shader>("Tunnel/Tunnel");
-                tunnelMaterial = shader != null ? new Material(shader) { name = "Tunnel" } : world.Style?.BuildingMaterial;
-            }
             var go = new GameObject("Tunnels " + key) { layer = RallyLayers.Buildings, isStatic = true };
             go.transform.SetParent(world.Root, false);
             go.transform.position = FloatingOrigin.ToWorld(key.Origin, 0);
             go.AddComponent<MeshFilter>().sharedMesh = draw;
             var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = tunnelMaterial;
+            mr.sharedMaterial = TunnelMaterial();
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; mr.receiveShadows = true;
             if (solid != null) go.AddComponent<MeshCollider>().sharedMesh = solid;
             tunnelObjects[key] = (go, draw, solid);
@@ -587,6 +590,17 @@ namespace Rally.Gameplay
                     }
                 }
             RallyLog.Info($"overlay: {key} tunnels: {tube * 5} m of tube, {portals} portals, {gallery * 5} m of avalanche gallery");
+        }
+
+        /// <summary>Rally/Tunnel: vertex-coloured, lit like the world outside and by the lamps inside (tunnels, the finish gate).</summary>
+        Material TunnelMaterial()
+        {
+            if (tunnelMaterial == null)
+            {
+                var shader = Resources.Load<Shader>("Tunnel/Tunnel");
+                tunnelMaterial = shader != null ? new Material(shader) { name = "Tunnel" } : world.Style?.BuildingMaterial;
+            }
+            return tunnelMaterial;
         }
 
         void DropBridges(TileKey key)
@@ -787,6 +801,10 @@ namespace Rally.Gameplay
             Rig.GroundHeight = world.HeightAt;
             Rig.Tunnel = world.TunnelAt;
             Rig.SeatEye = (Vector3)car.Spec.Eye;
+            // Behind a tall car (the Ford Ranger, 2.06 m) the chase camera at 2.4 m looked along its roof and saw no road
+            // for ~40 m: the camera rides at least 1 m over the car's roof, so the road arrow 15 m ahead shows.
+            if (baseChaseUp < 0f) baseChaseUp = Rig.ChaseUp;
+            Rig.ChaseUp = math.max(baseChaseUp, CarHeight() + 1f);
         }
 
         void WireSystems()
@@ -911,11 +929,83 @@ namespace Rally.Gameplay
             actors.Update(dt, carS, s.Pos.xz, s.Speed, CarSim.CarRadius);
             if (s.WaterDepth > 0.05f && s.Speed > 2f) world.Wake?.Add(s.Pos.xz, 0.3f);
             if (car.Wrecked) flow.Retire();
-            if (stage != null && walk == null && flow.Phase == Phase.Racing && carS >= stage.Length - 6f) flow.Finish();
+            if (stage != null && walk == null && flow.Phase == Phase.Racing && carS >= stage.Length - FinishBefore) flow.Finish();
             if (walk != null) Endless(carS);
             if (session != null && !session.Closed) session.SendState(Packet(ref s));
             if (Rig != null) Rig.Shake = CameraShake(s.Grounded, s.OnRoad, s.SurfaceKind, s.Speed);
             ShowHud(q);
+            UpdateMarkers(carS, dt);
+        }
+
+        /// <summary>
+        /// The road arrow every frame while the car is on the stage (countdown and racing; never after the finish), and the
+        /// finish gate placed again twice a second (a road graded again under it, the drawn road's width arriving, rebases).
+        /// </summary>
+        void UpdateMarkers(float carS, float dt)
+        {
+            ref var s = ref car.State;
+            float end = stage != null && walk == null ? stage.Length - FinishBefore : float.PositiveInfinity;
+            long t0 = FrameProbe.Start(), w0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (arrow == null) arrow = new RoadArrow();
+            // behind a tall car the chase camera sees the road only further out
+            float seen = Rig != null && Rig.CurrentMode == CameraRig.Mode.Chase ? RoadArrow.SeenOver(CarHeight(), Rig.ChaseBack, Rig.ChaseUp) : 0f;
+            if (flow.Phase == Phase.Countdown || flow.Phase == Phase.Racing) arrow.Update(route, world, s.Pos, s.Yaw, s.Speed, carS, end, dt, seen);
+            else arrow.Hide();
+            gateTimer -= dt;
+            if (gateTimer <= 0f) { gateTimer = 0.5f; PlaceGate(carS); }
+            FrameProbe.Stop("markers", t0);
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - w0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            markersMs += ms; markersFrames++; markersMax = math.max(markersMax, (float)ms);
+        }
+
+        double markersMs; int markersFrames; float markersMax;   // the arrow and gate's own cost (DebugMarkers, the bench)
+
+        float carHeight = -1f, baseChaseUp = -1f;
+        CarController heightOf;
+
+        /// <summary>The car's height over its pivot (its body's renderers), measured once per car.</summary>
+        float CarHeight()
+        {
+            if (heightOf == car && carHeight >= 0f) return carHeight;
+            heightOf = car; carHeight = 1.4f;
+            bool any = false; var b = new Bounds();
+            foreach (var r in car.GetComponentsInChildren<MeshRenderer>()) { if (!any) b = r.bounds; else b.Encapsulate(r.bounds); any = true; }
+            foreach (var r in car.GetComponentsInChildren<SkinnedMeshRenderer>()) { if (!any) b = r.bounds; else b.Encapsulate(r.bounds); any = true; }
+            if (any) carHeight = b.max.y - car.transform.position.y;
+            return carHeight;
+        }
+
+        /// <summary>Where the gate stands: the finish line of a stage; on an endless stage the end of the sector the car is in; none in free drive.</summary>
+        float GateS(float carS)
+        {
+            if (stage == null) return float.NaN;
+            if (walk == null) return stage.Length - FinishBefore;
+            foreach (var e in sectorEnds) if (e > carS + 1f) return e;
+            return float.NaN;
+        }
+
+        void PlaceGate(float carS)
+        {
+            float gs = GateS(carS);
+            if (float.IsNaN(gs)) { gate?.Hide(); return; }
+            if (gate == null) gate = new FinishGate(TunnelMaterial(), world.Root);
+            var p = stage.SampleAtDistance(gs);
+            // the drawn carriageway's half width (the road graph's lanes), the stage's until the road is in
+            float half = roads.Nearest(FloatingOrigin.ToUtm(p.XZ), 12, out var h) ? h.Half : stage.RoadWidth;
+            gate.Refresh(p.XZ, p.Yaw, half, world);
+        }
+
+        /// <summary>One line on the arrow and the gate (PreviewShots).</summary>
+        public string DebugMarkers()
+        {
+            var sb = new System.Text.StringBuilder(FormattableString.Invariant($"markers {markersMs / math.max(1, markersFrames):0.000} ms/frame avg, {markersMax:0.00} max over {markersFrames} frames; "));
+            if (arrow != null) sb.Append(FormattableString.Invariant($"car height {carHeight:0.00} arrow {(arrow.Visible ? "on" : "off")} tail ({arrow.Tail.x:0.0},{arrow.Tail.y:0.00},{arrow.Tail.z:0.0}) tip ({arrow.Tip.x:0.0},{arrow.Tip.y:0.00},{arrow.Tip.z:0.0}) fade {arrow.Fade:0.00}"));
+            if (gate != null && gate.Root.activeSelf)
+            {
+                var g = gate.Current;
+                sb.Append(FormattableString.Invariant($" gate at ({g.Centre.x:0.0},{g.RoadY:0.00},{g.Centre.y:0.0}) posts ±{g.PostOffset:0.00} m (ground {g.LeftGround:0.00} / {g.RightGround:0.00}) road half {g.RoadHalf:0.00} banner {g.BannerBottom - g.RoadY:0.00} m up{(g.InTunnel ? " in a tunnel" : "")}"));
+            }
+            return sb.ToString();
         }
 
         /// <summary>Camera shake (CameraRig.Shake) from what the tyres run on: asphalt barely, gravel some, rough ground most, scaled by speed; none in the air.</summary>
@@ -964,7 +1054,6 @@ namespace Rally.Gameplay
                 {
                     var t = turns[next];
                     hud.NoteKind = NoteText(t);
-                    hud.NoteAngle = t.Angle;                      // positive = left (PaceNotes)
                     hud.NoteDistance = PaceNotes.RoundedDistance(t, q.S);
                 }
                 else hud.NoteKind = "";
@@ -1529,6 +1618,8 @@ namespace Rally.Gameplay
             if (car != null) Destroy(car.gameObject);
             car = null; audio = null;
             signs?.Dispose(); signs = null;
+            arrow?.Dispose(); arrow = null;
+            gate?.Dispose(); gate = null; gateTimer = 0f;   // its root is under the world's: before the world goes
             world.Dispose();
             world = null; roads = null; stage = null; route = null; walk = null; edges = null; turns = null;
             stagePoints.Clear(); sectorEnds.Clear(); prefetchPath.Clear(); lastSector = 0; prefetchAt = float.NegativeInfinity;

@@ -10,7 +10,6 @@ namespace Rally.UI
         public float StageTime, PenaltyTime;
         public float DistanceLeft;       // m to the finish (free drive: 0)
         public string NoteKind;          // "EASY LEFT", "HAIRPIN RIGHT", "CAUTION", "" (PaceNotes)
-        public float NoteAngle;          // signed degrees, + = left (PaceNotes convention)
         public int NoteDistance;         // m in 50 m steps, 0 = now
         public string Surface;           // ASPHALT / GRAVEL / OFF ROAD / WATER
         public float Damage;             // 0..1

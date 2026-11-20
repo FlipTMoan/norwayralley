@@ -244,3 +244,15 @@
   bug was only where the deck's centre line is nearer. Run new tests against the old code (stash runtime + tests) first.
 - Free drive "starts on the sea" when the start roads are late (Overpass mirrors failing): compare with the before run
   before calling it a regression.
+
+## 2026-11-20 — road arrow and finish gate: world coordinates go stale, and a mark must be seen from the camera
+- A preview tool that computed car poses (world xz) when planning the shots and used them seconds later put every car
+  after the first kilometres away: each far `ResetTo` rebases the floating origin. Keep UTM (or the stage distance) and
+  convert to world xz in the action that uses it.
+- The first road-arrow shots looked fine for the coupé and showed no arrow at all for the Ford Ranger: its 2.06 m roof
+  sat level with the 2.4 m chase camera and hid the road for ~40 m. Pushing the arrow further out did not help (it went
+  round the bend, out of view). Check a new on-road mark with the tallest car in every camera before tuning distances; the
+  fix was the camera (≥ 1 m over the roof), not the mark.
+- "GRAVEL in a tunnel" was two bugs, neither in the tunnel code: on a stage the car read the stage line's default surface
+  (gravel everywhere, so the 120 km/h gravel limit held every asphalt stage), and a frozen car (countdown) never updated
+  its surface. Log the car's own SurfaceKind next to `SurfaceAt` at the spot (`-previewStage`) before suspecting the data.

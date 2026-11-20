@@ -1,6 +1,6 @@
 # Grand Tour Norway — Unity 6 web build
 
-_Updated 2026-11-20 (solid houses, trees, posts and rails at every placement and spin; gravel roads max 120 km/h, on the road while a wheel is on it; renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
+_Updated 2026-11-20 (direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; solid houses, trees, posts and rails at every placement and spin; gravel roads max 120 km/h, on the road while a wheel is on it; renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game, named **Grand Tour Norway** since 2026-11-20 (the JS game keeps the name Retro
 Norway Rally). The rename touched only what the player sees (`productName`, page and start-screen title, the loader,
@@ -237,6 +237,39 @@ A new model: unpack it into `Art/Cars/<name>/` with a LICENSE.txt, list its part
 `-executeMethod Rally.Editor.CarGarageBuilder.ProbeFbx -probeFbx PATH`, add a `Model` entry (wheels, paint panels, nose
 direction, length, tailpipes, textures; every texture a car uses is imported at most 1024² and crunched, `CompressTextures`), a `CarKind`, a `CarSpec` and a `Garage`
 line, run `BuildSceneAndPictures`, copy the logged geometry into the spec and check the `-carShots` views.
+
+## Road arrow and finish gate
+
+The direction arrow lies on the road ahead of the car (`Runtime/Gameplay/RoadArrow.cs`; it replaced the small arrow in
+the pace-note box, which keeps the metres to the next turn and its kind, e.g. `100 HAIRPIN RIGHT`). It is a flat, unlit,
+semi-transparent yellow arrow (shaft 8 m, head 4.5 m) whose tail is 15 m ahead at rest and up to 30 m at speed
+(`AheadFor`). The chase camera rides at least 1 m over the car's roof (`GameController.WireCamera`: 3.06 m for the
+Ford Ranger, whose 2.06 m roof hid the road for ~40 m from the 2.4 m camera; unchanged for the other cars), and the arrow
+never lies nearer than the road the chase camera sees over the roof (`SeenOver`). On a stage it follows the stage
+line, so it bends with a corner and points the way the pace note says; in free drive it walks along the road the car is
+on in the direction the car faces (straight on across junctions). Every vertex is put on the drawn road each frame
+(`IGround.HeightAt`, the layered ground asked at the car's own level: on a deck it stays on the deck, under an overpass on
+the road below, in a tunnel on the floor), 5 cm up and drawn with `Resources/Marks/RoadMark.shader` (blended, depth
+offset, no depth write: no z-fight, never through the car). It fades out within 8–14 m of the car, dims under a bridge
+deck or in water, shows during the countdown and racing, and stops at the finish line.
+
+The finish gate (`Runtime/Gameplay/FinishGate.cs`) stands where the clock stops (`GameController.FinishBefore`, 6 m before
+the end of the stage line; on an endless stage over the end of the sector the car is in; none in free drive): two red and
+white posts 0.8 m outside the drawn road's shoulders (the road graph's width there), standing on the flat carve apron, a
+black-and-white checkered banner across the road 5 m up (in a tunnel lower, under the arch, at least 2.8 m), lit like the
+world (Rally/Tunnel vertex colours: lamp-lit in a tube) and casting shadows, and a checkered line painted across the
+carriageway (RoadMark, lit). The posts are box colliders on layer Buildings, solid for the car like house walls. The game
+places it again twice a second, so a road graded again under it, the road's width arriving with its tile or a rebase moves
+it; a new stage, restart, shared link or MENU → START ENGINE builds it for that stage.
+
+On a stage the surface the car reads (HUD tag and the gravel 120 km/h limit) comes from the drawn road under it
+(`IGround.SurfaceAt`), not from the stage line, which only knows the stage's default gravel: before, every asphalt road
+of a stage read GRAVEL and held the car to 120 km/h (Nestunnelen too), and during the countdown the tag read GRAVEL
+before the first step.
+
+`PreviewShots -previewStage "NAME|WHERE|CAM;…"` shoots the car placed on the stage line with the engine running (WHERE:
+metres, `end-N`, `bend`, `hairpin`, `tunnel`, `tunnelin`, `bridge`, `side-N` for a view across the line at the finish, or
+`@LAT,LON,YAWDEG`; CAM 1 overhead, 2 chase, 3 seat) and logs the surface the car reads, the arrow and the gate.
 
 ## Log window
 

@@ -7,7 +7,6 @@
       <ui:Label name="distLeft" text="" class="dist" />
     </ui:VisualElement>
     <ui:VisualElement name="turnBox" class="turnBox">
-      <ui:VisualElement name="arrow" class="arrow" />
       <ui:Label name="noteDist" text="300" class="noteDist" />
       <ui:Label name="noteKind" text="EASY LEFT" class="noteKind" />
     </ui:VisualElement>
@@ -118,7 +117,7 @@
           <ui:VisualElement class="helpRow"><ui:Label text="F2 or LOG bar" class="helpCell helpKey helpCol0" /><ui:Label text="log window, minimised to the LOG bar at the top: its progress bar shows how much of the world is loaded (the start area while loading, then everything around the car), the warning count is in red; click it or F2 to open, X to minimise. collision: lines say what stopped the car" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:VisualElement class="helpRow"><ui:Label text="F10 or F3" class="helpCell helpKey helpCol0" /><ui:Label text="debug window (phones: tap the speed three times)" class="helpCell helpKey helpCol1" /></ui:VisualElement>
           <ui:Label text="ON SCREEN" class="helpHead" />
-          <ui:Label text="Top left: stage time, penalty and distance to the finish. Top right: the pace note for the next turn - arrow, metres to it and its kind (EASY LEFT, HAIRPIN RIGHT ...). Bottom: speed in km/h, gear (R = reverse), rev bar (red near the limiter), the surface under the car (ASPHALT, GRAVEL, OFF ROAD, WATER) and the red damage bar. Off road, and less on gravel, the wheels spin under full power: the revs jump, mud or stones fly and the car pulls a little less - ease the throttle for grip." class="helpText" />
+          <ui:Label text="Top left: stage time, penalty and distance to the finish. Top right: the pace note for the next turn - metres to it and its kind (EASY LEFT, HAIRPIN RIGHT ...). The yellow arrow on the road 15-30 m ahead shows the way: it follows the route round the next bend (in free drive the road you are on). The finish is a checkered banner over the road with a checkered line under it. Bottom: speed in km/h, gear (R = reverse), rev bar (red near the limiter), the surface under the car (ASPHALT, GRAVEL, OFF ROAD, WATER) and the red damage bar. Off road, and less on gravel, the wheels spin under full power: the revs jump, mud or stones fly and the car pulls a little less - ease the throttle for grip." class="helpText" />
           <ui:Label text="STAGES" class="helpHead" />
           <ui:Label text="Route stage: on the MAP, search a town or place name in the START and FINISH boxes (or click the map, start then finish); each pin snaps to the nearest road and the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts (rooms go through the internet; phones cannot link over Bluetooth from a web page). Every stage is a link in the address bar you can share." class="helpText" />
           <ui:Label text="DATA" class="helpHead" />

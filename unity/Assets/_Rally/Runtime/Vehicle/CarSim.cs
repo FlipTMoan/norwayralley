@@ -295,8 +295,11 @@ namespace Rally.Vehicle
                 s.OnRoad = q.Distance <= half + wheelReach;
                 // A stage line is one lane wide (and the endless line follows one road): a car on any drawn road is on the road,
                 // or the right lane of a two-lane road or a parallel road counted as rough ground and held the car at 50 km/h.
-                if (!s.OnRoad) { var gs = ground.SurfaceAt(s.Pos.xz); if (gs == Surface.Asphalt || gs == Surface.Gravel) { s.OnRoad = true; q.Surface = gs; } }
-                if (!s.OnRoad) { var gs = InnerWheelSurface(s, spec, ground); if (gs == Surface.Asphalt || gs == Surface.Gravel) { s.OnRoad = true; q.Surface = gs; } }
+                // And the drawn road says what it is made of: the stage line only knows the stage's default (gravel), so on every
+                // asphalt road of a stage — Nestunnelen too — the car read GRAVEL and was held to the gravel 120 km/h.
+                var gs = ground.SurfaceAt(s.Pos.xz);
+                if (gs != Surface.Asphalt && gs != Surface.Gravel) gs = InnerWheelSurface(s, spec, ground);
+                if (gs == Surface.Asphalt || gs == Surface.Gravel) { s.OnRoad = true; q.Surface = gs; }
                 s.Progress = q.Progress;
                 s.RoadLift = RoadConstants.SurfaceLift(q.Distance, half);
             }
@@ -306,6 +309,10 @@ namespace Rally.Vehicle
                 s.Progress = 0f;
                 s.RoadLift = 0f;
             }
+
+            // Before the frozen return: a car waiting on the start line (countdown) shows the surface it stands on, not the
+            // Offroad it was created with (the HUD read GRAVEL there: on the road, and not asphalt).
+            s.SurfaceKind = s.OnRoad ? q.Surface : Surface.Offroad;   // car.js:944 (water counts as the gravel fallback)
 
             if (input.Frozen)
             {
@@ -327,7 +334,6 @@ namespace Rally.Vehicle
             s.Crash = 0f;
             int steps = math.clamp((int)math.ceil(dt / SubstepDt), 1, MaxSubsteps);
             float h = dt / steps;
-            s.SurfaceKind = s.OnRoad ? q.Surface : Surface.Offroad;   // car.js:944 (water counts as the gravel fallback)
             var surface = SurfaceModel.For(s.SurfaceKind);
             var drivetrain = UpdateDrivetrain(ref s, spec, input, dt);
             s.Throttle = drivetrain.Throttle;

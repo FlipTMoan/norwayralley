@@ -6,8 +6,7 @@
 .penalty { font-size: 18px; color: rgb(255, 80, 60); margin-left: 12px; }
 .dist { font-size: 14px; margin-left: 20px; margin-top: 10px; }
 .turnBox { position: absolute; top: 20px; right: 20px; flex-direction: row; align-items: center; padding: 10px 18px; background-color: rgba(0, 0, 0, 0.55); border-radius: 8px; }
-.arrow { width: 76px; height: 76px; background-image: resource('UI/arrow'); -unity-background-scale-mode: scale-to-fit; }
-.noteDist { font-size: 36px; margin-left: 14px; }
+.noteDist { font-size: 36px; }
 .noteKind { font-size: 13px; margin-left: 14px; }
 .bottom { position: absolute; bottom: 16px; left: 16px; right: 16px; flex-direction: row; align-items: flex-end; }
 .dial { flex-direction: row; align-items: flex-end; }

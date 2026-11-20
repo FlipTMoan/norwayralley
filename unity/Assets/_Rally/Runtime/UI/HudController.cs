@@ -5,15 +5,14 @@ namespace Rally.UI
 {
     /// <summary>
     /// UI Toolkit HUD (port of the HUD block in legacy-js/index.html + main.js): speed, gear, rpm bar, stage
-    /// clock, the pace-note box with a rotated arrow (turn box), surface tag and damage. Element names match
-    /// Hud.uxml. The arrow rotates by the signed turn angle, positive = left, same as the JS turn box after
-    /// the 2026-11-15 mirror fix.
+    /// clock, the pace-note box (metres to the next turn and its kind; the direction arrow lies on the road since
+    /// 2026-11-20, Gameplay/RoadArrow), surface tag and damage. Element names match Hud.uxml.
     /// </summary>
     [RequireComponent(typeof(UIDocument))]
     public sealed class HudController : MonoBehaviour
     {
         Label speed, gear, clock, penalty, noteKind, noteDist, surface, status, distLeft;
-        VisualElement rpmBar, arrow, damageBar, turnBox, startScreen, friends;
+        VisualElement rpmBar, damageBar, turnBox, startScreen, friends;
         Label startInfo, roomStatus;
         TextField roomCode;
 
@@ -39,7 +38,7 @@ namespace Rally.UI
             speed = root.Q<Label>("speed"); gear = root.Q<Label>("gear"); clock = root.Q<Label>("clock");
             penalty = root.Q<Label>("penalty"); noteKind = root.Q<Label>("noteKind"); noteDist = root.Q<Label>("noteDist");
             surface = root.Q<Label>("surface"); status = root.Q<Label>("status"); distLeft = root.Q<Label>("distLeft");
-            rpmBar = root.Q("rpmBar"); arrow = root.Q("arrow"); damageBar = root.Q("damageBar"); turnBox = root.Q("turnBox");
+            rpmBar = root.Q("rpmBar"); damageBar = root.Q("damageBar"); turnBox = root.Q("turnBox");
             if (!TryGetComponent<LogWindow>(out _)) gameObject.AddComponent<LogWindow>();   // the log window ships with the HUD, no scene edit needed
             startScreen = root.Q("startScreen"); friends = root.Q("friends");
             startInfo = root.Q<Label>("startInfo"); roomStatus = root.Q<Label>("roomStatus"); roomCode = root.Q<TextField>("roomCode");
@@ -215,7 +214,6 @@ namespace Rally.UI
             {
                 noteKind.text = f.NoteKind;
                 noteDist.text = f.NoteDistance > 0 ? f.NoteDistance.ToString() : "NOW";
-                arrow.style.rotate = new Rotate(new Angle(-f.NoteAngle, AngleUnit.Degree)); // screen: left = anticlockwise
             }
             surface.text = f.Surface;
             distLeft.text = f.DistanceLeft > 0 ? $"{f.DistanceLeft / 1000f:0.00} km" : "";

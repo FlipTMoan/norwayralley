@@ -1,8 +1,28 @@
 # Changes
 
-_Updated 2026-11-20 (Unity: road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-20 (Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: direction arrow on the road ahead; checkered finish gate; the surface on stages
+- **Road arrow.** The small arrow in the pace-note box is gone (the box keeps the metres and the kind, e.g.
+  `100 HAIRPIN RIGHT`); a flat, semi-transparent yellow arrow now lies on the road 15–30 m ahead of the car (further at
+  speed). The chase camera now rides at least 1 m over the car's roof (Ford Ranger 3.06 m instead of 2.4 m: from 2.4 m
+  it looked along the 2.06 m roof and saw no road for ~40 m; the other cars are unchanged). It
+  follows the stage line, so it bends with the next corner, and every vertex sits on the drawn road each frame (slope,
+  camber, a regraded road, bridge decks, tunnel floors; the road under an overpass, not the deck). Depth-offset blend
+  shader (`Rally/RoadMark`): no z-fight, never through the car; it fades near the car, dims under decks and in water,
+  and ends at the finish line. In free drive it walks along the road the car is on. `Gameplay/RoadArrow.cs`.
+- **Finish gate.** The Unity game drew no finish (`StageRoute.Gate` was unused): now two red and white posts just
+  outside the drawn road's shoulders, a black-and-white checkered banner 5 m over the road (under the arch in a tunnel)
+  and a checkered line painted across it where the clock stops; posts solid for the car; placed for every stage (new
+  stage, restart, shared links, MENU → START ENGINE; endless: the end of the car's sector) and placed again twice a
+  second as the road under it is graded or drawn. `Gameplay/FinishGate.cs`.
+- **ASPHALT read as GRAVEL on stages (Nestunnelen).** On a stage the car took its surface from the stage line, which
+  only knows the stage's default (gravel): every asphalt road of a stage — Nestunnelen too — showed GRAVEL and held the
+  car to the gravel 120 km/h. The drawn road under the car (`IGround.SurfaceAt`) now decides. In free drive the tunnel
+  read ASPHALT while racing, but GRAVEL during the countdown: the surface was not updated while the car waited.
+- Help text, unity/README, ARCHITECTURE. Tests: EditMode `RoadMarkerTests` (6), `StageSurfaceTests` (1).
 
 ### Unity: tunnels from the map; overpasses; ways meet at one height
 - **Tunnels.** A way tagged `tunnel=yes` used to be graded and carved like any road: a trench over the mountain or a road
