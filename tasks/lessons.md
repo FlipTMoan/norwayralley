@@ -155,3 +155,12 @@
   drives bit-for-bit as before.
 - Several existing tests sat within 1–3 % of their thresholds (736 off-road top 65.2 vs 65.0, Volvo 5.0 m vs 5 m). A
   `Spec.Spin = 0` A/B (EditMode or one PlayMode run) tells in minutes whether a failure is the new effect or the margin.
+
+## 2026-11-20 — fuller birches: shared textures, and assets swapped for A/B
+- The shrub drew from the birch leaf atlas: changing "birch" textures would have changed the shrub too. Before changing a
+  shared asset, grep which prototypes use it; here the shrub got its own copy (same seed, pixel-identical, checked).
+- `TreeBuilder` only regenerates a texture when its PNG is missing (or with Rebuild Art, which also regenerates ground and
+  road art): delete just the PNGs that should change before `SceneBuilder.Build`.
+- For before/after benches and "test fails on the old code" checks of generated assets, no worktree is needed: tar the
+  new `Settings/Trees`, `git checkout HEAD --` it, run, untar. Bench runs at one place differ by ±2 % in static poses
+  and the drive / forest-edge numbers are ruled by streaming hitches; repeat 3× and compare medians and p95.

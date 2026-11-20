@@ -34,7 +34,7 @@ namespace Rally.Editor
             public Vector4 Lods;                 // LOD0 → 1, 1 → 2, 2 → impostor, max distance
             public Color Foliage = Color.white, Bark = Color.white, Translucency;
             public Func<int, MeshBuilder> Build;
-            public string Textures;              // whose textures (mountain birch / shrub reuse birch)
+            public string Textures;              // whose textures (mountain birch reuses birch; the shrub has its own leaves on birch bark)
         }
 
         public static void Build(VegetationSetSO set, string dir, bool force)
@@ -46,15 +46,17 @@ namespace Rally.Editor
                            Translucency = new Color(0.35f, 0.45f, 0.15f) },
                 new Spec { Name = "pine", File = "pine", Height = 19f, TrunkRadius = 0.3f, Lods = new Vector4(70, 170, 360, 1000), Textures = "pine", Build = Pine,
                            Translucency = new Color(0.45f, 0.55f, 0.2f) },
-                new Spec { Name = "birch", File = "birch", Height = 15f, TrunkRadius = 0.18f, Lods = new Vector4(60, 150, 320, 900), Textures = "birch", Build = l => Birch(l, 101), Foliage = new Color(0.88f, 0.9f, 0.85f),
+                new Spec { Name = "birch", File = "birch", Height = 15f, TrunkRadius = 0.18f, Lods = new Vector4(60, 150, 320, 900), Textures = "birch", Build = l => Birch(l, 101), Foliage = new Color(0.95f, 0.98f, 0.9f),
                            Translucency = new Color(0.65f, 0.8f, 0.25f) },
                 new Spec { Name = "mountain birch", File = "mountain_birch", Height = 6f, TrunkRadius = 0.1f, Lods = new Vector4(45, 110, 240, 700), Textures = "birch", Build = MountainBirch,
-                           Foliage = new Color(0.9f, 0.92f, 0.85f), Translucency = new Color(0.6f, 0.75f, 0.25f) },
-                new Spec { Name = "shrub", File = "shrub", Height = 1.4f, TrunkRadius = 0.05f, Lods = new Vector4(25, 60, 140, 350), Textures = "birch", Build = Shrub,
+                           Foliage = new Color(0.97f, 1f, 0.9f), Translucency = new Color(0.6f, 0.75f, 0.25f) },
+                new Spec { Name = "shrub", File = "shrub", Height = 1.4f, TrunkRadius = 0.05f, Lods = new Vector4(25, 60, 140, 350), Textures = "shrub", Build = Shrub,
                            Foliage = new Color(0.62f, 0.7f, 0.55f), Bark = new Color(0.7f, 0.6f, 0.5f), Translucency = new Color(0.4f, 0.5f, 0.2f) },
             };
             var textures = new Dictionary<string, (Texture2D leaf, Texture2D leafN, Texture2D bark, Texture2D barkN)>();
             foreach (var name in new[] { "spruce", "pine", "birch" }) textures[name] = Textures(name, dir, force);
+            var (shrubLeaf, shrubLeafN) = Foliage("shrub", dir, force);
+            textures["shrub"] = (shrubLeaf, shrubLeafN, textures["birch"].bark, textures["birch"].barkN);
             if (set.Prototypes == null || set.Prototypes.Length != VegetationSetSO.SpeciesCount) set.Prototypes = new VegetationSetSO.Prototype[VegetationSetSO.SpeciesCount];
             bool canBake = SystemInfo.graphicsDeviceType != GraphicsDeviceType.Null && Shader.Find("Hidden/Rally/TreeBake") != null;
             for (int i = 0; i < specs.Length; i++)
@@ -244,16 +246,7 @@ namespace Rally.Editor
                 var c = AssetDatabase.LoadAssetAtPath<Texture2D>(bp); var d = AssetDatabase.LoadAssetAtPath<Texture2D>(bnp);
                 if (a && b && c && d) return (a, b, c, d);
             }
-            var leaf = new Canvas(Tex, Tex);
-            var rnd = new Random(species.GetHashCode() & 0x7fffffff);
-            switch (species)
-            {
-                case "spruce": FoliageAtlas.Spruce(leaf, rnd); break;
-                case "pine": FoliageAtlas.Pine(leaf, rnd); break;
-                default: FoliageAtlas.Birch(leaf, rnd); break;
-            }
-            var leafN = ProcTex.NormalsFromHeight(leaf.Height, Tex, Tex, 3f, wrap: false);
-            ProcTex.Dilate(leaf.Px, Tex, Tex, 8);
+            var (leafTex, leafNTex) = Foliage(species, dir, true);
             var bark = BarkTextures.Make(species, out var barkH);
             var barkN = new Color[Tex * Tex];
             for (int half = 0; half < 2; half++)   // each half tiles on its own
@@ -263,10 +256,33 @@ namespace Rally.Editor
                 var n = ProcTex.NormalsFromHeight(h, 256, Tex, 4f);
                 for (int y = 0; y < Tex; y++) for (int x = 0; x < 256; x++) barkN[y * Tex + half * 256 + x] = n[y * 256 + x];
             }
-            return (ProcTex.SavePng(lp, leaf.Px, Tex, Tex, imp => ProcTex.Colour(imp, Tex, cutout: true, clamp: true)),
-                    ProcTex.SavePng(lnp, leafN, Tex, Tex, imp => ProcTex.Normal(imp, Tex, clamp: true)),
+            return (leafTex, leafNTex,
                     ProcTex.SavePng(bp, bark, Tex, Tex, imp => ProcTex.Colour(imp, Tex)),
                     ProcTex.SavePng(bnp, barkN, Tex, Tex, imp => ProcTex.Normal(imp, Tex)));
+        }
+
+        /// <summary>The foliage atlas and its normal map; the shrub's is the birch sprays as they were before 2026-11-20 (same seed).</summary>
+        static (Texture2D, Texture2D) Foliage(string species, string dir, bool force)
+        {
+            string lp = $"{dir}/{species}_foliage.png", lnp = $"{dir}/{species}_foliage_n.png";
+            if (!force)
+            {
+                var a = AssetDatabase.LoadAssetAtPath<Texture2D>(lp); var b = AssetDatabase.LoadAssetAtPath<Texture2D>(lnp);
+                if (a && b) return (a, b);
+            }
+            var leaf = new Canvas(Tex, Tex);
+            var rnd = new Random((species == "shrub" ? "birch" : species).GetHashCode() & 0x7fffffff);
+            switch (species)
+            {
+                case "spruce": FoliageAtlas.Spruce(leaf, rnd); break;
+                case "pine": FoliageAtlas.Pine(leaf, rnd); break;
+                case "shrub": FoliageAtlas.Shrub(leaf, rnd); break;
+                default: FoliageAtlas.Birch(leaf, rnd); break;
+            }
+            var leafN = ProcTex.NormalsFromHeight(leaf.Height, Tex, Tex, 3f, wrap: false);
+            ProcTex.Dilate(leaf.Px, Tex, Tex, 8);
+            return (ProcTex.SavePng(lp, leaf.Px, Tex, Tex, imp => ProcTex.Colour(imp, Tex, cutout: true, clamp: true)),
+                    ProcTex.SavePng(lnp, leafN, Tex, Tex, imp => ProcTex.Normal(imp, Tex, clamp: true)));
         }
 
         // ---- species ----------------------------------------------------------------------------------------------
@@ -440,7 +456,8 @@ namespace Rally.Editor
 
         /// <summary>
         /// Birch (bjørk): slender white trunk with a black base, leaning a little, an oval crown of ascending branches
-        /// that arch over, hung with fine drooping twig cards with small light-green leaves. 15 m at scale 1.
+        /// that arch over, each with side branches, all hung with drooping twig sprays (Betula pendula / pubescens) that
+        /// overlap into a full crown; a few sprays in the crown's core so it does not read as sparse arms. 15 m at scale 1.
         /// </summary>
         static MeshBuilder Birch(int lod, int seed)
         {
@@ -460,11 +477,24 @@ namespace Rally.Editor
             mb.Tube(trunk, radii, lod == 0 ? 9 : lod == 1 ? 6 : 4, y => Smooth(0.5f, 2.4f, y), y => 0.5f + 0.5f * Smooth(0, H * 0.4f, y), y => 0.2f * y / H);
             var crownC = Axis(H * 0.65f);
             Func<Vector3, Vector3> nrm = p => { var d = p - crownC; d.y *= 0.8f; return (d.normalized + Vector3.up * 0.25f).normalized; };
-            int branches = lod == 0 ? 12 : lod == 1 ? 8 : 6;
+            int branches = lod == 0 ? 16 : lod == 1 ? 10 : 7;
+            int twigs = lod == 0 ? 8 : lod == 1 ? 6 : 4;
+            float size = lod == 0 ? 1.25f : lod == 1 ? 1.8f : 2.8f;
             float az0 = R(r, 0, 6.28f);
+            // A drooping twig spray hanging from `at`, outward along `h`; LOD 0 and 1 add a second card across it.
+            void Spray(Vector3 at, Vector3 h, float t, float k)
+            {
+                var hangDir = (h * R(r, 0.2f, 0.55f) + Vector3.down * 1f + RandomDir(r) * 0.25f).normalized;   // streamers: hang more steeply, long and narrow
+                var side = Vector3.Cross(hangDir, h).normalized;
+                if (side.sqrMagnitude < 0.01f) side = Perp(hangDir);
+                float len = R(r, 1.5f, 2.4f) * size * k, wid = R(r, 0.65f, 0.9f) * size * k;
+                int cell = r.Next(2);
+                mb.Card(at, hangDir, side, len, wid, lod == 2 ? 0 : 1, 0.15f, CellBirch(cell), nrm, 0.7f + 0.3f * t, 1f);
+                mb.Card(at, hangDir, (Quaternion.AngleAxis(R(r, 70, 100), hangDir) * side).normalized, len * 0.9f, wid * 0.85f, lod == 2 ? 0 : 1, 0.15f, CellBirch(1 - cell), nrm, 0.65f + 0.3f * t, 1f);
+            }
             for (int b = 0; b < branches; b++)
             {
-                float t = (b + 0.5f) / branches, y = Mathf.Lerp(H * 0.36f, H * 0.9f, t);
+                float t = (b + 0.5f) / branches, y = Mathf.Lerp(H * 0.33f, H * 0.91f, t);
                 az0 += Golden + R(r, -0.3f, 0.3f);
                 var h = Horizontal(az0);
                 float L = (2.2f + 2.8f * Mathf.Sin(Mathf.PI * (0.25f + 0.6f * (1 - t)))) * R(r, 0.8f, 1.15f) * (1 - 0.4f * t);
@@ -473,44 +503,69 @@ namespace Rally.Editor
                 var s = Axis(y);
                 var p1 = s + dir * L * 0.55f;
                 var p2 = p1 + (h * 1f + Vector3.down * 0.15f).normalized * L * 0.5f;   // arching over
-                mb.Tube(new List<Vector3> { s, p1, p2 }, new List<float> { 0.045f + 0.01f * L, 0.025f, 0.01f }, lod == 0 ? 4 : 3, y2 => 1f, _ => 0.6f, _ => 0.5f);
-                int twigs = lod == 0 ? 9 : lod == 1 ? 5 : 3;
-                float size = lod == 0 ? 1.25f : lod == 1 ? 1.7f : 2.6f;
+                float bk = lod == 0 ? 1f : 0.7f;
+                mb.Tube(new List<Vector3> { s, p1, p2 }, new List<float> { (0.045f + 0.01f * L) * bk, 0.025f * bk, 0.01f }, lod == 0 ? 4 : 3, _ => 1f, _ => 0.6f, _ => 0.5f);
+                Vector3 On(float u) => u < 0.55f ? Vector3.Lerp(s, p1, u / 0.55f) : Vector3.Lerp(p1, p2, Mathf.Clamp01((u - 0.55f) / 0.45f));
                 for (int k = 0; k < twigs; k++)
                 {
-                    float u = Mathf.Lerp(0.3f, 1f, k / (float)Mathf.Max(1, twigs - 1)) + R(r, -0.05f, 0.05f);
-                    var at = u < 0.55f ? Vector3.Lerp(s, p1, u / 0.55f) : Vector3.Lerp(p1, p2, Mathf.Clamp01((u - 0.55f) / 0.45f));
-                    var hangDir = (h * R(r, 0.3f, 0.7f) + Vector3.down * 1f + RandomDir(r) * 0.25f).normalized;   // drooping twigs
-                    var side = Vector3.Cross(hangDir, h).normalized;
-                    if (side.sqrMagnitude < 0.01f) side = Perp(hangDir);
-                    float len = R(r, 1.3f, 2.1f) * size, wid = R(r, 0.7f, 1.0f) * size;
-                    int cell = r.Next(2);
-                    mb.Card(at, hangDir, side, len, wid, lod == 2 ? 0 : 1, 0.15f, CellBirch(cell), nrm, 0.6f + 0.4f * t, 1f);
-                    if (lod == 0)
-                        mb.Card(at, hangDir, (Quaternion.AngleAxis(80, hangDir) * side).normalized, len * 0.9f, wid * 0.85f, 1, 0.15f, CellBirch(1 - cell), nrm, 0.55f + 0.4f * t, 1f);
+                    float u = Mathf.Lerp(0.25f, 1f, k / (float)Mathf.Max(1, twigs - 1)) + R(r, -0.05f, 0.05f);
+                    Spray(On(u), h, t, 1f);
                 }
+                // Side branches (LOD 0, 1): out of the arch at ±30–60°, drooping, each with its own sprays.
+                int sides = lod == 0 ? 2 : lod == 1 ? 1 : 0;
+                for (int k = 0; k < sides; k++)
+                {
+                    var at = On(R(r, 0.35f, 0.75f));
+                    var sh = Quaternion.AngleAxis((k == 0 ? 1 : -1) * R(r, 30, 60), Vector3.up) * h;
+                    float sl = L * R(r, 0.35f, 0.5f);
+                    var end = at + (sh + Vector3.down * R(r, 0.1f, 0.4f)).normalized * sl;
+                    if (lod == 0) mb.Tube(new List<Vector3> { at, end }, new List<float> { 0.018f, 0.007f }, 3, _ => 1f, _ => 0.65f, _ => 0.6f);
+                    int n = lod == 0 ? 3 : 2;
+                    for (int q = 0; q < n; q++) Spray(Vector3.Lerp(at, end, (q + 1f) / n), sh, t, 0.85f);
+                }
+            }
+            // The crown's core: sprays on short shoots near the stem, so the crown is full from inside, not a few arms.
+            int core = lod == 0 ? 10 : lod == 1 ? 5 : 3;
+            for (int k = 0; k < core; k++)
+            {
+                float t = (k + 0.5f) / core, y = Mathf.Lerp(H * 0.42f, H * 0.85f, t);
+                var h = Horizontal(az0 + k * Golden * 1.3f);
+                Spray(Axis(y) + h * R(r, 0.4f, 1.2f) * (1.2f - 0.6f * t), h, t, 0.9f);
             }
             // Top of the crown: a few upright twig cards so it ends in fine twigs, not a branch stump.
             int top = lod == 0 ? 6 : lod == 1 ? 3 : 2;
             for (int k = 0; k < top; k++)
             {
                 var d = (Vector3.up + RandomDir(r) * 0.6f).normalized;
-                mb.Card(Axis(H * 0.88f), d, Perp(d), (lod == 2 ? 2.6f : 1.8f) * R(r, 0.8f, 1.1f), 1.0f * (lod == 2 ? 1.6f : 1f), 0, -0.1f, CellBirch(k & 1), nrm, 1f, 1f);
+                mb.Card(Axis(H * 0.88f), d, Perp(d), (lod == 2 ? 2.6f : 1.8f) * R(r, 0.8f, 1.1f), 1.1f * (lod == 2 ? 1.6f : 1f), 0, -0.1f, CellBirch(k & 1), nrm, 1f, 1f);
             }
             return mb;
         }
 
         static Rect CellBirch(int k) => new Rect(0, k * 0.5f, 1, 0.5f);
 
-        /// <summary>Mountain birch (fjellbjørk): 2–4 twisted stems from one base, low and wide, the birch's twig cards. 6 m.</summary>
+        /// <summary>
+        /// Mountain birch (fjellbjørk): 3–4 twisted stems from one base, low and wide and bushy: each stem with short
+        /// side branches, all set with the birch's drooping twig sprays, crossed so the bush is as full as the birch. 6 m.
+        /// </summary>
         static MeshBuilder MountainBirch(int lod)
         {
             var r = new Random(37);
             var mb = new MeshBuilder();
             const float H = 6f;
-            int stems = lod == 2 ? 2 : 3;
+            int stems = lod == 0 ? 4 : lod == 1 ? 3 : 2;
             var crownC = new Vector3(0, H * 0.65f, 0);
             Func<Vector3, Vector3> nrm = p => { var d = p - crownC; d.y *= 0.9f; return (d.normalized + Vector3.up * 0.3f).normalized; };
+            float size = lod == 0 ? 1.3f : lod == 1 ? 1.8f : 2.7f;
+            void Spray(Vector3 at, Vector3 o, float y, float h, float k, bool second)
+            {
+                var d = (o * R(r, 0.5f, 1f) + Vector3.down * R(r, 0.2f, 0.8f) + Vector3.up * (y > h * 0.8f ? 0.9f : 0)).normalized;
+                var side = Vector3.Cross(d, o).sqrMagnitude > 0.01f ? Vector3.Cross(d, o).normalized : Perp(d);
+                float len = R(r, 1.1f, 1.6f) * size * k, wid = R(r, 0.75f, 1.05f) * size * k;
+                int cell = r.Next(2);
+                mb.Card(at, d, side, len, wid, lod == 2 ? 0 : 1, 0.1f, CellBirch(cell), nrm, 0.6f + 0.4f * y / h, 1f);
+                if (second) mb.Card(at, d, (Quaternion.AngleAxis(R(r, 70, 100), d) * side).normalized, len * 0.9f, wid * 0.85f, lod == 2 ? 0 : 1, 0.1f, CellBirch(1 - cell), nrm, 0.55f + 0.4f * y / h, 1f);
+            }
             for (int s = 0; s < stems; s++)
             {
                 float az = s * 6.28f / stems + R(r, -0.4f, 0.4f), tilt = R(r, 0.18f, 0.4f), ph = R(r, 0, 6.28f);
@@ -520,14 +575,23 @@ namespace Rally.Editor
                 int segs = lod == 0 ? 7 : lod == 1 ? 4 : 2;
                 for (int i = 0; i <= segs; i++) { float y = h * 0.9f * i / segs; pts.Add(P(y)); rad.Add(0.085f * (1 - 0.8f * y / h) + 0.01f); }
                 mb.Tube(pts, rad, lod == 0 ? 6 : 4, y => Smooth(0.2f, 1.2f, y), y => 0.5f + 0.5f * Smooth(0, 3, y), y => 0.25f * y / H);
-                int twigs = lod == 0 ? 14 : lod == 1 ? 7 : 4;
+                int twigs = lod == 0 ? 14 : lod == 1 ? 8 : 5;
                 for (int k = 0; k < twigs; k++)
                 {
                     float y = Mathf.Lerp(h * 0.3f, h * 0.98f, k / (float)(twigs - 1));
-                    var o = Horizontal(az + R(r, -1.4f, 1.4f));
-                    var d = (o * R(r, 0.5f, 1f) + Vector3.down * R(r, 0.2f, 0.8f) + Vector3.up * (y > h * 0.8f ? 0.9f : 0)).normalized;
-                    float size = lod == 0 ? 1.3f : lod == 1 ? 1.8f : 2.6f;
-                    mb.Card(P(y), d, Vector3.Cross(d, o).sqrMagnitude > 0.01f ? Vector3.Cross(d, o).normalized : Perp(d), R(r, 1.1f, 1.6f) * size, R(r, 0.7f, 1f) * size, lod == 2 ? 0 : 1, 0.1f, CellBirch(k & 1), nrm, 0.6f + 0.4f * y / h, 1f);
+                    Spray(P(y), Horizontal(az + R(r, -1.4f, 1.4f)), y, h, 1f, lod < 2 || (k & 1) == 0);
+                }
+                // Short side branches (LOD 0, 1): out and a little down, each ending in sprays — the bushy, wide shape.
+                int sides = lod == 0 ? 3 : lod == 1 ? 2 : 0;
+                for (int k = 0; k < sides; k++)
+                {
+                    float y = h * R(r, 0.35f, 0.75f);
+                    var o = Horizontal(az + (k - (sides - 1) * 0.5f) * 1.3f + R(r, -0.3f, 0.3f));
+                    var at = P(y);
+                    var end = at + (o + Vector3.up * R(r, -0.1f, 0.35f)).normalized * R(r, 0.9f, 1.6f);
+                    if (lod == 0) mb.Tube(new List<Vector3> { at, end }, new List<float> { 0.03f, 0.01f }, 3, _ => 1f, _ => 0.6f, _ => 0.4f);
+                    Spray(Vector3.Lerp(at, end, 0.5f), o, y, h, 0.85f, true);
+                    Spray(end, o, y, h, 0.9f, true);
                 }
             }
             return mb;

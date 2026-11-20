@@ -32,7 +32,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _BaseMap:
-        m_Texture: {fileID: 2800000, guid: 867ba5748de7b840b9a0df0fe27cb9b2, type: 3}
+        m_Texture: {fileID: 2800000, guid: 45d18abe363dc1c44bf99d65fd00c1f8, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _ImpostorMap:
@@ -44,7 +44,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _LeafNormal:
-        m_Texture: {fileID: 2800000, guid: f0d5c9d0e1e69647eb81ac040afc7995, type: 3}
+        m_Texture: {fileID: 2800000, guid: 5aebb72c38535652f98f665b7917deac, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []

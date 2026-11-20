@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-19 (road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-20 (fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -148,12 +148,16 @@ per-plot field furrows, and skips layers under 1 % (explicit-gradient samples, f
 
 **Trees** (`Editor/TreeBuilder.cs`, everything procedural): Norway spruce 22 m (dense cone of drooping frond + hanging-curtain
 cards to near the ground), Scots pine 19 m (bare lower 62 %, grey plated → orange flaky bark, flat umbrella of needle tufts),
-birch 15 m (white bark, black lenticels, dark base, leaning, drooping twig cards), mountain birch 6 m (multi-stemmed,
-twisted), shrub 1.4 m. LOD0 ≤ ~3.1k triangles, LOD1 ~300–500, LOD2 ~130–190, then an impostor: LOD0 rendered from 8
+birch 15 m (white bark, black lenticels, dark base, leaning; arching branches with side branches and a few core shoots, all
+hung with crossed pairs of drooping twig-spray cards whose atlas is a two-layer leaf mass, ~36 % alpha cover), mountain birch
+6 m (3–4 twisted stems with short side branches, the same sprays: a full, wide bush), shrub 1.4 m (its own leaf atlas, the
+pre-2026-11-20 birch sprays). LOD0 ≤ ~3.1k triangles (birch 2.6k), LOD1 ~300–900, LOD2 ~60–240, then an impostor: LOD0 rendered from 8
 azimuths into a 4 × 2 atlas of albedo × AO and frame-space normals (`Editor/TreeBake.shader`; crossed quads when there is no
 graphics device). Bark and foliage share one submesh, told apart by the vertex colour, so each (species, LOD) is still one draw
 on both paths. `Rally → Rebuild Tree and Ground Art` regenerates the textures too. `Editor/PreviewShots.cs` saves look-dev
-screenshots (`-executeMethod Rally.Editor.PreviewShots.Run [-previewLive] [-previewNoCompute] -previewOut DIR`, with a display).
+screenshots (`-executeMethod Rally.Editor.PreviewShots.Run [-previewLive] [-previewNoCompute] -previewOut DIR`, with a display;
+`-previewTrees` adds the nearest birch / mountain birch from 30 m and 100 m, the densest birch stand at eye height and a studio
+pair from 12 / 30 / 100 / 350 m at the LOD the renderer would pick). `TreeCrownTests` hold the birch crowns full.
 
 Fixed on the way: the tree draws used a default-initialised `RenderParams` (renderingLayerMask 0), so URP drew the trees only
 into the shadow map; `Rally/Tree` takes its ambient from `_TreeAmbientUp/Down` (the ambient probe) instead of `SampleSH`,

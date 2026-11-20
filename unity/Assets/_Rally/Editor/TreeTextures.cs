@@ -184,10 +184,84 @@ namespace Rally.Editor
         }
 
         /// <summary>
-        /// Birch twigs, two variants (512 × 256 each): a thin dark twig with side twiglets, set with small ovate
-        /// light-green leaves on short petioles, hanging to both sides (the card hangs, so "down" is either side).
+        /// Birch twig sprays, two variants (512 × 256 each): a thin dark twig with many side twigs that fan out and
+        /// droop, each set with short shoots carrying 2–3 small ovate leaves, plus leaf clusters at the twig tips. A
+        /// shaded back layer behind the front leaves, so a card reads as a leaf mass (~30 % cover) rather than a line
+        /// of single leaves (it was ~12 %, which left the crowns see-through and thin).
         /// </summary>
         public static void Birch(Canvas c, Random r)
+        {
+            var l0 = new Color(0.30f, 0.46f, 0.14f); var l1 = new Color(0.50f, 0.64f, 0.22f); var l2 = new Color(0.58f, 0.66f, 0.30f);
+            var twigC = new Color(0.22f, 0.16f, 0.14f);
+            for (int cell = 0; cell < 2; cell++)
+            {
+                float oy = cell * 256 + 128;
+                float curve = R(r, -20, 20);
+                Vector2 P(float u) => new Vector2(3 + u * 505, oy + Mathf.Sin(u * 3.0f) * curve);
+                var twigs = new System.Collections.Generic.List<(Vector2 a, Vector2 b, float w)>();
+                for (int i = 0; i < 12; i++) twigs.Add((P(i / 12f), P((i + 1) / 12f), 2.4f - 1.0f * i / 12f));
+                int s = 1;
+                for (float u = 0.05f; u < 0.9f; u += R(r, 0.045f, 0.075f))
+                {
+                    var a = P(u);
+                    s = -s;                                                              // alternate sides
+                    var d = Rot(Vector2.right, s * R(r, 22, 55));
+                    float len = R(r, 70, 125) * (1 - 0.35f * u);
+                    var b = a + d * len; b.y = Mathf.Clamp(b.y, oy - 100, oy + 100);
+                    twigs.Add((a, b, 1.6f));
+                    if (r.NextDouble() < 0.6)                                            // a twiglet off the side twig
+                    {
+                        var m = Vector2.Lerp(a, b, R(r, 0.35f, 0.6f));
+                        var e = m + Rot((b - a).normalized, -s * R(r, 20, 45)) * len * R(r, 0.3f, 0.5f);
+                        e.y = Mathf.Clamp(e.y, oy - 105, oy + 105);
+                        twigs.Add((m, e, 1.2f));
+                    }
+                }
+                foreach (var (a, b, w) in twigs) c.Stroke(a, b, w, w * 0.6f, twigC, 0.5f);
+                // Back layer: darker, shaded leaves filling between the twigs (the inside of the spray).
+                for (int k = 0; k < 32; k++)
+                {
+                    var (a, b, _) = twigs[r.Next(twigs.Count)];
+                    var at = Vector2.Lerp(a, b, (float)r.NextDouble()) + new Vector2(R(r, -6, 6), R(r, -14, 14));
+                    var ld = Rot(Vector2.right, R(r, -150, 150));
+                    float size = R(r, 17, 25);
+                    var tip = at + ld * size;
+                    if (tip.y < oy - 124 || tip.y > oy + 124 || tip.x > 508 || at.x < 6) continue;
+                    c.Leaf(at, ld, size, size * R(r, 0.6f, 0.75f), ProcTex.Mul(Color.Lerp(l0, l1, (float)r.NextDouble() * 0.6f), 0.88f), 0.6f);
+                }
+                // Front layer: short shoots of 2–3 leaves along every twig, a cluster at each tip.
+                foreach (var (a, b, _) in twigs)
+                {
+                    float len = Vector2.Distance(a, b);
+                    var d = (b - a).normalized;
+                    for (float t = R(r, 3, 8); t < len + 4; t += R(r, 8, 13))
+                    {
+                        bool tipCluster = t >= len;
+                        var at = a + d * Mathf.Min(t, len);
+                        int n = tipCluster ? 3 + r.Next(2) : 2 + (r.NextDouble() < 0.35 ? 1 : 0);
+                        float baseAng = R(r, -180, 180);
+                        for (int q = 0; q < n; q++)
+                        {
+                            var ld = tipCluster ? Rot(d, (q - (n - 1) * 0.5f) * 38f + R(r, -10, 10))
+                                                : Rot(d, (r.NextDouble() < 0.5 ? -1 : 1) * R(r, 35, 115) + (q == 2 ? baseAng * 0.2f : 0));
+                            var pet = at + ld * R(r, 3, 6);
+                            c.Stroke(at, pet, 1.2f, 1f, twigC, 0.4f);
+                            float size = R(r, 17, 26);
+                            var col = r.NextDouble() < 0.15 ? l2 : Color.Lerp(l0, l1, (float)r.NextDouble());
+                            var tip = pet + ld * size;
+                            if (tip.y < oy - 126 || tip.y > oy + 126 || tip.x > 509 || tip.x < 4) continue;
+                            c.Leaf(pet, ld, size, size * R(r, 0.6f, 0.75f), col, 1f);
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Shrub leaf sprays (the birch sprays before 2026-11-20, kept for the shrub), two variants (512 × 256 each): a
+        /// thin dark twig with side twiglets, set with small ovate light-green leaves on short petioles, to both sides.
+        /// </summary>
+        public static void Shrub(Canvas c, Random r)
         {
             var l0 = new Color(0.30f, 0.46f, 0.14f); var l1 = new Color(0.50f, 0.64f, 0.22f); var l2 = new Color(0.58f, 0.66f, 0.30f);
             var twigC = new Color(0.22f, 0.16f, 0.14f);

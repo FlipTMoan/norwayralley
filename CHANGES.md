@@ -1,8 +1,30 @@
 # Changes
 
-_Updated 2026-11-20 (wheelspin and mud in the Unity game)._
+_Updated 2026-11-20 (fuller birch crowns in the Unity game)._
 
 ## 2026-11-20
+
+### Unity: birch and mountain birch crowns are full, not a few thin arms
+- **Leaf sprays** (`Editor/TreeTextures FoliageAtlas.Birch`): each twig card is now a spray of side twigs and twiglets
+  carrying short shoots of 2–3 leaves and leaf clusters at the tips, over a shaded back layer of leaves: 36 % of the
+  atlas is leaf (was 12.5 %, a single line of leaves), so a card reads as a leaf mass and stays solid at a distance.
+- **Crown** (`Editor/TreeBuilder Birch`): 16 arching branches (was 12), each with two drooping side branches, sprays on
+  every branch as crossed pairs of long, narrow, steeply hanging cards (the pendulous Betula look), plus ten sprays on
+  short shoots in the crown's core. LOD 0 2584 triangles (1884 foliage, was 876), LOD 1 866, LOD 2 236; the far LODs
+  use bigger, crossed sprays so the crown does not thin out when they switch in. Slightly lighter foliage tint.
+- **Mountain birch:** four twisted stems (three at LOD 1), short side branches with sprays, crossed sprays: a wide, bushy
+  crown (LOD 0 1048 triangles, 640 foliage, was 168).
+- Impostors are rebaked from the new LOD 0: crown cover 0.57 (birch, was 0.28) and 0.43 (mountain birch, was 0.10).
+- The shrub keeps its look: it gets its own leaf atlas (`shrub_foliage.png`), pixel-identical to the old birch sprays,
+  on the birch bark. Spruce and pine are untouched.
+- `PreviewShots -previewTrees`: the nearest birch / mountain birch from 30 m and 100 m, the densest birch stand at eye
+  height, and a studio pair from 12 / 30 / 100 / 350 m at the LOD the renderer picks.
+- Tests: `TreeCrownTests` (foliage triangles per LOD, leaf atlas cover, impostor crown cover per frame; all five fail on
+  the old assets). EditMode 186 / 186, PlayMode 12 / 12.
+- Frame time (`PreviewShots -previewBench`, live `?drive=59.5571,7.3402` = Hovden, birch-dominated woodland, WebGL 2
+  path, GTX 1060 editor, 1080p; three runs each, tile-streaming hitches excluded): chase 7.58 → 7.70 ms (+1.6 %),
+  hillside 8.10 → 8.25 (+1.9 %), overview 7.59 → 7.68 (+1 %); 60 s drive p95 10.18 → 10.61 ms (median of three, noisy).
+  Triangles in view +22–29 % (chase 1.30 → 1.58 M).
 
 ### Unity: wheels spin off road and throw mud
 - **Wheelspin** (`CarSim.SlipTarget`, `CarState.WheelSlip`): when the drive asks for more than the tyres can give, the

@@ -30,6 +30,8 @@ namespace Rally.Editor
     /// porsche, carrera, turbo930, volvo240, mv6, ranger, baja, type736), and a drive saves its last chase frame; <c>-previewExhaust</c> adds
     /// exhaust shots at idle and under full throttle; <c>-previewMud</c> skips the shots and instead launches the car from rest
     /// off road, on gravel, on asphalt and in shallow water near the start (side and chase frames 0.9 s and 2 m in, wheelspin and mud); <c>-previewRoadDebug</c> also logs the edge fit and water-on-road survey.
+    /// <c>-previewTrees</c> adds the nearest birch and mountain birch from 30 m and 100 m, the densest birch stand near the car at eye
+    /// height (15_birch_wood*) and a studio pair of both from 12 / 30 / 100 / 350 m at the LOD the renderer picks there (16_studio_birch_*).
     /// </summary>
     public static class PreviewShots
     {
@@ -38,7 +40,7 @@ namespace Rally.Editor
         static bool live, noCompute, bench, roadDebug;
         static float driveSecs, driveKmh;
         static double nextTrace, exhaustT0;
-        static bool exhaust, mud;
+        static bool exhaust, mud, treeShots;
         static readonly Queue<string> mudRuns = new Queue<string>();
         static string mudRun;
         static double mudT0;
@@ -64,6 +66,7 @@ namespace Rally.Editor
             roadDebug = Array.IndexOf(args, "-previewRoadDebug") >= 0;
             exhaust = Array.IndexOf(args, "-previewExhaust") >= 0;
             mud = Array.IndexOf(args, "-previewMud") >= 0;
+            treeShots = Array.IndexOf(args, "-previewTrees") >= 0;
             driveSecs = float.TryParse(Arg(args, "-previewDrive"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ds) ? ds : 0f;
             driveKmh = float.TryParse(Arg(args, "-previewDriveKmh"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var dk) ? dk : 70f;
             GpuCaps.ForceNoCompute = noCompute;   // the WebGL 2 path: CPU scatter, RenderMeshInstanced
@@ -343,8 +346,18 @@ namespace Rally.Editor
                 float dist = math.max(8, t.Height * 1.3f);
                 var from = p + math.normalizesafe(c.xz - p, new float2(1, 0)) * dist;
                 shots.Enqueue(($"05_{s}_{names[s]}", () => Look(from, 1.7f, p, t.Height * 0.45f, t.GroundY)));
+                if (treeShots && (s == 2 || s == 3))
+                    foreach (int far in new[] { 30, 100 })
+                    {
+                        var ff = p + math.normalizesafe(c.xz - p, new float2(1, 0)) * far;
+                        shots.Enqueue(($"05_{s}_{names[s]}_{far}m", () => Look(ff, 1.7f, p, t.Height * 0.45f, t.GroundY)));
+                    }
             }
+            if (treeShots) BirchWoodShot(c, hits);
             hits.Dispose();
+            if (treeShots)
+                foreach (int d in new[] { 12, 30, 100, 350 })
+                    shots.Enqueue(($"16_studio_birch_{d}m", () => StudioBirch(game.Style.Vegetation, d)));
             // Studio line-up far below the world: every species at LOD 0, 1, 2 and the impostor.
             shots.Enqueue(("06_lineup_lod0", () => Lineup(game.Style.Vegetation, 0)));
             shots.Enqueue(("06_lineup_lod1", () => Lineup(game.Style.Vegetation, 1)));
@@ -667,6 +680,53 @@ namespace Rally.Editor
                 x += gap[s] + (s + 1 < gap.Length ? gap[s + 1] : 0) * 0.5f;
             }
             cam.transform.position = origin + new Vector3(-4, 9, -48);
+            cam.transform.rotation = Quaternion.LookRotation(new Vector3(0, 6, 0) + origin - cam.transform.position);
+        }
+
+        /// <summary>-previewTrees: at chase height inside the densest birch stand near the car (most birches within 15 m).</summary>
+        static void BirchWoodShot(float3 c, NativeList<TreeHit> hits)
+        {
+            var birches = new List<float2>();
+            foreach (var h in hits) if (h.Species == 2) birches.Add(FloatingOrigin.ToWorldXZ(new Utm33(h.Position.x, h.Position.y)));
+            if (birches.Count > 4000) birches.RemoveRange(4000, birches.Count - 4000);
+            int best = -1, bestN = 0;
+            for (int i = 0; i < birches.Count; i++)
+            {
+                int n = 0;
+                for (int j = 0; j < birches.Count; j++) if (math.distancesq(birches[i], birches[j]) < 225) n++;
+                if (n > bestN) { bestN = n; best = i; }
+            }
+            if (best < 0) { Debug.Log("PreviewShots: no birch stand near the car"); return; }
+            var at = birches[best];
+            var dir = math.normalizesafe(at - c.xz, new float2(1, 0));
+            Debug.Log($"PreviewShots: birch stand of {bestN} within 15 m at {FloatingOrigin.ToUtm(at)}");
+            shots.Enqueue(("15_birch_wood", () => Look(at - dir * 6, 2.2f, at + dir * 40, 3f)));
+            shots.Enqueue(("15_birch_wood_edge", () => Look(at - dir * 45, 2.2f, at, 4f)));
+        }
+
+        /// <summary>-previewTrees: birch and mountain birch on the studio plane from <paramref name="dist"/> m, each at the LOD the renderer picks there.</summary>
+        static void StudioBirch(VegetationSetSO set, float dist)
+        {
+            ClearLineup();
+            var origin = new Vector3(0, -3000, 0);
+            var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            ground.transform.position = origin; ground.transform.localScale = new Vector3(100, 1, 100);
+            var gm = new Material(Shader.Find("Universal Render Pipeline/Lit")); gm.SetColor("_BaseColor", new Color(0.30f, 0.36f, 0.18f));
+            ground.GetComponent<Renderer>().sharedMaterial = gm;
+            lineup.Add(ground);
+            float spread = Mathf.Max(4f, dist * 0.12f);
+            for (int s = 2; s <= 3; s++)
+            {
+                var p = set.Prototypes[s];
+                var lods = set.LodFor(s, 1000);
+                int lod = dist < lods.x ? 0 : dist < lods.y ? 1 : dist < lods.z ? 2 : 3;
+                var go = new GameObject("studio " + p.Name);
+                go.transform.position = origin + new Vector3(s == 2 ? -spread : spread, 0, 0);
+                go.AddComponent<MeshFilter>().sharedMesh = lod < 3 ? p.Lods[lod] : p.Billboard;
+                go.AddComponent<MeshRenderer>().sharedMaterial = lod < 3 ? p.Material : p.BillboardMaterial;
+                lineup.Add(go);
+            }
+            cam.transform.position = origin + new Vector3(0, 1.7f, -dist);
             cam.transform.rotation = Quaternion.LookRotation(new Vector3(0, 6, 0) + origin - cam.transform.position);
         }
 
