@@ -888,6 +888,40 @@ kbd {
   #helpLine, #brand { display: none; }
 }
 
+/* ------------------------------------------------ phones: small, corner HUD */
+/* On a phone the speedometer and the next-turn arrow sit small in the top-left
+   corner, and the touch buttons are smaller and see-through, so the road ahead
+   stays in view. */
+@media (pointer: coarse), (max-width: 700px) {
+  #brand { display: none; }
+  #speedBox {
+    top: max(6px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left));
+    min-width: 0; padding: 4px 8px 5px; border-bottom-width: 3px; box-shadow: none;
+    transform: none; background: rgba(14, 19, 17, 0.62);
+  }
+  #speed { font-size: 26px; text-shadow: 2px 2px 0 #000; }
+  .speed-unit { font-size: 8px; }
+  .rpm-num { margin-left: 8px; }
+  #gear { font-size: 11px; }
+  #surface { font-size: 7px; }
+  .speed-row { gap: 6px; }
+  .speed-row.small { margin-top: 2px; padding-top: 2px; }
+  #rpmWrap { margin-top: 4px; height: 6px; }
+  #rpmText { display: none; }
+  #turnBox {
+    left: 0; transform: none; top: calc(100% + 6px);
+    gap: 6px; padding: 4px 8px; box-shadow: none; background: rgba(14, 19, 17, 0.62);
+  }
+  #turnArrow { width: 28px; height: 28px; }
+  #turnDist { font-size: 16px; }
+  #turnKind { font-size: 8px; letter-spacing: 0.12em; }
+  #touchControls { bottom: max(8px, env(safe-area-inset-bottom)); left: 0; right: 0; padding: 0 max(8px, env(safe-area-inset-left)); }
+  #touchControls > div { gap: 8px; }
+  #touchControls button { width: 58px; height: 58px; font-size: 10px; background: rgba(20, 28, 24, 0.42); border-color: rgba(236,230,211,.22); }
+  .touch-right button[data-touch="throttle"] { width: 68px; height: 68px; background: rgba(226,103,60,.5); }
+  #touchControls button:active { background: var(--orange); }
+}
+
 /* --------------------------------------------------------------- friends */
 #friendsPanel { position: fixed; inset: 0; z-index: 32; display: flex; align-items: center; justify-content: center; background: rgba(6, 9, 8, 0.55); pointer-events: auto; }
 #friendsPanel.hidden { display: none; }

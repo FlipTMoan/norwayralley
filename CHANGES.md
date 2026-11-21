@@ -1,6 +1,14 @@
 # Changes
 
-_Updated 2026-11-20 (Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-21 (JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+
+## 2026-11-21
+
+### JS game: speedometer, turn arrow and touch buttons out of the way on phones
+- On touch screens and windows up to 700 px wide the speedometer and the next-turn box sit small and see-through in the
+  top-left corner (was a 184 px box plus a 76 px arrow in the top centre, over the road ahead). The touch buttons are
+  58 px (GAS 68 px; were 84 / 100 px in landscape), see-through, and clear of the notch / home bar (`env(safe-area-inset-*)`).
+  CSS only (`legacy-js/src/style.css`).
 
 ## 2026-11-20
 
