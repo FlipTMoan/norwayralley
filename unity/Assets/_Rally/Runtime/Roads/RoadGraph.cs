@@ -1103,6 +1103,13 @@ namespace Rally.Roads
         /// deck's half width: it carves nothing, wins the cells nearer to it than to the approach roads and marks its footprint.
         /// A tunnel segment is a CarveSegment.TunnelOnly out to the tube's outer wall: the mountain over it stays.
         /// </summary>
+        /// <summary>
+        /// Which coarse tiles' roads are on screen (null: all). A segment is carved only when the tile that draws it (the one
+        /// holding its middle, as RibbonMesh) is: a road graded but not drawn yet showed as a bare carved patch, the car
+        /// standing on it with no ribbon (2026-11-22).
+        /// </summary>
+        public Func<TileKey, bool> Shown;
+
         public void CollectCarveSegments(Bounds25833 bounds, Utm33 origin, List<CarveSegment> output)
         {
             int bx0 = (int)math.floor((bounds.MinE - 32) / Cell), bx1 = (int)math.floor((bounds.MaxE + 32) / Cell);
@@ -1116,6 +1123,11 @@ namespace Rally.Roads
                         float flat = RoadConstants.FlatHalf(seg.Lanes.Half) + RoadConstants.CarveApron, shoulder = RoadProfile.ShoulderFor(seg.Lanes.Half, seg.Lanes.Cut), reach = flat + math.max(shoulder, RoadConstants.MaxEarthwork);
                         double2 lo = math.min(seg.A, seg.B) - reach, hi = math.max(seg.A, seg.B) + reach;
                         if (hi.x < bounds.MinE || lo.x > bounds.MaxE || hi.y < bounds.MinN || lo.y > bounds.MaxN) continue;
+                        if (Shown != null)
+                        {
+                            var mid = (seg.A + seg.B) * 0.5;
+                            if (!Shown(TileKey.At(TileKind.Coarse, new Utm33(mid.x, mid.y)))) continue;
+                        }
                         output.Add(new CarveSegment
                         {
                             A = (float2)(seg.A - new double2(origin.E, origin.N)), B = (float2)(seg.B - new double2(origin.E, origin.N)),

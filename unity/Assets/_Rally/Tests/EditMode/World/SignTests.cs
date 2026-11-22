@@ -334,6 +334,177 @@ namespace Rally.Tests.World
             Assert.AreEqual(set.Plates.Count - 1, posts.Count, "802 shares the bend warning's post");
         }
 
+        // ---- 2026-11-22 fixes: stacking, order, text, designs, re-seating ----------------------------------------
+
+        [Test]
+        public void PlatesOnBothSidesOfOneNvdbPointStandOnTwoPosts()
+        {
+            // NVDB gives the plates of both sides of the road one point (a speed hump signed on both sides, both ways)
+            var at = new Utm33(257000, 6781000);
+            var plates = new List<SignPlate>();
+            long id = 10;
+            foreach (var side in new[] { RoadSide.Left, RoadSide.Right })
+                foreach (var facing in new[] { SignFacing.With, SignFacing.Against })
+                    plates.Add(new SignPlate { Id = id++, Code = "109", Number = "109", Position = at, Side = side, Facing = facing, Order = 1 });
+            var posts = SignPlacement.Place(plates, EastRoad(), p => SignCatalog.For(p), Tile, out _, out _);
+            Assert.AreEqual(2, posts.Count, "one post per side, not four plates on one");
+            Assert.AreEqual(2, posts[0].Plates.Count); Assert.AreEqual(2, posts[1].Plates.Count);
+            Assert.Less((posts[0].Position.N - 6781000) * (posts[1].Position.N - 6781000), 0, "on opposite sides of the road");
+            // the same off the centre line: the second side goes to the other side of the road
+            foreach (var p in plates) p.Position = new Utm33(257000, 6780996);
+            posts = SignPlacement.Place(plates, EastRoad(), p => SignCatalog.For(p), Tile, out _, out _);
+            Assert.AreEqual(2, posts.Count);
+            Assert.Less((posts[0].Position.N - 6781000) * (posts[1].Position.N - 6781000), 0);
+            foreach (var post in posts)
+                foreach (var pp in post.Plates)
+                {
+                    // each face looks along the road, and on its side the plate facing the traffic driving on that side is there
+                    Assert.AreEqual(1, math.abs(pp.Face.x), 1e-6);
+                }
+        }
+
+        [Test]
+        public void PlasseringskodeOrdersThePlatesOnAPost()
+        {
+            var p = NvdbSource.ParseSignPlate(Obj("{\"id\":1,\"egenskaper\":[{\"id\":5530,\"verdi\":\"729 - Gate-/vegnavnskilt\"},{\"id\":5128,\"verdi\":10}],"
+                + "\"geometri\":{\"wkt\":\"POINT Z (257000 6780994 20)\"}}"));
+            Assert.AreEqual(10, p.Order);
+            var at = new Utm33(257000, 6780994);
+            var posts = SignPlacement.Place(new List<SignPlate>
+            {
+                new SignPlate { Id = 1, Code = "362.50", Number = "362.50", Position = at, Order = 20 },
+                new SignPlate { Id = 2, Code = "729", Number = "729", Text = "Storgata", Position = at, Order = 10 },
+            }, EastRoad(), q => SignCatalog.For(q), Tile, out _, out _);
+            Assert.AreEqual("729", posts[0].Plates[0].Plate.Code, "the street name is on top in NVDB");
+        }
+
+        [Test]
+        public void BackToBackPlatesShareTheirLevelAndThePostReachesTheTopPlate()
+        {
+            using var atlas = new SignAtlas(null);
+            var at = new Utm33(257000, 6780994);
+            var posts = SignPlacement.Place(new List<SignPlate>
+            {
+                new SignPlate { Id = 1, Code = "109", Number = "109", Position = at, Facing = SignFacing.With, Side = RoadSide.Right, Order = 1 },
+                new SignPlate { Id = 2, Code = "362.40", Number = "362.40", Position = at, Facing = SignFacing.With, Side = RoadSide.Right, Order = 2 },
+                new SignPlate { Id = 3, Code = "109", Number = "109", Position = at, Facing = SignFacing.Against, Side = RoadSide.Right, Order = 1 },
+            }, EastRoad(), p => SignCatalog.For(p), Tile, out _, out _);
+            Assert.AreEqual(1, posts.Count);
+            var faces = new Dictionary<string, SignAtlas.Face>();
+            foreach (var p in posts[0].Plates) faces[p.Design.Key] = atlas.Acquire(p.Design);
+            atlas.PaintAll();
+            var info = new List<SignMesh.PlateInfo>(); var feet = new List<(float3, float, float)>();
+            var mesh = SignMesh.Build(posts, new Utm33(256000, 6780000), _ => 100f, d => faces[d.Key], new List<int>(), feet, info);
+            var humps = info.FindAll(i => i.Key == "109.");
+            Assert.AreEqual(2, humps.Count);
+            Assert.AreEqual(humps[0].Centre.y, humps[1].Centre.y, 1e-4, "Plasseringskode 1 on both faces: the same height");
+            float topEdge = humps[0].Centre.y + humps[0].Height / 2;
+            Assert.AreEqual(100f + feet[0].Item2, topEdge + SignMesh.PostOverTop, 1e-3, "the post ends just over the top plate");
+            var speed = info.Find(i => i.Key == "362.40");
+            Assert.AreEqual(100f + SignMesh.PlateBottom + speed.Height / 2, speed.Centre.y, 1e-3, "the lowest plate's edge at 1.5 m");
+            Object.DestroyImmediate(mesh);
+        }
+
+        [Test]
+        public void NvdbTextMarkupIsReadNotPrinted()
+        {
+            var l = SignText.Parse("@723.15@285@@Hønefoss@31@");
+            Assert.AreEqual(1, l.Count); Assert.AreEqual("285", l[0].Shield); Assert.AreEqual("Hønefoss", l[0].Text);
+            l = SignText.Parse("@723.11 E134Seljord");
+            Assert.AreEqual("E134", l[0].Shield); Assert.AreEqual("Seljord", l[0].Text);
+            l = SignText.Parse("@723.16¤282¤@Asker");
+            Assert.AreEqual("282", l[0].Shield); Assert.AreEqual("Asker", l[0].Text);
+            l = SignText.Parse("@723.31@@31@");
+            Assert.AreEqual(0, l.Count, "a tourist-route symbol has no number; 31 is the arrow tip");
+            Assert.AreEqual("802|100 m", SignCatalog.For(Plate("802", "@100 m@")).Key);
+            Assert.AreEqual("808|Skole", SignCatalog.For(Plate("808", "$Skole$")).Key);
+            Assert.AreEqual("713.H|Hågå@", SignCatalog.For(Plate("713.H", "Hågå@")).Key);
+            Assert.IsNull(SignCatalog.For(Plate("713.V", "@650.20@723.31@")), "symbols only: nothing to write");
+            Assert.IsNull(SignCatalog.For(Plate("808", "???")), "a placeholder is not printed");
+            Assert.AreEqual("723|723.15|64", SignCatalog.For(Plate("723.15", "64")).Key, "a plain number is the shield");
+            Assert.AreEqual("723|723.1|E134", SignCatalog.For(new SignPlate { Id = 1, Code = "723.11", Number = "723.11", Text = "@E134@", Label = "Vegnummer for europaveg" }).Key);
+            Assert.AreEqual("320|6 t", SignCatalog.For(Plate("320", "6t")).Key);
+            Assert.AreEqual("314|4,4 m", SignCatalog.For(Plate("314", "Høyde 4,4 meter")).Key);
+            Assert.AreEqual("366.30", SignCatalog.For(Plate("366", "30"), 50).Key, "the zone's number on the plate wins over the limit nearby");
+            var two = SignCatalog.For(Plate("727.1", "Nordkjosbotn@@Gárgán"));
+            Assert.AreEqual("727.1|Nordkjosbotn\nGárgán", two.Key, "two names, two lines");
+            Paint(two, out var c);
+            Assert.IsTrue(Near(At(c, two.WidthMm / 2, two.HeightMm * 0.06f), SignCatalog.Blue) || Near(At(c, 30, two.HeightMm / 2), SignCatalog.Blue), "a place name is white on blue");
+        }
+
+        [Test]
+        public void ZoneSignsTakeTheZonesLimit()
+        {
+            var zone = new SpeedLimitSegment { Kmh = 30, Points = { new Utm33(257000, 6781000), new Utm33(257500, 6781000) } };
+            var road = new SpeedLimitSegment { Kmh = 50, Points = { new Utm33(256500, 6781000), new Utm33(257000, 6781000) } };
+            Assert.AreEqual(30, SignPlacement.ZoneKmhAt(new[] { road, zone }, new Utm33(256998, 6781004)), "at the boundary the zone's 30, not the nearer 50");
+            Assert.AreEqual(0, SignPlacement.ZoneKmhAt(new[] { road, zone }, new Utm33(256998, 6781100)));
+        }
+
+        [Test]
+        public void CorrectedAndAddedDesigns()
+        {
+            var one = SignCatalog.For(Plate("526.1"));
+            Assert.Greater(one.HeightMm, one.WidthMm, "526.1 (across the road) is the tall plate with the arrow up");
+            var two = SignCatalog.For(Plate("526.2"));
+            Assert.Greater(two.WidthMm, two.HeightMm, "526.2 (along the road) the wide one");
+            foreach (var code in new[] { "518", "520", "522" }) Assert.AreEqual(PlateShape.Rect, SignCatalog.For(Plate(code)).Shape, code + " is a blue square in Norway");
+            var bus = SignCatalog.For(Plate("512"));
+            Assert.Greater(bus.WidthMm, bus.HeightMm, "512 is a wide plate");
+            Paint(SignCatalog.For(Plate("366")), out var z);
+            int dark = 0;
+            for (int y = 40; y < 200; y += 4) for (int x = 100; x < 500; x += 4) if (At(z, x, y).r < 0.2f) dark++;
+            Assert.Greater(dark, 50, "366: 'Sone' is written at the top");
+            foreach (var (code, text) in new[] { ("552", (string)null), ("570.2H", "xx M til utgang Høyre side"), ("570.1V", null), ("527.1", null), ("527.3", null),
+                ("605", null), ("606", null), ("828.1", null), ("828.2", null), ("804", "0-700 m"), ("524", null), ("807.6", null), ("306.8", null),
+                ("402.4", null), ("336", null), ("376.1", null), ("378.2", null), ("711.H90", "Gulskogen@33@") })
+            {
+                var d = SignCatalog.For(Plate(code, text));
+                Assert.IsNotNull(d, code);
+                Paint(d, out _);
+            }
+            Assert.IsTrue(SignCatalog.For(Plate("828.1")).Supplementary);
+            Assert.AreEqual("570.2H|150 m", SignCatalog.For(Plate("570.2H", "150m")).Key);
+            Paint(SignCatalog.For(Plate("552")), out var pk);
+            Assert.IsTrue(Near(At(pk, 60, 60), SignCatalog.Blue), "552 is blue");
+        }
+
+        [Test]
+        public void PostsAreReseatedWhenTheGroundUnderThemChanges()
+        {
+            var root = new GameObject("signs reseat test");
+            float groundY = 100f;
+            var key = new TileKey(TileKind.Coarse, 125, 3311);
+            var layer = new SignLayer(root.transform, null, _ => groundY);
+            try
+            {
+                var posts = SignPlacement.Place(new List<SignPlate>
+                {
+                    new SignPlate { Id = 2, Code = "362.50", Number = "362.50", Position = new Utm33(257000, 6780994) },
+                }, EastRoad(), p => SignCatalog.For(p), Tile, out _, out _);
+                layer.SetTile(key, posts);
+                var car = new Utm33(257010, 6781000);
+                layer.BuildAll(car);
+                var feet = (List<(float3 foot, float height, float radius)>)FieldOf(layer, "tiles", key, "Feet");
+                Assert.AreEqual(100f, feet[0].foot.y, 1e-4);
+                groundY = 101.5f;   // the road was graded again under the post
+                for (int i = 0; i < 4; i++) layer.Update(car, float3.zero);
+                feet = (List<(float3 foot, float height, float radius)>)FieldOf(layer, "tiles", key, "Feet");
+                Assert.AreEqual(101.5f, feet[0].foot.y, 1e-4, "the post stands on the new ground");
+                Assert.AreEqual(1, layer.Reseated);
+                for (int i = 0; i < 4; i++) layer.Update(car, float3.zero);
+                Assert.AreEqual(1, layer.Reseated, "built once, not every frame");
+            }
+            finally { layer.Dispose(); Object.DestroyImmediate(root); }
+        }
+
+        static object FieldOf(object o, string dict, object key, string field)
+        {
+            var d = (System.Collections.IDictionary)o.GetType().GetField(dict, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(o);
+            var t = d[key];
+            return t.GetType().GetField(field).GetValue(t);
+        }
+
         static int CountPlates(List<SignPost> posts) { int n = 0; foreach (var p in posts) n += p.Plates.Count; return n; }
 
         static RoadGraph EastRoadAt(FakeSources.Osm osm)

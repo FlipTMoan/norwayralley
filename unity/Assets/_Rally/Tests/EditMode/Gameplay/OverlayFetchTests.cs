@@ -20,7 +20,7 @@ namespace Rally.Tests.Gameplay
 
         sealed class Fakes
         {
-            public int Roads, Cover, Surfaces, Signs, Lights;
+            public int Roads, Features, Cover, Surfaces, Signs, Lights;
             public double Now;
             public readonly List<TaskCompletionSource<bool>> Waits = new List<TaskCompletionSource<bool>>();
             public readonly List<OverlayData> Landed = new List<OverlayData>();
@@ -31,7 +31,7 @@ namespace Rally.Tests.Gameplay
                 {
                     Breakers = new ServiceBreakers(null, () => Now),
                     Roads = (b, ct) => { Roads++; return roads(); },
-                    Features = (b, ct) => Task.FromResult(new Features()),
+                    Features = (b, ct) => { Features++; return Task.FromResult(new Features()); },
                     Cover = (b, ct) => { Cover++; return Task.FromResult(new CoverRaster(4, 4, b)); },
                     Surfaces = (b, ct) => { Surfaces++; return Task.FromResult(nvdbAnswers ? new List<RoadSurfaceLine>() : null); },
                     Signs = (b, ct) => { Signs++; return Task.FromResult(nvdbAnswers ? new SignSet() : null); },
@@ -63,9 +63,11 @@ namespace Rally.Tests.Gameplay
             Assert.IsTrue(f.Breakers.Overpass.IsOpen, "Overpass paused");
             Assert.IsFalse(f.Breakers.Nvdb.IsOpen || f.Breakers.Sr16.IsOpen, "the others are not");
             StringAssert.StartsWith("Overpass paused 60 s", f.Breakers.Paused());
-            Assert.AreEqual(1, fk.Waits.Count, "only the roads wait to be asked again");
+            Assert.IsNull(d.Features, "the map features (Overpass too) are not asked while it is paused");
+            Assert.AreEqual(2, fk.Waits.Count, "only the two Overpass lanes (roads, map features) wait to be asked again");
             fk.Elapse();
             Assert.AreEqual(2, fk.Roads, "Overpass asked again after its pause");
+            Assert.AreEqual(0, fk.Features, "the map features wait out the same pause (the roads failing again tripped it again)");
             Assert.AreEqual((1, 1, 1, 1), (fk.Cover, fk.Surfaces, fk.Signs, fk.Lights), "nothing else is asked again");
             Assert.IsFalse(all.IsCompleted, "the roads lane keeps trying");
         }
@@ -78,8 +80,8 @@ namespace Rally.Tests.Gameplay
             var f = fk.Make(() => hang.Task);
             var d = new TileOverlay();
             f.Fetch(Key, d, () => true, w => fk.Landed.Add(w), default);
-            CollectionAssert.IsSubsetOf(new[] { OverlayData.Cover, OverlayData.Surfaces, OverlayData.Signs, OverlayData.Lights }, fk.Landed);
-            Assert.AreEqual(OverlayData.Cover | OverlayData.Surfaces | OverlayData.Signs | OverlayData.Lights, d.Pending);
+            CollectionAssert.IsSubsetOf(new[] { OverlayData.Features, OverlayData.Cover, OverlayData.Surfaces, OverlayData.Signs, OverlayData.Lights }, fk.Landed);
+            Assert.AreEqual(OverlayData.Features | OverlayData.Cover | OverlayData.Surfaces | OverlayData.Signs | OverlayData.Lights, d.Pending);
             var roads = new RoadGraphData();
             hang.SetResult(roads);
             Assert.AreSame(roads, d.Roads, "the roads land when Overpass answers");
@@ -102,6 +104,23 @@ namespace Rally.Tests.Gameplay
             Assert.AreEqual(1, fk.Roads, "Overpass is not asked again");
             Assert.AreEqual(1, fk.Cover, "nor SR16");
             Assert.AreEqual(2, fk.Surfaces, "NVDB is, after its pause");
+        }
+
+        /// <summary>Roads (a road region) and map features (the tile's heavy query) are two lanes: the roads do not wait for the houses.</summary>
+        [Test]
+        public void RoadsLandWithoutWaitingForTheMapFeatures()
+        {
+            var fk = new Fakes();
+            var f = fk.Make(() => Task.FromResult(new RoadGraphData()));
+            var features = new TaskCompletionSource<Features>();
+            f.Features = (b, ct) => features.Task;
+            var d = new TileOverlay();
+            f.Fetch(Key, d, () => true, w => fk.Landed.Add(w), default);
+            Assert.IsNotNull(d.Roads, "the roads are in while the features are still on their way");
+            Assert.IsNull(d.Features);
+            features.SetResult(new Features());
+            Assert.IsNotNull(d.Features);
+            Assert.IsTrue((d.Pending & OverlayData.Features) != 0);
         }
 
         [Test]
@@ -137,8 +156,8 @@ namespace Rally.Tests.Gameplay
             f2.Fetch(Key, c, () => true, _ => { }, default);
             fk2.Now = 20000;
             var w2 = f2.Outstanding(3, new[] { c });
-            Assert.AreEqual("waiting: terrain 3 · OSM roads 1 (paused 40 s)", OverlayFetch.WaitingText(w2));
-            Assert.AreEqual("waiting: terrain 3 +1", OverlayFetch.WaitingText(w2, 1), "shortened on a phone");
+            Assert.AreEqual("waiting: terrain 3 · OSM roads 1 (paused 40 s) · OSM features 1 (paused 40 s)", OverlayFetch.WaitingText(w2));
+            Assert.AreEqual("waiting: terrain 3 +2", OverlayFetch.WaitingText(w2, 1), "shortened on a phone");
             Assert.AreEqual("Overpass", w2[1].Service);
         }
 

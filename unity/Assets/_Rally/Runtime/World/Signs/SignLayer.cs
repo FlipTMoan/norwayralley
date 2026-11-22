@@ -12,12 +12,17 @@ namespace Rally.World
     /// tile keeps its posts as data; only tiles within <see cref="BuildRadius"/> of the car get faces and a mesh (one
     /// mesh per tile, built once its faces are painted), and lose them beyond <see cref="DropRadius"/>: a 0.9 m plate is
     /// under two pixels at 600 m. Posts within <see cref="ColliderRadius"/> of the car get capsule colliders from the
-    /// <see cref="PropColliderPool"/>, so the car can hit them (layer Props: solid, damage).
+    /// <see cref="PropColliderPool"/>, so the car can hit them (layer Props: solid, damage). The ground under a built tile's
+    /// posts can change after its mesh is built (roads graded again or shown and carved, a finer DTM landing): every frame
+    /// <see cref="ReseatChecksPerFrame"/> post feet are compared with the ground in turn, and a tile with a foot more than
+    /// <see cref="ReseatTolerance"/> m off is built again on the ground as it is now.
     /// </summary>
     public sealed class SignLayer : IDisposable
     {
         public const double BuildRadius = 1000, DropRadius = 1500;
         public const float ColliderRadius = 35f, PaintBudgetMs = 4f;
+        public const int ReseatChecksPerFrame = 24;
+        public const float ReseatTolerance = 0.05f;
 
         sealed class TileSigns
         {
@@ -40,6 +45,10 @@ namespace Rally.World
         readonly List<int> pagesScratch = new List<int>();
         public readonly SignAtlas Atlas;
         float nextColliderUpdate;
+        readonly Queue<TileKey> seatQueue = new Queue<TileKey>();
+        int seatIndex;
+        /// <summary>Tiles built again because the ground under a post moved (for the log and tests).</summary>
+        public int Reseated { get; private set; }
 
         public SignLayer(Transform parent, PropColliderPool colliders, Func<Utm33, float> ground, Shader shader = null)
         {
@@ -107,9 +116,43 @@ namespace Rally.World
                 t.Acquired = true;
             }
             Atlas.Pump(PaintBudgetMs);
+            bool built = false;
             foreach (var t in tiles.Values)
-                if (t.Acquired && t.Go == null && t.Faces.TrueForAll(f => f.Painted) && Atlas.Pending == 0) { Build(t); break; }   // one mesh per frame
+                if (t.Acquired && t.Go == null && t.Faces.TrueForAll(f => f.Painted) && Atlas.Pending == 0) { Build(t); built = true; break; }   // one mesh per frame
+            if (!built) Reseat();
             if (Time.realtimeSinceStartup >= nextColliderUpdate) { nextColliderUpdate = Time.realtimeSinceStartup + 0.2f; UpdateColliders(carWorld); }
+        }
+
+        /// <summary>
+        /// Checks the next <see cref="ReseatChecksPerFrame"/> post feet (the built tiles in turn) against the ground now and
+        /// builds a tile again when one of its feet is more than <see cref="ReseatTolerance"/> m above or below it.
+        /// </summary>
+        void Reseat()
+        {
+            if (seatQueue.Count == 0)
+            {
+                foreach (var t in tiles.Values) if (t.Go != null && t.Feet.Count > 0) seatQueue.Enqueue(t.Key);
+                seatIndex = 0;
+                if (seatQueue.Count == 0) return;
+            }
+            var key = seatQueue.Peek();
+            if (!tiles.TryGetValue(key, out var tile) || tile.Go == null) { seatQueue.Dequeue(); seatIndex = 0; return; }
+            var o = tile.Key.Origin;
+            int end = math.min(tile.Feet.Count, seatIndex + ReseatChecksPerFrame);
+            for (; seatIndex < end; seatIndex++)
+            {
+                var foot = tile.Feet[seatIndex].foot;
+                if (math.abs(ground(new Utm33(o.E + foot.x, o.N + foot.z)) - foot.y) <= ReseatTolerance) continue;
+                if (tile.Go != null) RallyObjects.Destroy(tile.Go);
+                if (tile.Mesh != null) RallyObjects.Destroy(tile.Mesh);
+                tile.Go = null; tile.Mesh = null;
+                Build(tile);
+                Reseated++;
+                nextColliderUpdate = 0;   // the capsules follow the new feet
+                seatIndex = tile.Feet.Count;
+                break;
+            }
+            if (seatIndex >= tile.Feet.Count) { seatQueue.Dequeue(); seatIndex = 0; }
         }
 
         /// <summary>Builds every tile in range now (tests, the preview tool).</summary>

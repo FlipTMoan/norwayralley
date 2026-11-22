@@ -18,6 +18,8 @@ namespace Rally.World
         public const float PostRadius = 0.03f, WidePostRadius = 0.04f, PostSink = 0.5f;
         public const float PlateBottom = 1.5f, MarkerBottom = 0.6f, PlateGap = 0.06f, Thickness = 0.012f, Standoff = 0.035f;
         public const float TwoPostWidth = 1.3f;
+        /// <summary>The post's top (under its cap) stands this far over the top plate's upper edge.</summary>
+        public const float PostOverTop = 0.02f;
         static readonly Color PostColour = new Color(0.60f, 0.62f, 0.62f, 0f), BackColour = new Color(0.66f, 0.68f, 0.69f, 0f),
             RimColour = new Color(0.78f, 0.79f, 0.80f, 0f), BracketColour = new Color(0.42f, 0.43f, 0.44f, 0f), CapColour = new Color(0.08f, 0.08f, 0.08f, 0f);
 
@@ -67,29 +69,54 @@ namespace Rally.World
                         if (it.p.Design.WidthMm > widest) { widest = it.p.Design.WidthMm; wideFace = g.face; }
                     }
                 float bottom = markersOnly ? MarkerBottom : PlateBottom;
-                float top = bottom;
-                float radius = widest > 900 ? WidePostRadius : PostRadius;
-                foreach (var g in groups)
+                // Levels from the top: NVDB's Plasseringskode when every plate has one (plates back to back share a level),
+                // else each face's plates from the top down. A level is as tall as its tallest face's plates there.
+                bool ordered = true;
+                foreach (var g in groups) foreach (var it in g.items) if (it.p.Plate.Order <= 0) ordered = false;
+                var levelOf = new Dictionary<(int g, int i), int>();
+                var levels = new SortedDictionary<int, float>();
+                for (int gi = 0; gi < groups.Count; gi++)
                 {
-                    float total = -PlateGap;
-                    foreach (var it in g.items) total += it.p.Design.HeightMm / 1000f + PlateGap;
-                    float y = bottom + total;
-                    top = math.max(top, y);
-                    var n = new float3((float)g.face.x, 0, (float)g.face.y);
-                    // a hint of hand-mounted sloppiness: up to ±1.5° per post
-                    float jitter = ((post.Id * 2654435761L) % 1000) / 1000f * 0.05f - 0.025f;
-                    n = math.mul(quaternion.RotateY(jitter), n);
-                    foreach (var it in g.items)
+                    var sums = new Dictionary<int, float>();
+                    for (int i = 0; i < groups[gi].items.Count; i++)
                     {
+                        var it = groups[gi].items[i];
+                        int lv = ordered ? it.p.Plate.Order : i;
+                        levelOf[(gi, i)] = lv;
+                        sums.TryGetValue(lv, out var sum);
+                        sums[lv] = sum + (sum > 0 ? PlateGap : 0) + it.p.Design.HeightMm / 1000f;
+                    }
+                    foreach (var kv in sums) levels[kv.Key] = math.max(levels.TryGetValue(kv.Key, out var h0) ? h0 : 0, kv.Value);
+                }
+                float total = -PlateGap;
+                foreach (var h in levels.Values) total += h + PlateGap;
+                float top = bottom + total;
+                var levelTop = new Dictionary<int, float>();
+                float yl = top;
+                foreach (var kv in levels) { levelTop[kv.Key] = yl; yl -= kv.Value + PlateGap; }
+                float radius = widest > 900 ? WidePostRadius : PostRadius;
+                // a hint of hand-mounted sloppiness: up to ±1.5° per post
+                float jitter = ((post.Id * 2654435761L) % 1000) / 1000f * 0.05f - 0.025f;
+                for (int gi = 0; gi < groups.Count; gi++)
+                {
+                    var g = groups[gi];
+                    var n = math.mul(quaternion.RotateY(jitter), new float3((float)g.face.x, 0, (float)g.face.y));
+                    var next = new Dictionary<int, float>(levelTop);
+                    for (int i = 0; i < g.items.Count; i++)
+                    {
+                        var it = g.items[i];
+                        int lv = levelOf[(gi, i)];
+                        float y = next[lv];
                         float h = it.p.Design.HeightMm / 1000f;
                         float3 centre = basePos + new float3(0, y - h / 2, 0) + n * (radius + Standoff + Thickness / 2);
                         Plate(b, it.f, it.p.Design, centre, n, it.p.TwoSided);
                         Brackets(b, postPage, basePos + new float3(0, y - h, 0), n, h, radius);
                         plates?.Add(new PlateInfo { Centre = centre + n * Thickness / 2, Normal = n, Width = it.p.Design.WidthMm / 1000f, Height = h, Key = it.p.Design.Key });
-                        y -= h + PlateGap;
+                        next[lv] = y - h - PlateGap;
                     }
                 }
-                float postTop = top - 0.04f;
+                // the post ends with its cap just over the top plate's edge
+                float postTop = top + PostOverTop;
                 if (widest / 1000f > TwoPostWidth)
                 {
                     var wn = new float3((float)wideFace.x, 0, (float)wideFace.y);

@@ -12,6 +12,10 @@ namespace Rally.Editor
     /// A contact sheet of the sign faces (World/Signs/SignCatalog) as a PNG, to check the designs by eye:
     /// menu Rally/Sign faces sheet, or batchmode
     /// <c>-executeMethod Rally.Editor.SignFacesSheet.Run -signSheet out.png</c> (works with -nographics: CPU only).
+    /// <c>-executeMethod Rally.Editor.SignFacesSheet.Survey -signSurvey DIR</c>: every NVDB sign plate (type 96) in the editor's
+    /// GeoCache through <see cref="SignCatalog"/>: DIR/plates.tsv (one line per plate: code, label, text, position, design key
+    /// or empty) and DIR/faces/*.png, the face of each distinct design key (at most <see cref="SurveyFacesPerCode"/> per code),
+    /// for a contact sheet against the official designs.
     /// </summary>
     public static class SignFacesSheet
     {
@@ -35,6 +39,77 @@ namespace Rally.Editor
             var args = Environment.GetCommandLineArgs();
             int i = Array.IndexOf(args, "-signSheet");
             Write(i >= 0 && i + 1 < args.Length ? args[i + 1] : Path.Combine(Application.dataPath, "../Logs/sign-faces.png"));
+        }
+
+        public const int SurveyFacesPerCode = 4;
+
+        public static void Survey()
+        {
+            var args = Environment.GetCommandLineArgs();
+            int ai = Array.IndexOf(args, "-signSurvey");
+            string dir = ai >= 0 && ai + 1 < args.Length ? args[ai + 1] : Path.Combine(Application.dataPath, "../Logs/sign-survey");
+            Directory.CreateDirectory(Path.Combine(dir, "faces"));
+            string root = Path.Combine(Application.persistentDataPath, "rally-cache");
+            var plates = new Dictionary<long, SignPlate>();
+            int pages = 0;
+            foreach (var meta in Directory.EnumerateFiles(root, "*.meta"))
+            {
+                string url;
+                using (var r = new StreamReader(meta)) url = r.ReadLine();
+                if (url == null || !url.Contains("/vegobjekter/96?")) continue;
+                var bin = Path.ChangeExtension(meta, ".bin");
+                if (!File.Exists(bin)) continue;
+                var data = Json.ParseObject(File.ReadAllText(bin));
+                var batch = data?.Arr("objekter");
+                if (batch == null) continue;
+                pages++;
+                foreach (var o in batch)
+                    if (o is Dictionary<string, object> d) { var p = NvdbSource.ParseSignPlate(d); if (p != null) plates[p.Id] = p; }
+            }
+            var tsv = new System.Text.StringBuilder("id\tcode\tlabel\ttext\te\tn\tz\tsize\tkey\tw\th\n");
+            var perCode = new Dictionary<string, HashSet<string>>();
+            int painted = 0;
+            string Tsv(string v) => (v ?? "").Replace('\t', ' ').Replace('\n', ' ');
+            foreach (var p in plates.Values)
+            {
+                var d = SignCatalog.For(p);
+                var code = p.Code ?? p.Number ?? "";
+                tsv.Append($"{p.Id}\t{Tsv(code)}\t{Tsv(p.Label)}\t{Tsv(p.Text)}\t{p.Position.E:0.00}\t{p.Position.N:0.00}\t{p.Height:0.00}\t{p.Size}\t{Tsv(d?.Key)}\t{d?.WidthMm:0}\t{d?.HeightMm:0}\n");
+                if (d == null) continue;
+                if (!perCode.TryGetValue(code, out var keys)) perCode[code] = keys = new HashSet<string>();
+                if (keys.Count >= SurveyFacesPerCode || !keys.Add(d.Key)) continue;
+                var file = Path.Combine(dir, "faces", Safe(code) + "__" + keys.Count + ".png");
+                File.WriteAllBytes(file, FacePng(d, 0.25f));
+                File.WriteAllText(Path.ChangeExtension(file, ".txt"), d.Key + "\n" + (p.Text ?? ""));
+                painted++;
+            }
+            File.WriteAllText(Path.Combine(dir, "plates.tsv"), tsv.ToString());
+            Debug.Log($"sign survey: {plates.Count} plates from {pages} cached NVDB pages, {painted} faces → {dir}");
+        }
+
+        static string Safe(string s) { var b = new System.Text.StringBuilder(); foreach (var ch in s) b.Append(char.IsLetterOrDigit(ch) || ch == '.' ? ch : '_'); return b.ToString(); }
+
+        /// <summary>One face as a PNG, cut to its outline (transparent outside), at <paramref name="px"/> pixels per mm.</summary>
+        public static byte[] FacePng(SignDesign d, float px)
+        {
+            var c = new SignCanvas(d.WidthMm, d.HeightMm, px, 0);
+            d.Paint(c);
+            var outline = d.Outline().ToArray();
+            var tex = new Texture2D(c.Width, c.Height, TextureFormat.RGBA32, false);
+            var pix = new Color[c.Width * c.Height];
+            for (int row = 0; row < c.Height; row++)
+                for (int col = 0; col < c.Width; col++)
+                {
+                    var mm = new Unity.Mathematics.float2((col + 0.5f) / px, (row + 0.5f) / px);
+                    float cov = Mathf.Clamp01(0.5f - SignCanvas.PolygonDistance(outline, mm) * px);
+                    var v = c.Pixels[row * c.Width + col]; v.a *= cov;
+                    pix[(c.Height - 1 - row) * c.Width + col] = v;
+                }
+            tex.SetPixels(pix);
+            tex.Apply(false);
+            var png = tex.EncodeToPNG();
+            UnityEngine.Object.DestroyImmediate(tex);
+            return png;
         }
 
         static void Write(string path)

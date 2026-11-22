@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-22 (street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-22 (OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -262,6 +262,16 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   type starts / stops being waited for, and the start loader says "Waiting for OSM roads (Overpass busy, retry in 40 s)…".
   Before, a tile awaited all six fetches in turn, and an Overpass answer that never came
   left the tile without roads for good.
+- **Road regions** (`Gameplay/RoadRegions.cs`, 2026-11-22): OSM roads are one roads-only query (`out tags geom`, only the
+  tags the game reads kept, cache `osmroads1:`) per region of 3 × 3 coarse tiles on a fixed grid, asked for as soon as a tile
+  is requested; the tile's roads are the ways of the regions around it that reach its padded box, handed over only when
+  the regions of the tile and all 8 neighbours are in. Map features stay one query per tile (`overpass3:`), after the
+  roads. Overpass servers (`OverpassMirrors`): probed, then the fastest free one per query with its own slots (dresel 4,
+  others 2), hedged after 3 × its usual time, paused on its own when failing or slower than 15 s.
+- **Shown as a network:** overlays draw roads nearest the car first and before houses; a tile's ribbon, carve, bridges
+  and tunnels stay hidden until every neighbour the scheduler wants has its roads drawn (at most 45 s), then show and
+  stay. The start screen waits (≤ 15 s) for the start tile's roads to show. Survey: `PreviewShots -previewLoading
+  [-previewFreshCache]` (snapshots every 5 s while loading: roads ending at a tile edge, floating ribbon, the car's roads).
 
 ## Deviations from the JS worth knowing
 
@@ -324,16 +334,19 @@ fallback C# (the editor GPU still compiles the high-target shaders); `Rally → 
 log lists any shader that fails for GLES 3.0. Known cost of the fallback: `Texture2DArray.Apply` re-sends the whole array when
 `SystemInfo.copyTextureSupport` is `None`; the carve and scatter run on the main thread (Burst, one tile per frame).
 
-### Road signs (2026-11-19)
+### Road signs (2026-11-19, fixed 2026-11-22)
 - **Data:** `NvdbSource.FetchSigns(tile bounds)` — NVDB v4 type 96 Skiltplate (code e.g. `362.50`, `906V`, `713.H`, text,
-  size, "Ansiktsside", sideposisjon, point) and 105 Fartsgrense (polylines), every page through the GeoCache (`nvdb`).
+  size, "Ansiktsside", sideposisjon, Plasseringskode = place on the post, point) and 105 Fartsgrense (polylines), every page through the GeoCache (`nvdb`).
   `GameController.FetchFeatures` asks it with the roads; `PlaceSigns` runs when the tile's roads are registered.
 - **Placement (`SignPlacement`):** plates inside the tile, within 25 m of a road (`IRoadQuery.Nearest`); plates on one NVDB
   point share a post. The post stands `FlatHalf + 0.9 m` from the centre line (in the carve's flat apron), or at the real
-  distance up to 2.5 m further, at the real position along the road. Face direction: the metering direction is the OSM
+  distance up to 2.5 m further, at the real position along the road. NVDB gives the plates of *both* sides of the road one
+  point: a post is the plates at one point with one NVDB side; a second side at the same point stands across the road. Face direction: the metering direction is the OSM
   tangent when NVDB's side matches the plate's real side, else its reverse; "Trafikk i metreringsretning" faces against
-  it, "mot" with it, "Parallelt mot/fra veg" across the road; unknown → right-hand rule. Stack order: 2xx, 1xx/3xx, 4xx, 5xx,
-  6xx, 7xx, 9xx, each 8xx plate under the first main sign facing its way. `SpeedChangePlates` adds a 362 for each direction
+  it, "mot" with it, "Parallelt mot/fra veg" across the road; unknown → right-hand rule. Stack order: NVDB's
+  Plasseringskode (lowest on top) when every plate of the post has one, else 2xx, 1xx/3xx, 4xx, 5xx, 6xx, 7xx, 9xx, each
+  8xx plate under the first main sign facing its way. Zone signs (366/368) show the number on the plate, else the lowest
+  NVDB limit within 15 m (`ZoneKmhAt`). `SpeedChangePlates` adds a 362 for each direction
   where two speed-limit polylines meet with different limits and no real speed plate stands within 40 m.
 - **Faces (`SignCatalog`, `SignCanvas`, `SignFont`, `SignAtlas`):** designs in millimetres of the real "middels" plates
   (Liten ⅔, Stor 4⁄3); shapes as signed distances (exact anti-aliasing); text from `Resources/Signs/SignFont.ttf` (DejaVu
@@ -343,12 +356,20 @@ log lists any shader that fails for GLES 3.0. Known cost of the fallback: `Textu
 - **Mesh (`SignMesh`) and layer (`SignLayer`):** one mesh per tile, built when the car is within 1 km of the tile and its
   faces are painted (≤ 4 ms of painting per frame, one mesh per frame), destroyed beyond 1.5 km. 8-sided posts (Ø 60 / 80 mm,
   sunk 0.5 m, dark cap), plates cut to their outline with face, aluminium back (or a second face when two-sided), rim and
-  clamp brackets; lowest plate edge 1.5 m (0.6 m for marker-only posts). Post feet from `TileWorld.HeightAt` (the car's
-  ground). Capsules from `PropColliderPool` for posts within 35 m. Shader `Rally/Sign` (Resources, so the build includes
+  clamp brackets; lowest plate edge 1.5 m (0.6 m for marker-only posts), plates stacked from the top in levels (the
+  Plasseringskode, or each face's order): plates back to back share a level, 6 cm apart, the post ends 2 cm over the top
+  plate. Post feet from `TileWorld.HeightAt` (the car's ground); 24 feet per frame are compared with the ground in turn, and a
+  tile whose foot is more than 5 cm off (roads graded again, a finer DTM) is built again (`SignLayer.Reseat`). Capsules from `PropColliderPool` for posts within 35 m. Shader `Rally/Sign` (Resources, so the build includes
   it): face texel or vertex colour, Lambert + SH, retroreflective lobe towards the sun, metal highlight, grime noise,
   shadow caster and depth passes.
-- **Not drawn:** codes without a design (701/709/711 junction boards, 725 distance boards, 6xx service signs, U722 local
-  signposting, 828 extent arrows …); they are counted as "without a design" in the overlay log.
+- **Text:** NVDB's Tekst markup is read, not printed: @…@ symbols dropped (text between @ kept as a line), "@@" a line
+  break, road numbers after / inside a 723 symbol or between $ / ¤ become shields, placeholders ("???", "xxxx") are not
+  printed; limit plates read "6t" / "Høyde 4,4 meter" as "6 t" / "4,4 m".
+- **Not drawn:** codes without a design (701/703/709 junction boards, 725 distance boards, 600/635 service boards, 75x cycle
+  routes, U722 local signposting, 914 tunnel markers …); they are counted as "without a design" in the overlay log. 88 %
+  of the 74 549 plates in the editor's cache have a design (was 76 %).
+- **Survey tools:** `-executeMethod Rally.Editor.SignFacesSheet.Survey -signSurvey DIR` (every cached plate through the
+  catalogue: plates.tsv and a face PNG per design); `PreviewShots -previewSigns` (posts vs the ground, the busiest posts shot).
 
 ### Street lights (2026-11-22)
 - **Data:** `NvdbSource.FetchLights(tile bounds + 40 m)` — NVDB v4 type 87 Belysningspunkt (point; 1874 Plassering, 1883

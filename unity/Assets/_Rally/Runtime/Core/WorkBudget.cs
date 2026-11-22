@@ -17,14 +17,20 @@ namespace Rally.Core
         public static float BaseMs = 5f;
         /// <summary>While the world loads, on the start screen and during the countdown nobody drives: this much per frame.</summary>
         public const float WaitingMs = 50f;
+        /// <summary>
+        /// Behind the loading screen (no car, no start screen yet) frame rate does not matter: the start area's roads are
+        /// graded and drawn in bigger pieces, so the start screen opens on a drawn network (2026-11-22: grading the 8 town tiles
+        /// around Lillehammer's start took ~15 s at 50 ms a frame).
+        /// </summary>
+        public const float LoadingMs = 150f;
 
         /// <summary>
         /// This frame's budget: <see cref="WaitingMs"/> while the car waits, else <see cref="BaseMs"/> or a quarter of the
         /// recent frame time if that is more — at 10 fps (a slow device, a throttled tab) 5 ms a frame would stretch the
         /// first road under the car over minutes; a fixed share of the frame keeps the wall-clock pace.
         /// </summary>
-        public static void Scale(bool waiting, float avgFrameMs)
-            => FrameMs = waiting ? System.Math.Max(BaseMs, WaitingMs) : System.Math.Max(BaseMs, System.Math.Min(33f, 0.25f * avgFrameMs));
+        public static void Scale(bool waiting, float avgFrameMs, bool loading = false)
+            => FrameMs = loading ? System.Math.Max(BaseMs, LoadingMs) : waiting ? System.Math.Max(BaseMs, WaitingMs) : System.Math.Max(BaseMs, System.Math.Min(33f, 0.25f * avgFrameMs));
         static long start;
         static readonly double tickMs = 1000.0 / Stopwatch.Frequency;
 

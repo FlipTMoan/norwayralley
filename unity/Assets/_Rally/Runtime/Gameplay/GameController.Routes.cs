@@ -239,7 +239,7 @@ namespace Rally.Gameplay
         /// <summary>The live sources again, over one download's pinning view of the cache, with driving's query boxes.</summary>
         PrefetchSources PrefetchSourcesOver(IGeoCache c)
         {
-            var overpass = new OverpassSource(c);
+            var overpass = new OverpassSource(c, overpassMirrors ??= new OverpassMirrors()) { Contains = cache is GeoCache gc ? gc.Contains : (Func<string, Task<bool>>)null };   // the same mirrors and slots as driving
             var demSource = new KartverketDem(c);
             var sr16 = new Sr16Source(c);
             var nvdb = new NvdbSource(c);
@@ -252,6 +252,8 @@ namespace Rally.Gameplay
                     grid?.Dispose();
                     return ok;
                 },
+                RoadRegion = async (r, ct) => await overpass.FetchRoadsJson(LatLonBounds.Of(r.Bounds), ct) != null,
+                OldTile = (b, ct) => overpass.HasOldTile(b),
                 Roads = overpass.FetchRoads, Features = overpass.FetchFeatures, Cover = sr16.FetchCover,
                 Surfaces = nvdb.FetchSurfaces, Signs = nvdb.FetchSigns, Lights = nvdb.FetchLights,
                 SurfaceBounds = RoadGraph.SurfaceQueryBounds, LightBounds = LightQueryBounds,

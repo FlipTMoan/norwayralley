@@ -19,7 +19,7 @@ namespace Rally.Geo
         public const string Attribution = "Inneholder data under norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Statens vegvesen.";
         public const string Base = "https://nvdbapiles.atlas.vegvesen.no/vegobjekter/api/v4/vegobjekter";
         public const int TypeSignPlate = 96, TypeSpeedLimit = 105;
-        public const int PropSignNumber = 5530, PropFacing = 1894, PropText = 1910, PropKmh = 2021, PropSize = 1970;
+        public const int PropSignNumber = 5530, PropFacing = 1894, PropText = 1910, PropKmh = 2021, PropSize = 1970, PropOrder = 5128;
         public const int TypeRoadSurface = 241, PropMassetype = 1216;   // roads.js: Vegdekke, Massetype
         /// <summary>Belysningspunkt: Plassering, Avstand fra vegkant, Bruksområde (datakatalog, checked 2026-11-22).</summary>
         public const int TypeLightPoint = 87, PropLightPlacement = 1874, PropLightFromEdge = 1883, PropLightUse = 1272;
@@ -222,6 +222,7 @@ namespace Rally.Geo
                 Label = LabelOf(verdi, number),
                 Text = Property(obj, PropText),
                 Facing = Facing(Property(obj, PropFacing)),
+                Order = int.TryParse(Property(obj, PropOrder), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var order) ? order : 0,
                 Side = SideOf(sidePos),
                 Position = geometry.Points[0],
                 Height = geometry.Heights[0],

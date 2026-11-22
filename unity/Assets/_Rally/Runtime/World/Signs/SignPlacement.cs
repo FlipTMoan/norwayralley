@@ -84,7 +84,9 @@ namespace Rally.World
             foreach (var p in plates) if (p != null && bounds.Contains(p.Position)) sorted.Add(p);
             sorted.Sort((a, b) => a.Id.CompareTo(b.Id));
             var posts = new List<SignPost>();
-            var byPoint = new List<(Utm33 at, SignPost post)>();
+            // NVDB gives every plate of a sign point the same point, the plates on both sides of the road included (a speed
+            // hump signed on both sides): a post is the plates at one point on one NVDB side (sideposisjon).
+            var byPoint = new List<(Utm33 at, RoadSide nvdb, double side, SignPost post)>();
             foreach (var p in sorted)
             {
                 var d = design(p);
@@ -95,12 +97,16 @@ namespace Rally.World
                 double2 left = new double2(-t.y, t.x);
                 double side = math.dot(off, left);
                 if (math.abs(side) < 0.05) side = p.Side == RoadSide.Left ? 1 : -1;   // on the centre line: trust NVDB's side (metering ≈ tangent)
+                SignPost post = null;
+                foreach (var (at, nvdb, s, existing) in byPoint)
+                {
+                    if (math.distance(new double2(at.E, at.N), q) >= SamePost) continue;
+                    if (nvdb == p.Side) { post = existing; side = s; break; }
+                    // the same point, the other side of the metering direction: the other side of the road
+                    if (nvdb != RoadSide.Unknown && p.Side != RoadSide.Unknown) side = -math.sign(s) * math.max(math.abs(s), 1);
+                }
                 double2 outward = left * math.sign(side);
                 var face = FaceDirection(p.Facing, p.Side, t, side, -outward);
-
-                SignPost post = null;
-                foreach (var (at, existing) in byPoint)
-                    if (math.distance(new double2(at.E, at.N), q) < SamePost) { post = existing; break; }
                 if (post == null)
                 {
                     double min = RoadConstants.FlatHalf(hit.Half) + PostSetback;
@@ -108,7 +114,7 @@ namespace Rally.World
                     var foot = hit.Point + t * math.dot(off, t);
                     post = new SignPost { Id = p.Id, Position = new Utm33(foot.x + outward.x * dist, foot.y + outward.y * dist), RoadTangent = t };
                     posts.Add(post);
-                    byPoint.Add((p.Position, post));
+                    byPoint.Add((p.Position, p.Side, side, post));
                 }
                 post.Plates.Add(new PostPlate { Plate = p, Design = d, Face = face, TwoSided = p.Facing == SignFacing.Both });
             }
@@ -116,10 +122,19 @@ namespace Rally.World
             return posts;
         }
 
-        /// <summary>Main signs by rank (NVDB id within a rank), each supplementary plate (8xx) right under the first main sign facing its way.</summary>
+        /// <summary>
+        /// By NVDB's Plasseringskode when every plate has one; else main signs by rank (NVDB id within a rank), each
+        /// supplementary plate (8xx) right under the first main sign facing its way.
+        /// </summary>
         static void SortPlates(List<PostPlate> plates)
         {
             if (plates.Count < 2) return;
+            // NVDB's Plasseringskode is the real order (lowest on top); the rules below only when a plate lacks it
+            if (plates.TrueForAll(p => p.Plate.Order > 0))
+            {
+                plates.Sort((a, b) => { int r = a.Plate.Order.CompareTo(b.Plate.Order); return r != 0 ? r : a.Plate.Id.CompareTo(b.Plate.Id); });
+                return;
+            }
             var main = new List<PostPlate>(); var extra = new List<PostPlate>();
             foreach (var p in plates) (p.Design.Supplementary ? extra : main).Add(p);
             main.Sort((a, b) => { int r = Rank(a.Plate).CompareTo(Rank(b.Plate)); return r != 0 ? r : a.Plate.Id.CompareTo(b.Plate.Id); });
@@ -151,6 +166,25 @@ namespace Rally.World
                     double tt = math.saturate(math.dot(q - a, ab) / math.max(1e-9, math.dot(ab, ab)));
                     double d = math.distance(q, a + ab * tt);
                     if (d < best) { best = d; kmh = l.Kmh; }
+                }
+            return kmh;
+        }
+
+        /// <summary>
+        /// The speed of the zone a 366 / 368 plate starts or ends: the lowest NVDB limit within <paramref name="maxDist"/> m
+        /// (the plate stands where the zone's limit meets the road's), 0 when none.
+        /// </summary>
+        public static int ZoneKmhAt(IReadOnlyList<SpeedLimitSegment> limits, Utm33 p, double maxDist = 15)
+        {
+            if (limits == null) return 0;
+            int kmh = 0;
+            var q = new double2(p.E, p.N);
+            foreach (var l in limits)
+                for (int i = 0; i + 1 < l.Points.Count; i++)
+                {
+                    double2 a = new double2(l.Points[i].E, l.Points[i].N), b = new double2(l.Points[i + 1].E, l.Points[i + 1].N), ab = b - a;
+                    double tt = math.saturate(math.dot(q - a, ab) / math.max(1e-9, math.dot(ab, ab)));
+                    if (math.distance(q, a + ab * tt) <= maxDist && l.Kmh > 0 && (kmh == 0 || l.Kmh < kmh)) kmh = l.Kmh;
                 }
             return kmh;
         }

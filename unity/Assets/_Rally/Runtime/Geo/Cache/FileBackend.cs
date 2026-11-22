@@ -23,7 +23,10 @@ namespace Rally.Geo
             Directory.CreateDirectory(root);
         }
 
-        public static FileBackend Default() => new FileBackend(Path.Combine(UnityEngine.Application.persistentDataPath, "rally-cache"));
+        /// <summary>A different store for <see cref="Default"/> (the editor preview's empty-cache loading survey); null: the usual one.</summary>
+        public static string RootOverride;
+
+        public static FileBackend Default() => new FileBackend(RootOverride ?? Path.Combine(UnityEngine.Application.persistentDataPath, "rally-cache"));
 
         static string Hash(string key)
         {

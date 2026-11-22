@@ -270,6 +270,34 @@ namespace Rally.Tests.Gameplay
             Assert.AreEqual(st.Entries * 100, r.Bytes, "each entry counted once");
         }
 
+        /// <summary>The corridor's road regions are asked for before any DTM, map feature or other tile data (plan_20261122_road_regions).</summary>
+        [Test]
+        public void TheDownloadAsksForTheRoadRegionsFirst()
+        {
+            var net = new FakeNet();
+            var order = new List<string>();
+            var p = Prefetch(net);
+            p.Make = c =>
+            {
+                var s = net.Make(c);
+                var dem = s.Dem; var features = s.Features;
+                s.Dem = (k, ct) => { order.Add("dem"); return dem(k, ct); };
+                s.Features = (b, ct) => { order.Add("features"); return features(b, ct); };
+                s.RoadRegion = (r, ct) => { order.Add("region"); return Task.FromResult(true); };
+                s.Roads = (b, ct) => { order.Add("tile roads asked"); return Task.FromResult(new RoadGraphData()); };
+                return s;
+            };
+            var r = new SavedRoute { Id = "r1" };
+            var tiles = ShortTiles();
+            p.Run(r, tiles, new GeoCache(new MemoryBackend()), null, CancellationToken.None).Sync();
+            Assert.AreEqual("done", r.Status);
+            int regions = order.Count(o => o == "region");
+            var expected = tiles.Coarse.SelectMany(RoadRegions.Around).Distinct().Count();
+            Assert.AreEqual(expected, regions, "each region of the corridor (and its tiles' neighbours) once");
+            Assert.IsTrue(order.Take(regions).All(o => o == "region"), "the regions come before anything else");
+            CollectionAssert.DoesNotContain(order, "tile roads asked", "a tile's roads come from its regions, not a query of its own");
+        }
+
         [Test]
         public void TheDownloadKeepsAtMostTwoRequestsInFlightAndWaitsWhileDrivingIsBusy()
         {

@@ -92,6 +92,43 @@ namespace Rally.Geo
         /// <summary>cache.js <c>sizeOf</c>: bytes as stored; text counts two bytes per UTF-16 unit like a JS string.</summary>
         public static long SizeOf(byte[] value, bool isText) => value == null ? 0 : isText ? 2L * System.Text.Encoding.UTF8.GetCharCount(value) : value.Length;
 
+        /// <summary>Is the key stored? (No network, no LRU touch, not counted.)</summary>
+        public async Task<bool> Contains(string key)
+        {
+            if (disabled) return false;
+            try { return await backend.Get(key) != null; }
+            catch { return false; }
+        }
+
+        readonly Dictionary<string, int[]> counts = new Dictionary<string, int[]>();
+        int countsVersion, countsLogged;
+
+        void Count(string kind, int which)
+        {
+            if (!counts.TryGetValue(kind, out var c)) counts[kind] = c = new int[3];
+            c[which]++; countsVersion++;
+        }
+
+        /// <summary>
+        /// Per data type since the session started: answers from the cache, from the network, and asks the network had
+        /// nothing for — e.g. "dem 38 cached / 0 fetched · osmroads 0 / 9 · osm 38 / 0"; null when nothing changed since
+        /// the last call (the log writes it then).
+        /// </summary>
+        public string CountsIfChanged()
+        {
+            if (countsVersion == countsLogged) return null;
+            countsLogged = countsVersion;
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in counts)
+                sb.Append(sb.Length > 0 ? " · " : "").Append(kv.Key).Append(' ').Append(kv.Value[0]).Append(" cached / ").Append(kv.Value[1]).Append(" fetched")
+                  .Append(kv.Value[2] > 0 ? $" / {kv.Value[2]} without answer" : "");
+            return sb.ToString();
+        }
+
+        /// <summary>[cached, fetched, without answer] for a data type (tests).</summary>
+        public (int cached, int fetched, int none) CountsOf(string kind)
+            => counts.TryGetValue(kind, out var c) ? (c[0], c[1], c[2]) : (0, 0, 0);
+
         public Task<byte[]> Fetch(string key, Func<Task<byte[]>> loader, string kind, bool isText = false)
         {
             if (disabled) return loader();
@@ -121,19 +158,24 @@ namespace Rally.Geo
                 double t = now();
                 if (t - hit.At > TouchEveryMs) { hit.At = t; _ = Touch(hit); }
                 RallyLog.Info($"cache: hit {kind} {hit.Value.Length / 1024} KB");
+                Count(kind, 0);
                 return hit.Value;
             }
             var watch = System.Diagnostics.Stopwatch.StartNew();
             var value = await loader();
-            if (value == null) { RallyLog.Info($"cache: miss {kind}, the network gave nothing after {watch.ElapsedMilliseconds} ms"); return null; }
+            if (value == null) { RallyLog.Info($"cache: miss {kind}, the network gave nothing after {watch.ElapsedMilliseconds} ms"); Count(kind, 2); return null; }
+            Count(kind, 1);
             RallyLog.Info($"cache: miss {kind}, fetched {value.Length / 1024} KB in {watch.ElapsedMilliseconds} ms");
             long size = SizeOf(value, isText);
             try
             {
-                long before = await Total();   // counted before the put, so the new entry is not counted twice
+                // Stored first, counted after: the store's total is summed once per session by walking every entry, which in a
+                // browser with a large cache (6 700 entries, 900 MB) took minutes, and every first answer of the session (the
+                // start tiles' DTM) waited for it before it was stored and handed over (2026-11-22, seen in Chrome).
                 await backend.Put(new CacheEntry { Key = key, Kind = kind, Value = value, IsText = isText, Size = size, At = now() });
-                bytes = before + size;
                 writtenSinceCheck += size;
+                if (bytes < 0) { _ = CountLater(); return value; }   // the walk includes this entry
+                bytes += size;
                 // The disk fills with other things too: measure again every few minutes and every 256 MB we write.
                 if (writtenSinceCheck >= RecheckBytes || now() - lastRoomCheck >= RecheckMs) await RefreshBudget();
                 else if (bytes > budget) _ = Evict();
@@ -148,6 +190,21 @@ namespace Rally.Geo
         async Task Touch(CacheEntry hit)
         {
             try { await backend.Put(hit); } catch { /* best effort, as in cache.js */ }
+        }
+
+        Task counting;
+
+        /// <summary>The total, summed in the background (once), then the budget checked.</summary>
+        Task CountLater()
+        {
+            if (counting != null) return counting;
+            return counting = Run();
+            async Task Run()
+            {
+                try { await Total(); if (bytes > budget) await Evict(); }
+                catch (Exception e) { RallyLog.Info($"cache: size count skipped ({e.Message})"); }
+                finally { counting = null; }
+            }
         }
 
         async Task<long> Total()

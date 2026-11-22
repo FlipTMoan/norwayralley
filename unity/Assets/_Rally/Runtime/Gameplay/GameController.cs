@@ -77,6 +77,10 @@ namespace Rally.Gameplay
         IGeoCache cache;
         IDemSource dem;
         IRoadSource roadSource;
+        /// <summary>Live: OSM roads per road region of 3 × 3 tiles, handed to a tile once its neighbours' are in too; null with the fake sources.</summary>
+        RoadRegions roadRegions;
+        /// <summary>The Overpass mirrors and their measured health, one set for the session (driving and route downloads share their slots).</summary>
+        OverpassMirrors overpassMirrors;
         IFeatureSource featureSource;
         ILandcoverSource landcoverSource;
         NvdbSource surfaceSource;            // NVDB Vegdekke (gravel / asphalt); null with the fake sources
@@ -156,6 +160,8 @@ namespace Rally.Gameplay
             public bool Stepping;
             /// <summary>A coarse tile's overlay (<see cref="QueueOverlay"/>): only one steps at a time.</summary>
             public bool Overlay;
+            /// <summary>The overlay's tile data (what is pending decides its place: roads before houses).</summary>
+            public TileOverlay Data;
         }
 
         #endregion
@@ -242,6 +248,7 @@ namespace Rally.Gameplay
                 var osm = new FakeSources.Osm();
                 dem = new FakeSources.Dem { BumpAt = anchor + new double2(300, 200) };
                 roadSource = osm; featureSource = osm;
+                roadRegions = null;
                 landcoverSource = new FakeSources.Landcover();
                 router = new FakeSources.Router();
                 surfaceSource = null;
@@ -250,9 +257,14 @@ namespace Rally.Gameplay
                 CreateFetch(null);
                 return;
             }
-            var overpass = new OverpassSource(cache);
+            var overpass = new OverpassSource(cache, overpassMirrors ??= new OverpassMirrors());
             dem = new KartverketDem(cache);
             roadSource = overpass; featureSource = overpass;
+            roadRegions = new RoadRegions(overpass.FetchRoads)
+            {
+                OldTile = async k => (await overpass.OldTile(k.Bounds))?.Roads,
+                HasOldTile = k => overpass.HasOldTile(k.Bounds),
+            };
             landcoverSource = new Sr16Source(cache);
             router = new OsrmRouter(cache);
             surfaceSource = new NvdbSource(cache);
@@ -268,7 +280,7 @@ namespace Rally.Gameplay
             fetch = new OverlayFetch
             {
                 Breakers = breakers,
-                Roads = roadSource.FetchRoads, Features = featureSource.FetchFeatures, Cover = landcoverSource.FetchCover,
+                Roads = roadRegions != null ? roadRegions.ForBounds : new Func<Bounds25833, CancellationToken, Task<RoadGraphData>>(roadSource.FetchRoads), Features = featureSource.FetchFeatures, Cover = landcoverSource.FetchCover,
                 Surfaces = surfaceSource != null ? new Func<Bounds25833, CancellationToken, Task<List<RoadSurfaceLine>>>(surfaceSource.FetchSurfaces) : null,
                 Signs = signSource != null ? new Func<Bounds25833, CancellationToken, Task<SignSet>>(signSource.FetchSigns) : null,
                 Lights = lightSource != null ? new Func<Bounds25833, CancellationToken, Task<LightSet>>(lightSource.FetchLights) : null,
@@ -280,7 +292,7 @@ namespace Rally.Gameplay
         void CreateWorld()
         {
             world = new TileWorld(CarveShader, Style);
-            roads = new RoadGraph();
+            roads = new RoadGraph { Shown = k => roadsShown.Contains(k) };
             world.Roads = roads;
             if (Style != null)
             {
@@ -326,6 +338,9 @@ namespace Rally.Gameplay
             var ct = cts.Token;
             var tileWatch = System.Diagnostics.Stopwatch.StartNew();
             RallyLog.Info($"tile: {key} requested ({key.CellM:0.#} m cells)");
+            // The road regions around the tile are asked for at once, before its DTM: in the Overpass queue they go before
+            // every feature query, so the roads of the whole neighbourhood are in when the ground is.
+            if (key.Kind == TileKind.Coarse) roadRegions?.Prefetch(key, ct);
             try
             {
                 // The DTM's own pause: a failing elevation service is not asked for every tile the scheduler retries.
@@ -391,10 +406,10 @@ namespace Rally.Gameplay
             overlays[key] = d;
             bool Live() => world != null && world.Tiles.ContainsKey(key) && overlays.TryGetValue(key, out var cur) && cur == d;
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            RallyLog.Info($"overlay: {key} asking OSM roads + features, NIBIO SR16 forest and NVDB surfaces, signs and lights");
+            RallyLog.Info($"overlay: {key} asking OSM roads (road regions {string.Join(" ", RoadRegions.Around(key))}) and map features, NIBIO SR16 forest and NVDB surfaces, signs and lights");
             await fetch.Fetch(key, d, Live, what =>
             {
-                if ((what & OverlayData.Roads) != 0) RallyLog.Info($"overlay: {key} roads {d.Roads.Ways.Count} ways after {watch.ElapsedMilliseconds} ms");
+                if ((what & OverlayData.Roads) != 0) RallyLog.Info($"overlay: {key} roads {d.Roads.Ways.Count} ways (its own and the 8 neighbours' road regions in) after {watch.ElapsedMilliseconds} ms");
                 if ((what & OverlayData.Features) != 0)
                 {
                     if (d.Features != null) RallyLog.Info($"overlay: {key} map features: {d.Features.Buildings.Count} buildings, {d.Features.Areas.Count} land-use areas, {d.Features.Waterways.Count} waterways, {d.Features.PowerLines.Count} power lines after {watch.ElapsedMilliseconds} ms");
@@ -421,7 +436,7 @@ namespace Rally.Gameplay
             d.Queued = true;
             float waitSince = -1f;
             System.Collections.IEnumerator steps = null;
-            var overlay = new TileResult { Key = key, Overlay = true };
+            var overlay = new TileResult { Key = key, Overlay = true, Data = d };
             overlay.Apply = () =>
             {
                 if (world == null || !world.Tiles.ContainsKey(key) || !overlays.TryGetValue(key, out var cur) || cur != d) { d.Queued = false; return true; }
@@ -444,6 +459,7 @@ namespace Rally.Gameplay
                 // runs more of them in the same frame while the streaming budget lasts, else next frame.
                 if (steps.MoveNext()) return false;
                 d.Queued = false;
+                QueueOverlay(key, d);   // the houses and fields it left for after the other tiles' roads
                 return true;
             };
             results.Enqueue(overlay);
@@ -469,6 +485,11 @@ namespace Rally.Gameplay
             {
                 var now = d.Pending;
                 d.Pending = OverlayData.None;
+                // Roads before houses: while other tiles' roads wait to be drawn, this tile's land cover, water and houses wait
+                // (they go back in the queue, behind those roads). Houses built with each tile's roads held the roads of the
+                // tiles after it back by seconds each.
+                bool roadsFirst = (now & (OverlayData.Roads | OverlayData.Surfaces)) != 0 && d.Roads != null && OtherRoadsWaiting(key);
+                if (roadsFirst) { d.Pending = now & (OverlayData.Features | OverlayData.Cover); now &= ~(OverlayData.Features | OverlayData.Cover); }
                 if ((now & (OverlayData.Roads | OverlayData.Surfaces)) != 0 && d.Roads != null)
                 {
                     // Water for the bridge rule: this tile's OSM lakes and rivers, the sea in the DTM, the water other tiles built.
@@ -488,7 +509,8 @@ namespace Rally.Gameplay
                     t0 = FrameProbe.Start();
                     RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
                     var b = key.Bounds;
-                    world.QueueRecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
+                    if (roadsShown.Contains(key))   // a tile not shown yet is carved when it is (ShowRoads)
+                        world.QueueRecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
                     FrameProbe.Stop(".ov.roads", t0);
                     yield return null;
                     if (!world.Tiles.ContainsKey(key)) yield break;
@@ -501,6 +523,7 @@ namespace Rally.Gameplay
                     BuildBridges(key, lines);
                     FrameProbe.Stop(".ov.bridges", t0);
                     d.RoadsIn = true;
+                    ShowRoads();
                     // Signs and lights stand against the roads: (again) now that these are in.
                     if (d.Signs != null) now |= OverlayData.Signs;
                     if (d.Lights != null) now |= OverlayData.Lights;
@@ -520,6 +543,7 @@ namespace Rally.Gameplay
                         {
                             BuildRibbon(dk, again);
                             BuildBridges(dk, again);
+                            ShowRoads();
                             var db = dk.Bounds;
                             world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
                             lights?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));   // masts stand on the new grading
@@ -547,6 +571,7 @@ namespace Rally.Gameplay
                     yield return null;
                     if (!world.Tiles.ContainsKey(key)) yield break;
                 }
+                if (roadsFirst) break;
                 // Land cover, water and houses: whichever of the forest and the map features is in (both again when the other lands).
                 if ((now & (OverlayData.Features | OverlayData.Cover)) != 0)
                 {
@@ -579,7 +604,7 @@ namespace Rally.Gameplay
             var plates = new List<SignPlate>(set.Plates);
             var made = SignPlacement.SpeedChangePlates(set.SpeedLimits, set.Plates, key.Bounds);
             plates.AddRange(made);
-            var posts = SignPlacement.Place(plates, roads, p => SignCatalog.For(p, SignPlacement.KmhAt(set.SpeedLimits, p.Position)), key.Bounds, out int skipped, out int offRoad);
+            var posts = SignPlacement.Place(plates, roads, p => SignCatalog.For(p, SignPlacement.ZoneKmhAt(set.SpeedLimits, p.Position)), key.Bounds, out int skipped, out int offRoad);
             int placed = 0; foreach (var post in posts) placed += post.Plates.Count;
             signs.SetTile(key, posts);
             RallyLog.Info($"overlay: {key} signs: {placed} plates on {posts.Count} posts ({made.Count} speed-limit changes without a plate), {skipped} without a design, {offRoad} away from the roads");
@@ -609,12 +634,54 @@ namespace Rally.Gameplay
                 if (done) activeOverlay = null;
                 if (!WorkBudget.Left) return;
             }
+            if (results.Count > 1) NearestOverlaysFirst();
+            if (Time.realtimeSinceStartup >= nextShowRoads) { nextShowRoads = Time.realtimeSinceStartup + 0.25f; ShowRoads(); }   // carves done, RoadsHoldSeconds run out
             for (int n = results.Count; n > 0 && results.Count > 0; n--)
             {
                 ApplyOneTileResult();
                 if (!WorkBudget.Left) return;
             }
         }
+
+        float nextShowRoads, nextCountsLog;
+
+        /// <summary>
+        /// The overlays waiting to start, those with roads to draw first, then nearest the car (the start pin while loading)
+        /// first, behind the ground results: the
+        /// roads around the car are drawn first, so its part of the network is complete and shown first (<see cref="ShowRoads"/>).
+        /// They used to go in the order their data landed, and the start tile was drawn among the last.
+        /// </summary>
+        /// <summary>Another tile has roads landed and not drawn yet.</summary>
+        bool OtherRoadsWaiting(TileKey key)
+        {
+            foreach (var kv in overlays)
+                if (!kv.Key.Equals(key) && kv.Value.Roads != null && (kv.Value.Pending & (OverlayData.Roads | OverlayData.Surfaces)) != 0 && world.Scheduler.IsReady(kv.Key)) return true;
+            return false;
+        }
+
+        void NearestOverlaysFirst()
+        {
+            var at = car != null ? FloatingOrigin.ToUtm(car.State.Pos) : anchor;
+            sortGround.Clear(); sortWaiting.Clear();
+            foreach (var r in results) (r.Overlay && !r.Stepping ? sortWaiting : sortGround).Add(r);
+            if (sortWaiting.Count < 2) return;
+            sortAt = at;
+            sortWaiting.Sort(byDistance ??= ByDistance);
+            results.Clear();
+            foreach (var r in sortGround) results.Enqueue(r);
+            foreach (var r in sortWaiting) results.Enqueue(r);
+        }
+
+        readonly List<TileResult> sortGround = new List<TileResult>(), sortWaiting = new List<TileResult>();
+        Utm33 sortAt;
+        Comparison<TileResult> byDistance;
+        int ByDistance(TileResult a, TileResult b)
+        {
+            int ra = RoadsPending(a) ? 0 : 1, rb = RoadsPending(b) ? 0 : 1;
+            return ra != rb ? ra.CompareTo(rb) : a.Key.RectDistance(sortAt).CompareTo(b.Key.RectDistance(sortAt));
+        }
+
+        static bool RoadsPending(TileResult r) => r.Data != null && r.Data.Roads != null && (r.Data.Pending & (OverlayData.Roads | OverlayData.Surfaces)) != 0;
 
         void ApplyOneTileResult()
         {
@@ -640,6 +707,62 @@ namespace Rally.Gameplay
             else results.Enqueue(r);
         }
 
+        /// <summary>Tiles whose ribbon has been shown: it stays shown (no flicker when a new tile's ground lands next to it).</summary>
+        readonly HashSet<TileKey> roadsShown = new HashSet<TileKey>();
+        /// <summary>When each coarse tile's roads were drawn (hidden until <see cref="ShowRoads"/> shows them).</summary>
+        readonly Dictionary<TileKey, float> roadsInSince = new Dictionary<TileKey, float>();
+        /// <summary>A tile's drawn roads wait at most this long for a neighbour (its DTM or its road regions failing), then show.</summary>
+        const float RoadsHoldSeconds = 45f;
+
+        /// <summary>
+        /// A tile's ribbon appears when its roads are drawn and so are those of every neighbour the world wants (the tiles
+        /// grade and draw their roads one after another, nearest the car first: <see cref="NearestOverlaysFirst"/>). A shown
+        /// ribbon stays shown. Waiting for the neighbours' neighbours too (one network or nothing) held every road back until
+        /// the whole 38-tile area was graded (49 s at Lillehammer, measured): grading is the slow part now, not the data. The
+        /// carve (<see cref="RoadGraph.Shown"/>), the bridges and the tunnels appear with the ribbon: a graded road no longer shows
+        /// as a bare carved patch.
+        /// </summary>
+        void ShowRoads()
+        {
+            if (world == null) return;
+            // Nothing to decide while every drawn tile is shown and carved (the usual state while driving): no work, no garbage.
+            bool pending = false;
+            foreach (var kv in overlays) if (kv.Value.RoadsIn && !roadsCarved.Contains(kv.Key)) { pending = true; break; }
+            if (!pending) return;
+            var can = new HashSet<TileKey>();
+            foreach (var kv in overlays)
+                if (kv.Value.RoadsIn) { can.Add(kv.Key); if (!roadsInSince.ContainsKey(kv.Key)) roadsInSince[kv.Key] = Time.realtimeSinceStartup; }
+            float now = Time.realtimeSinceStartup;
+            can = RoadRegions.Showable(can, roadsShown, n => world.Scheduler.TryGetState(n, out _), k => now - roadsInSince[k] > RoadsHoldSeconds);
+            foreach (var k in can)
+            {
+                if (!roadsShown.Add(k)) continue;
+                // Newly shown: its roads are carved now (RoadGraph.Shown), into the neighbours as far as they reach.
+                var b = k.Bounds;
+                world.QueueRecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
+                verges?.Invalidate(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
+            }
+            // The surface appears once its carve is done (the carve of a newly shown tile runs from the queue over the next
+            // frames; drawn before it, the ribbon floated over the uncut ground on every embankment).
+            foreach (var k in roadsShown)
+                if (!roadsCarved.Contains(k))
+                {
+                    var b = k.Bounds;
+                    if (!world.RecarvePendingWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad))) roadsCarved.Add(k);
+                }
+            foreach (var kv in ribbons) SetShown(kv.Value, roadsCarved.Contains(kv.Key));
+            foreach (var kv in bridgeObjects) SetShown(kv.Value.go, roadsCarved.Contains(kv.Key));
+            foreach (var kv in tunnelObjects) SetShown(kv.Value.go, roadsCarved.Contains(kv.Key));
+        }
+
+        /// <summary>Shown tiles whose carve is done: their ribbon, bridges and tunnels are drawn.</summary>
+        readonly HashSet<TileKey> roadsCarved = new HashSet<TileKey>();
+
+        static void SetShown(GameObject go, bool show)
+        {
+            if (go != null && go.activeSelf != show) go.SetActive(show);
+        }
+
         /// <summary>The road surface of a tile: RibbonMesh over the carved ground, materials tarmac / gravel (its bridges: <see cref="BuildBridges"/>).</summary>
         void BuildRibbon(TileKey key, List<RoadPolyline> lines)
         {
@@ -652,6 +775,7 @@ namespace Rally.Gameplay
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterials = new[] { TarmacMaterial, GravelMaterial };
             ribbons[key] = go;
+            go.SetActive(roadsCarved.Contains(key));   // a regraded tile stays shown; a new one waits for ShowRoads
         }
 
         /// <summary>Deck, rails and piers of the tile's bridge spans: house material (vertex colours, shadows), rails and piers solid on layer Buildings. Its tunnels too (<see cref="BuildTunnels"/>).</summary>
@@ -670,6 +794,7 @@ namespace Rally.Gameplay
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; mr.receiveShadows = true;
             if (solid != null) go.AddComponent<MeshCollider>().sharedMesh = solid;
             bridgeObjects[key] = (go, draw, solid);
+            go.SetActive(roadsCarved.Contains(key));
             var spans = new System.Text.StringBuilder();
             int count = 0;
             foreach (var line in lines)
@@ -696,6 +821,7 @@ namespace Rally.Gameplay
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On; mr.receiveShadows = true;
             if (solid != null) go.AddComponent<MeshCollider>().sharedMesh = solid;
             tunnelObjects[key] = (go, draw, solid);
+            go.SetActive(roadsCarved.Contains(key));
             int portals = 0, tube = 0, gallery = 0;
             foreach (var line in lines)
                 for (int i = 0; i < line.Samples.Count; i++)
@@ -738,7 +864,12 @@ namespace Rally.Gameplay
         {
             if (ribbons.TryGetValue(tile.Key, out var go)) { Destroy(go); ribbons.Remove(tile.Key); }
             DropBridges(tile.Key);
-            if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); lights?.RemoveTile(tile.Key); overlays.Remove(tile.Key); }
+            if (tile.Key.Kind == TileKind.Coarse)
+            {
+                roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); lights?.RemoveTile(tile.Key); overlays.Remove(tile.Key);
+                roadsShown.Remove(tile.Key); roadsInSince.Remove(tile.Key); roadsCarved.Remove(tile.Key);
+                ShowRoads();   // a tile that waited for this tile's roads need not any more
+            }
         }
 
         #endregion
@@ -1014,7 +1145,14 @@ namespace Rally.Gameplay
         {
             FrameProbe.EndFrame(Time.unscaledDeltaTime);
             WorkBudget.BeginFrame();
-            WorkBudget.Scale(flow.Phase == Phase.Loading || flow.Phase == Phase.Intro || flow.Phase == Phase.Countdown, frames.AvgMs);
+            WorkBudget.Scale(flow.Phase == Phase.Loading || flow.Phase == Phase.Intro || flow.Phase == Phase.Countdown, frames.AvgMs, flow.Phase == Phase.Loading);
+            if (Time.realtimeSinceStartup >= nextCountsLog)
+            {
+                // Per data type: answers from the cache vs the network (a cached area should show 0 fetched).
+                nextCountsLog = Time.realtimeSinceStartup + 10f;
+                var counts = (cache as GeoCache)?.CountsIfChanged();
+                if (counts != null) RallyLog.Info($"cache: {counts}");
+            }
             HandleKeys();
             frames.Record(Time.unscaledDeltaTime);
             if (bench) Bench();
@@ -1745,9 +1883,12 @@ namespace Rally.Gameplay
         /// Rebuild the world from a share-link query (the boot path, and a stage handed over in a room):
         /// link → sources → world around the start → route → car → systems. Tears the previous stage down first.
         /// </summary>
+        int loadGeneration;
+
         public async Task LoadFromQuery(string query)
         {
             RallyLog.Info($"stage: loading {query}");
+            int gen = ++loadGeneration;
             flow.Reload();
             Teardown();
             link = ShareLinks.Parse(query) ?? new ShareLinks.Link(ShareLinks.Kind.Free, DefaultStart, default, "driving", 0);
@@ -1757,9 +1898,16 @@ namespace Rally.Gameplay
             CreateWorld();
             BrowserDom.LoaderText("Fetching terrain…");
             status = "LOADING TERRAIN";
-            await WaitUntil(() => world.IsLoaded(float2.zero));          // the car waits only here (CONVENTIONS / stream.js)
-            await WaitUntil(StartRoadsArrived, 20f);                     // roads of the start tiles (Overpass may be slow or down)
+            // A newer load (a route picked on the map, a room stage) may start while this one waits: only the newest goes
+            // on, else both placed a car at the start (two cars drawn, 2026-11-22).
+            await WaitUntil(() => gen != loadGeneration || world.IsLoaded(float2.zero));   // the car waits only here (CONVENTIONS / stream.js)
+            if (gen != loadGeneration) { RallyLog.Info($"stage: {query} superseded by a newer stage"); return; }
+            await WaitUntil(() => gen != loadGeneration || StartRoadsArrived(), 20f);       // roads of the start tiles (Overpass may be slow or down)
+            if (gen != loadGeneration) { RallyLog.Info($"stage: {query} superseded by a newer stage"); return; }
+            await WaitUntil(() => gen != loadGeneration || StartRoadsShown(), 15f);         // and drawn: shown once the neighbours' are (ShowRoads)
+            if (gen != loadGeneration) { RallyLog.Info($"stage: {query} superseded by a newer stage"); return; }
             await CreateRoute();
+            if (gen != loadGeneration) { RallyLog.Info($"stage: {query} superseded by a newer stage"); return; }
             SpawnCar();
             WireSystems();
             BrowserDom.LoaderHide();
@@ -1789,6 +1937,15 @@ namespace Rally.Gameplay
             return true;
         }
 
+        /// <summary>The start tile's ribbon is shown (or it has none): the start screen opens on drawn roads.</summary>
+        bool StartRoadsShown()
+        {
+            var key = TileKey.At(TileKind.Coarse, anchor);
+            if (!overlays.TryGetValue(key, out var d) || !d.RoadsIn) return false;
+            ShowRoads();   // also notices the carve being done
+            return !ribbons.TryGetValue(key, out var go) || go == null || go.activeSelf;
+        }
+
         void Teardown()
         {
             if (world == null) return;
@@ -1796,6 +1953,7 @@ namespace Rally.Gameplay
             flow.PhaseChanged -= OnPhase;
             foreach (var go in ribbons.Values) Destroy(go);
             ribbons.Clear();
+            roadsShown.Clear(); roadsInSince.Clear(); roadsCarved.Clear();
             foreach (var key in new List<TileKey>(bridgeObjects.Keys)) DropBridges(key);
             foreach (var key in new List<TileKey>(tunnelObjects.Keys)) DropBridges(key);
             results.Clear(); activeOverlay = null; overlays.Clear(); waitedFor.Clear(); loaderLine = null;

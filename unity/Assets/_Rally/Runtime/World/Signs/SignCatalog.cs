@@ -121,7 +121,7 @@ namespace Rally.World
                 }
                 case 366: case 368:
                 {
-                    int kmh = zoneKmh > 0 ? zoneKmh : 30;
+                    int kmh = ZoneText(text) is int tk && tk > 0 ? tk : zoneKmh > 0 ? zoneKmh : 30;   // "30" / "366.30" on the plate wins
                     bool end = n == 368;
                     return new SignDesign { Key = $"{n}.{kmh}", Shape = PlateShape.Rect, WidthMm = 600 * k, HeightMm = 840 * k, CornerMm = 30 * k, Paint = c => Zone(c, kmh, end) };
                 }
@@ -131,34 +131,75 @@ namespace Rally.World
                     return new SignDesign { Key = n.ToString(), Shape = PlateShape.Diamond, WidthMm = 700 * k, HeightMm = 700 * k, CornerMm = 20 * k, Paint = c => Priority(c, n == 208) };
                 case 302: return Disc("302", 600 * k, NoEntry);
                 case 306:
-                    return sub == "1" || sub == "5" || sub == "" ? Disc($"306.{sub}", 600 * k, c => Prohibited(c, sub == "5")) : null;
+                    if (sub == "8") return Disc("306.8", 600 * k, NoWalkersOrCycles);
+                    return sub == "1" || sub == "5" || sub == "" ? Disc($"306.{sub}", 600 * k, c => Prohibited(c, sub == "5", sub == "1")) : null;
+                case 336: return Disc("336", 600 * k, EndNoOvertaking);
+                case 376: case 378:
+                    return new SignDesign { Key = n.ToString(), Shape = PlateShape.Rect, WidthMm = 600 * k, HeightMm = 840 * k, CornerMm = 30 * k, Paint = c => ParkingZone(c, n == 378) };
+                case 402:
+                    return sub == "1" || sub == "4" ? Disc($"402.{sub}", 600 * k, c => Ahead(c, sub == "4")) : null;
                 case 312: case 314: case 316: case 318: case 320:
                 {
                     string t = text ?? (n == 312 ? "2,5 m" : n == 314 ? "3,5 m" : n == 316 ? "12 m" : n == 318 ? "12 t" : "8 t");
+                    t = LimitText(t, n == 318 || n == 320 ? "t" : "m");
                     return Disc($"{n}|{t}", 600 * k, c => Limit(c, t, n == 314));
                 }
                 case 334: return Disc("334", 600 * k, NoOvertaking);
                 case 370: case 372: return Disc(n.ToString(), 600 * k, c => NoStopping(c, n == 370));
                 case 404: return sub == "1" || sub == "2" ? Disc($"404.{sub}", 600 * k, c => KeepSide(c, sub == "2")) : null;
                 case 406: return Disc("406", 600 * k, Roundabout);
-                case 512: return Square("512", 600 * k, BusStop);
+                case 512: return new SignDesign { Key = "512", Shape = PlateShape.Rect, WidthMm = 700 * k, HeightMm = 450 * k, CornerMm = 25 * k, Paint = BusStop };
                 case 516: return Square("516", 600 * k, Crossing);
-                case 518: return Disc("518", 600 * k, c => Footpath(c, false, true));
-                case 520: return Disc("520", 600 * k, c => Footpath(c, true, false));
-                case 522: return Disc("522", 600 * k, c => Footpath(c, true, true));
+                // 518–522 are information signs in Norway: blue squares (not the round mandatory signs of other countries)
+                case 518: return Square("518", 600 * k, c => Footpath(c, false, true));
+                case 520: return Square("520", 600 * k, c => Footpath(c, true, false));
+                case 522: return Square("522", 600 * k, c => Footpath(c, true, true));
+                case 524: return Square("524", 600 * k, c => { BlueField(c); c.Text("M", c.WidthMm / 2, c.HeightMm / 2, c.WidthMm * 0.62f, White); });
+                // 526.1 stands across the road (faces the traffic): a tall plate, arrow up; 526.2 along it: a wide plate, arrow sideways
                 case 526:
-                    if (sub == "1") return new SignDesign { Key = "526.1", Shape = PlateShape.Rect, WidthMm = 900 * k, HeightMm = 300 * k, CornerMm = 20 * k, Paint = OneWayAcross };
-                    return Square("526.2", 600 * k, OneWayAlong);
+                    if (sub == "1") return new SignDesign { Key = "526.1", Shape = PlateShape.Rect, WidthMm = 400 * k, HeightMm = 600 * k, CornerMm = 20 * k, Paint = OneWayAlong };
+                    return new SignDesign { Key = "526.2", Shape = PlateShape.Rect, WidthMm = 800 * k, HeightMm = 500 * k, CornerMm = 20 * k, Paint = OneWayAcross };
+                case 527: return sub == "1" || sub == "3" ? Square($"527.{sub}", 600 * k, c => DeadEnd(c, sub == "3")) : null;
+                case 552: return Square("552", 600 * k, c => { BlueField(c); c.Text("P", c.WidthMm / 2, c.HeightMm / 2, c.WidthMm * 0.62f, White); });
+                case 570:
+                {
+                    // tunnel emergency exit: 570.1 a square at the exit, 570.2 a wide arrow plate with the distance
+                    bool left = sub.EndsWith("V");
+                    if (sub.StartsWith("1")) return Square($"570.1{(left ? "V" : "H")}", 600 * k, c => EmergencyExit(c, left));
+                    string dist = Distance(p.Text);
+                    return new SignDesign { Key = $"570.2{(left ? "V" : "H")}|{dist}", Shape = left ? PlateShape.ArrowLeft : PlateShape.ArrowRight, WidthMm = 1000 * k, HeightMm = 300 * k, CornerMm = 15 * k, Paint = c => ExitDistance(c, left, dist) };
+                }
+                case 605: case 606: return Square(n.ToString(), 600 * k, c => Service(c, n));
+                case 711:
+                {
+                    var lines = DestinationLines(p.Text);
+                    if (lines.Count == 0) return null;
+                    return TableSign(code + "|" + p.Text, lines, sub.StartsWith("H") ? 1 : sub.StartsWith("V") ? -1 : 0);
+                }
                 case 713:
                 {
-                    var lines = SignText.Parse(p.Text);
+                    var lines = DestinationLines(p.Text);
                     if (lines.Count == 0) return null;
                     bool left = sub.StartsWith("V");
                     return DirectionSign(code + "|" + p.Text, lines, left);
                 }
                 case 723: return RouteShield(code, p.Label, p.Text);
-                case 727: return text == null ? null : NamePlate($"727|{text}", text, Yellow, Black, NameCap);
+                case 727:   // 727.1 place name: white on blue
+                    return text == null ? null : sub == "1" ? NamePlate($"727.1|{text}", text, Blue, White, NameCap) : NamePlate($"727|{text}", text, Yellow, Black, NameCap);
                 case 729: return text == null ? null : NamePlate($"729|{text}", text, White, Black, PlateCap * 1.3f);
+                case 804:
+                {
+                    if (text == null) return null;
+                    var d = NamePlate($"804|{text}", text, White, Black, PlateCap);
+                    d.Supplementary = true;
+                    return d;
+                }
+                case 807:
+                    if (sub != "3" && sub != "6") return null;
+                    return new SignDesign { Key = $"807.{sub}", Shape = PlateShape.Rect, WidthMm = 600 * k, HeightMm = 300 * k, CornerMm = 15 * k, Supplementary = true, Paint = c => SymbolPlate(c, sub == "3") };
+                case 828:
+                    if (sub != "1" && sub != "2" && sub != "3") return null;
+                    return new SignDesign { Key = $"828.{sub}", Shape = PlateShape.Rect, WidthMm = 280 * k, HeightMm = 630 * k, CornerMm = 10 * k, Supplementary = true, Paint = c => Extent(c, sub) };
                 case 802: case 806: case 808:
                 {
                     string t = text ?? (n == 808 ? LabelText(p.Label) : null);
@@ -185,11 +226,27 @@ namespace Rally.World
             return null;
         }
 
+        /// <summary>
+        /// The text to print on a plain plate: NVDB's markup dropped (symbols between @…@, "@@" = a new line, $…$ shield
+        /// numbers kept), lines joined by '\n'; null for none or a placeholder ("N/A", "???", "xxxx", "Se dokumentasjon").
+        /// </summary>
         static string Clean(string t)
         {
             if (string.IsNullOrWhiteSpace(t)) return null;
-            t = t.Trim();
-            return t == "." || t == "N/A" ? null : t;
+            t = SignText.Plain(t.Trim(), "\n");
+            if (t == null || t == "N/A" || t.StartsWith("Se dok", StringComparison.OrdinalIgnoreCase)) return null;
+            bool any = false, allX = true;
+            foreach (var ch in t) { if (char.IsLetterOrDigit(ch)) { any = true; if (ch != 'x' && ch != 'X') allX = false; } }
+            return !any || allX ? null : t;
+        }
+
+        /// <summary>A limit plate's value as the sign prints it: "5" → "5 t", "6t" → "6 t", "4.2 m" → "4,2 m", "Høyde 4,4 meter" → "4,4 m".</summary>
+        static string LimitText(string t, string unit)
+        {
+            var b = new System.Text.StringBuilder();
+            foreach (var ch in t) { if (char.IsDigit(ch)) b.Append(ch); else if ((ch == ',' || ch == '.') && b.Length > 0) b.Append(','); else if (b.Length > 0) break; }
+            var num = b.ToString().TrimEnd(',');
+            return num.Length == 0 ? t : num + " " + unit;
         }
 
         /// <summary>"Gjelder ikke buss/Gjeld ikkje buss" → "Gjelder ikke buss"; "Ferist" → "Ferist"; parenthesised placeholders dropped.</summary>
@@ -274,19 +331,52 @@ namespace Rally.World
             }
         }
 
+        /// <summary>366 / 368: "Sone" over a speed-limit disc on a white plate; the end is grey, crossed by three stripes.</summary>
         static void Zone(SignCanvas c, int kmh, bool end)
         {
             float w = c.WidthMm, h = c.HeightMm;
-            c.Fill(Black);
-            c.Rect(w * 0.025f, w * 0.025f, w * 0.95f, h - w * 0.05f, w * 0.04f, White);
-            float r = w * 0.36f, cx = w / 2, cy = w * 0.47f;
+            ZonePlate(c, end);
+            float r = w * 0.4f, cx = w / 2, cy = h * 0.6f;
             var ink = end ? Grey : Black;
             c.Circle(cx, cy, r, end ? Grey : Red);
             c.Circle(cx, cy, r * 0.79f, White);
             string t = kmh.ToString(CultureInfo.InvariantCulture);
             c.Text(t, cx, cy, r * (t.Length > 2 ? 0.66f : 0.82f), ink, true, r * 1.3f);
-            c.Text("SONE", cx, h * 0.8f, w * 0.15f, ink, true, w * 0.8f);
-            if (end) for (int i = -3; i <= 3; i++) { float o = i * w * 0.11f; c.Line(w * 0.08f + o, h * 0.92f, w * 0.92f + o, h * 0.08f, w * 0.016f, Black); }
+            if (end) ZoneStripes(c);
+        }
+
+        static void ZonePlate(SignCanvas c, bool end)
+        {
+            float w = c.WidthMm, h = c.HeightMm;
+            c.Fill(Black);
+            c.Rect(w * 0.02f, w * 0.02f, w * 0.96f, h - w * 0.04f, w * 0.04f, White);
+            c.Text("Sone", w / 2, h * 0.15f, w * 0.17f, end ? Grey : Black, true, w * 0.85f);
+        }
+
+        static void ZoneStripes(SignCanvas c)
+        {
+            float w = c.WidthMm, h = c.HeightMm;
+            for (int i = -1; i <= 1; i++) { float o = i * w * 0.06f; c.Line(w * 0.05f + o, h * 0.95f + o, w * 0.95f + o, h * 0.05f + o, w * 0.025f, Black); }
+        }
+
+        /// <summary>376 / 378 parking zone: "Sone" over a blue P square (378: grey, striped).</summary>
+        static void ParkingZone(SignCanvas c, bool end)
+        {
+            float w = c.WidthMm, h = c.HeightMm;
+            ZonePlate(c, end);
+            c.Rect(w * 0.12f, h * 0.3f, w * 0.76f, w * 0.76f, w * 0.05f, end ? Grey : Blue);
+            c.Text("P", w / 2, h * 0.3f + w * 0.38f, w * 0.55f, White);
+            if (end) ZoneStripes(c);
+        }
+
+        static int? ZoneText(string text)
+        {
+            if (text == null) return null;
+            int end = text.Length;
+            while (end > 0 && !char.IsDigit(text[end - 1])) end--;
+            int start = end;
+            while (start > 0 && char.IsDigit(text[start - 1])) start--;
+            return end > start && int.TryParse(text.Substring(start, end - start), out var v) && v >= 10 && v <= 90 && v % 10 == 0 ? v : (int?)null;
         }
 
         static void Yield(SignCanvas c)
@@ -324,11 +414,61 @@ namespace Rally.World
             c.Rect(r - d * 0.36f, r - d * 0.085f, d * 0.72f, d * 0.17f, d * 0.01f, White);
         }
 
-        static void Prohibited(SignCanvas c, bool truck)
+        static void Prohibited(SignCanvas c, bool truck, bool motorcycle = false)
         {
             RedDisc(c, White);
             var f = DiscFrame(c);
-            Vehicle(f, 128, 172, truck, Black);
+            if (!motorcycle) { Vehicle(f, 128, 172, truck, Black); return; }
+            // 306.1 (motor vehicles): a car over a motorcycle
+            Vehicle(f, 128, 128, false, Black);
+            Motorcycle(f, 128, 196, Black);
+        }
+
+        static void Motorcycle(Frame f, float x, float y, Color col)
+        {
+            f.Disc(x - 28, y - 12, 13, col); f.Disc(x + 28, y - 12, 13, col);
+            f.Disc(x - 28, y - 12, 5, White); f.Disc(x + 28, y - 12, 5, White);
+            f.PolyR(col, 3, x - 22, y - 22, x - 8, y - 34, x + 18, y - 34, x + 30, y - 16, x - 18, y - 14);
+            f.Disc(x + 2, y - 52, 7, col);
+            f.Stroke(9, col, x + 2, y - 44, x + 6, y - 32);
+            f.Stroke(6, col, x + 4, y - 40, x + 22, y - 36);
+        }
+
+        /// <summary>306.8: no pedestrians, cycles or small e-vehicles: a walker and a bicycle under a red bar.</summary>
+        static void NoWalkersOrCycles(SignCanvas c)
+        {
+            float d = c.WidthMm, r = d / 2;
+            RedDisc(c, White);
+            var f = DiscFrame(c);
+            Figure(f, 160, 70, 0.9f, true);
+            Bicycle(f, 100, 196, Black);
+            float a = r * 0.8f * 0.7071f;
+            c.Line(r - a, r - a, r + a, r + a, d * 0.08f, Red);
+        }
+
+        /// <summary>336: end of no overtaking: grey cars, three black stripes on a white disc.</summary>
+        static void EndNoOvertaking(SignCanvas c)
+        {
+            float d = c.WidthMm, r = d / 2;
+            c.Fill(Black);
+            c.Circle(r, r, r - d * 0.012f, White);
+            var f = DiscFrame(c);
+            CarFront(f, 94, Grey);
+            CarFront(f, 162, Grey);
+            for (int i = -1; i <= 1; i++) { float o = i * d * 0.06f; c.Line(r - d * 0.36f + o, r + d * 0.36f + o, r + d * 0.36f + o, r - d * 0.36f + o, d * 0.025f, Black); }
+        }
+
+        /// <summary>402.1 ahead only (arrow up), 402.4 turn right: white arrow on a blue disc.</summary>
+        static void Ahead(SignCanvas c, bool right)
+        {
+            float d = c.WidthMm, r = d / 2;
+            c.Fill(White);
+            c.Circle(r, r, r - d * 0.012f, Blue);
+            if (!right) { c.Arrow(new[] { new float2(r, d * 0.82f), new float2(r, d * 0.16f) }, d * 0.13f, d * 0.26f, White); return; }
+            var pts = new List<float2> { new float2(d * 0.38f, d * 0.82f), new float2(d * 0.38f, d * 0.5f) };
+            foreach (var q in SignCanvas.Arc(d * 0.56f, d * 0.5f, d * 0.18f, math.PI, math.PI * 1.5f, 10)) pts.Add(q);
+            pts.Add(new float2(d * 0.82f, d * 0.32f));
+            c.Arrow(pts, d * 0.13f, d * 0.26f, White);
         }
 
         static void Limit(SignCanvas c, string text, bool height)
@@ -389,16 +529,15 @@ namespace Rally.World
             c.Rect(s * 0.012f, s * 0.012f, s * 0.976f, c.HeightMm - s * 0.024f, s * 0.045f, Blue);
         }
 
+        /// <summary>512: a wide blue plate with a white bus seen from the side (blue windows and wheel arches).</summary>
         static void BusStop(SignCanvas c)
         {
-            float s = c.WidthMm;
-            BlueField(c);
-            c.Rect(s * 0.14f, s * 0.14f, s * 0.72f, s * 0.72f, s * 0.03f, White);
-            // a bus seen from the side, facing left
-            c.Rect(s * 0.2f, s * 0.33f, s * 0.6f, s * 0.3f, s * 0.04f, Black);
-            for (int i = 0; i < 4; i++) c.Rect(s * (0.24f + i * 0.135f), s * 0.37f, s * 0.1f, s * 0.1f, s * 0.01f, White);
-            c.Circle(s * 0.32f, s * 0.64f, s * 0.055f, Black); c.Circle(s * 0.68f, s * 0.64f, s * 0.055f, Black);
-            c.Circle(s * 0.32f, s * 0.64f, s * 0.022f, White); c.Circle(s * 0.68f, s * 0.64f, s * 0.022f, White);
+            float w = c.WidthMm, h = c.HeightMm;
+            c.Fill(White);
+            c.Rect(w * 0.012f, w * 0.012f, w - w * 0.024f, h - w * 0.024f, w * 0.03f, Blue);
+            c.Rect(w * 0.1f, h * 0.2f, w * 0.8f, h * 0.48f, h * 0.06f, White);
+            for (int i = 0; i < 4; i++) c.Rect(w * (0.16f + i * 0.175f), h * 0.27f, w * 0.15f, h * 0.15f, h * 0.02f, Blue);
+            foreach (var x in new[] { 0.27f, 0.72f }) { c.Circle(w * x, h * 0.68f, h * 0.13f, Blue); c.Circle(w * x, h * 0.68f, h * 0.1f, White); }
         }
 
         static void Crossing(SignCanvas c)
@@ -411,15 +550,131 @@ namespace Rally.World
             Figure(f, 132, 112, 1.0f, true);
         }
 
+        /// <summary>518 walkers (adult and child), 520 bicycle, 522 both (walkers over the bicycle): white on a blue square.</summary>
         static void Footpath(SignCanvas c, bool bike, bool walker)
         {
             float d = c.WidthMm;
+            BlueField(c);
+            Frame At(float scale, float cx, float cy) { float sc = d / 256f * scale; return new Frame(c, sc, cx - 128 * sc, cy - 128 * sc); }
+            if (walker && bike)
+            {
+                var f = At(0.8f, d * 0.5f, d * 0.3f);
+                Figure(f, 110, 70, 1.4f, true, White); Figure(f, 160, 110, 0.95f, true, White);
+                Bicycle(At(1.05f, d * 0.5f, d * 0.72f), 128, 166, White);
+            }
+            else if (walker) { var f = At(1f, d * 0.5f, d * 0.5f); Figure(f, 100, 52, 1.75f, true, White); Figure(f, 170, 108, 1.15f, true, White); }
+            else Bicycle(At(1.75f, d * 0.5f, d * 0.5f), 128, 166, White);
+        }
+
+        /// <summary>527.1 dead end: a white stem under a red bar; 527.3 open to walkers and cycles: a bicycle over it.</summary>
+        static void DeadEnd(SignCanvas c, bool cycles)
+        {
+            float s = c.WidthMm;
+            BlueField(c);
+            float barTop = cycles ? 0.5f : 0.17f;
+            if (cycles)
+            {
+                float sc = s / 256f * 0.75f;
+                Bicycle(new Frame(c, sc, s * 0.5f - 128 * sc, s * 0.2f - 128 * sc), 128, 166, White);
+                c.Rect(s * 0.455f, s * 0.38f, s * 0.09f, s * 0.14f, 0, White);
+            }
+            c.Rect(s * 0.44f, s * (barTop + 0.1f), s * 0.12f, s * (0.9f - barTop - 0.1f), 0, White);
+            c.Rect(s * 0.26f, s * (barTop - 0.01f), s * 0.48f, s * 0.14f, 0, White);
+            c.Rect(s * 0.275f, s * barTop + s * 0.005f, s * 0.45f, s * 0.11f, 0, Red);
+        }
+
+        static readonly Color ExitGreen = Hex(0x00975A);
+
+        /// <summary>570.1: a running figure towards a door, white on green.</summary>
+        static void EmergencyExit(SignCanvas c, bool left)
+        {
+            float s = c.WidthMm;
             c.Fill(White);
-            c.Circle(d / 2, d / 2, d / 2 - d * 0.012f, Blue);
-            var f = DiscFrame(c);
-            if (walker && bike) { Figure(new Frame(c, d / 240f * 0.75f, d * 0.08f, d * 0.12f), 128, 70, 1.0f, true); Bicycle(new Frame(c, d / 240f * 0.72f, d * 0.36f, d * 0.27f), 128, 140, White); }
-            else if (walker) Figure(f, 128, 72, 1.25f, true, White);
-            else Bicycle(f, 128, 150, White);
+            c.Rect(s * 0.02f, s * 0.02f, s * 0.96f, s * 0.96f, s * 0.04f, ExitGreen);
+            float X(float x) => left ? s - x : x;
+            c.Rect(math.min(X(s * 0.66f), X(s * 0.84f)), s * 0.16f, s * 0.18f, s * 0.68f, 0, White);
+            float sc = s / 256f * 1.7f;
+            Figure(new Frame(c, sc, s * 0.36f - 128 * sc, s * 0.22f - 30 * sc, left), 128, 40, 1f, true, White);
+        }
+
+        /// <summary>570.2: the distance to the nearest exit on a green arrow plate: figure, arrow, door, "150 m".</summary>
+        static void ExitDistance(SignCanvas c, bool left, string dist)
+        {
+            float w = c.WidthMm, h = c.HeightMm;
+            c.Fill(White);
+            var outline = new SignDesign { Shape = left ? PlateShape.ArrowLeft : PlateShape.ArrowRight, WidthMm = w, HeightMm = h, CornerMm = h * 0.05f }.Outline();
+            c.Polygon(SignCanvas.Inset(outline, h * 0.04f), ExitGreen);
+            float X(float x) => left ? w - x : x;
+            float sc = h / 256f * 1.9f;
+            Figure(new Frame(c, sc, w * 0.1f - 128 * sc, h * 0.15f - 30 * sc, left), 128, 40, 1f, true, White);
+            c.Arrow(new[] { new float2(X(w * 0.2f), h * 0.3f), new float2(X(w * 0.52f), h * 0.3f) }, h * 0.07f, h * 0.17f, White);
+            c.Rect(math.min(X(w * 0.58f), X(w * 0.64f)), h * 0.16f, w * 0.06f, h * 0.68f, 0, White);
+            if (!string.IsNullOrEmpty(dist)) c.Text(dist, X(w * 0.33f), h * 0.7f, h * 0.24f, White, true, w * 0.3f);
+        }
+
+        /// <summary>"xx M til utgang", "150m", "@150 m@" → "150 m"; null without a number of metres.</summary>
+        static string Distance(string text)
+        {
+            if (text == null) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(text, @"(\d+)\s*[mM]\b");
+            return m.Success ? m.Groups[1].Value + " m" : null;
+        }
+
+        /// <summary>605 emergency phone, 606 fire extinguisher: a white field on a blue square, the symbol black / red.</summary>
+        static void Service(SignCanvas c, int n)
+        {
+            float s = c.WidthMm;
+            BlueField(c);
+            c.Rect(s * 0.15f, s * 0.15f, s * 0.7f, s * 0.7f, s * 0.07f, White);
+            if (n == 605)
+            {
+                // a handset from the ear (upper left) to the mouth (lower right), bulging to the upper right; "SOS" under it
+                var arc = SignCanvas.Arc(s * 0.36f, s * 0.6f, s * 0.3f, -math.PI * 0.5f, 0f, 16);
+                c.Stroke(arc, s * 0.06f, Black);
+                c.Circle(s * 0.36f, s * 0.31f, s * 0.065f, Black);
+                c.Circle(s * 0.65f, s * 0.6f, s * 0.065f, Black);
+                c.Text("SOS", s * 0.37f, s * 0.72f, s * 0.11f, Black, true, s * 0.4f);
+            }
+            else
+            {
+                c.Rect(s * 0.46f, s * 0.35f, s * 0.16f, s * 0.42f, s * 0.05f, Red);
+                c.Rect(s * 0.5f, s * 0.27f, s * 0.08f, s * 0.1f, s * 0.01f, Red);
+                c.Line(s * 0.52f, s * 0.29f, s * 0.3f, s * 0.27f, s * 0.05f, Red);
+                c.Line(s * 0.6f, s * 0.3f, s * 0.7f, s * 0.42f, s * 0.025f, Red);
+            }
+        }
+
+        /// <summary>807.3 bus, 807.6 bicycle: a black symbol on a white supplementary plate.</summary>
+        static void SymbolPlate(SignCanvas c, bool bus)
+        {
+            float w = c.WidthMm, h = c.HeightMm;
+            c.Fill(Black);
+            c.Rect(h * 0.05f, h * 0.05f, w - h * 0.1f, h * 0.9f, h * 0.04f, White);
+            if (bus)
+            {
+                c.Rect(w * 0.12f, h * 0.18f, w * 0.76f, h * 0.5f, h * 0.06f, Black);
+                for (int i = 0; i < 4; i++) c.Rect(w * (0.27f + i * 0.145f), h * 0.25f, w * 0.12f, h * 0.17f, h * 0.02f, White);
+                foreach (var x in new[] { 0.3f, 0.7f }) { c.Circle(w * x, h * 0.7f, h * 0.13f, White); c.Circle(w * x, h * 0.7f, h * 0.1f, Black); }
+                return;
+            }
+            float sc = h / 256f * 1.6f;
+            Bicycle(new Frame(c, sc, w / 2 - 128 * sc, h / 2 - 128 * sc), 128, 166, Black);
+        }
+
+        /// <summary>828.1 both ways (arrows up and down), 828.2 down (against the traffic), 828.3 up: black on a white plate.</summary>
+        static void Extent(SignCanvas c, string sub)
+        {
+            float w = c.WidthMm, h = c.HeightMm;
+            c.Fill(Black);
+            c.Rect(w * 0.08f, w * 0.08f, w * 0.84f, h - w * 0.16f, w * 0.02f, White);
+            float x = w / 2, sw = w * 0.13f, head = w * 0.42f;
+            if (sub == "1")
+            {
+                c.Arrow(new[] { new float2(x, h * 0.46f), new float2(x, h * 0.08f) }, sw, head, Black);
+                c.Arrow(new[] { new float2(x, h * 0.54f), new float2(x, h * 0.92f) }, sw, head, Black);
+            }
+            else if (sub == "2") c.Arrow(new[] { new float2(x, h * 0.1f), new float2(x, h * 0.92f) }, sw, head, Black);
+            else c.Arrow(new[] { new float2(x, h * 0.9f), new float2(x, h * 0.08f) }, sw, head, Black);
         }
 
         static void OneWayAcross(SignCanvas c)
@@ -432,9 +687,9 @@ namespace Rally.World
 
         static void OneWayAlong(SignCanvas c)
         {
-            float s = c.WidthMm;
+            float w = c.WidthMm, h = c.HeightMm;
             BlueField(c);
-            c.Arrow(new[] { new float2(s / 2, s * 0.85f), new float2(s / 2, s * 0.15f) }, s * 0.16f, s * 0.34f, White);
+            c.Arrow(new[] { new float2(w / 2, h - w * 0.15f), new float2(w / 2, w * 0.15f) }, w * 0.16f, w * 0.34f, White);
         }
 
         static void Chevron(SignCanvas c, bool left, bool tall)
@@ -655,6 +910,44 @@ namespace Rally.World
             };
         }
 
+        /// <summary>The destination lines of a direction plate: lines that are only a sign code or a number ("650.20", "611") dropped.</summary>
+        static List<SignText.Line> DestinationLines(string text)
+        {
+            var lines = SignText.Parse(text);
+            lines.RemoveAll(l => l.Shield == null && !HasLetter(l.Text));
+            return lines;
+        }
+
+        static bool HasLetter(string s) { if (s != null) foreach (var ch in s) if (char.IsLetter(ch)) return true; return false; }
+
+        /// <summary>711 tabellvegviser: a yellow plate, destinations left-aligned, the direction as an arrow beside them.</summary>
+        static SignDesign TableSign(string key, List<SignText.Line> lines, int dir)
+        {
+            float cap = DirectionCap, lineH = cap * 1.75f, pad = cap * 0.7f, arrowW = cap * 2.2f;
+            float width = 0;
+            foreach (var l in lines) width = math.max(width, LineWidth(l, cap));
+            float h = lines.Count * lineH + pad * 0.6f, w = width + 2 * pad + arrowW;
+            return new SignDesign
+            {
+                Key = key, Shape = PlateShape.Rect, WidthMm = w, HeightMm = h, CornerMm = cap * 0.25f,
+                Paint = c =>
+                {
+                    c.Fill(Black);
+                    c.Rect(cap * 0.12f, cap * 0.12f, w - cap * 0.24f, h - cap * 0.24f, cap * 0.18f, Yellow);
+                    float x0 = dir < 0 || dir == 0 ? pad + arrowW : pad;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        float cy = pad * 0.3f + lineH * (i + 0.5f), x = x0;
+                        if (lines[i].Shield != null) x += Shield(c, x, cy, lines[i].Shield, lines[i].ShieldCode, cap) + cap * 0.4f;
+                        c.Text(lines[i].Text, x, cy, cap, Black, false);
+                    }
+                    float ax = dir > 0 ? w - pad - arrowW / 2 : pad + arrowW / 2 - cap * 0.3f, ay = h / 2, a = cap * 0.8f;
+                    var shaft = dir == 0 ? new[] { new float2(ax, ay + a), new float2(ax, ay - a) } : new[] { new float2(ax - dir * a, ay), new float2(ax + dir * a, ay) };
+                    c.Arrow(shaft, cap * 0.28f, cap * 0.75f, Black);
+                },
+            };
+        }
+
         static float LineWidth(SignText.Line l, float cap)
         {
             float w = SignCanvas.TextWidth(l.Text, cap);
@@ -688,6 +981,7 @@ namespace Rally.World
             var lines = SignText.Parse(text);
             string number = null;
             foreach (var l in lines) if (l.Shield != null) { number = l.Shield; break; }
+            if (number == null && lines.Count == 1) number = SignText.AsRoadNumber(lines[0].Text);   // "64", "E134", "@E 134@"
             if (number == null) return null;
             float cap = 150f, w = ShieldWidth(number, cap) + cap * 0.1f, h = cap * 1.6f;
             var lower = (label ?? "").ToLowerInvariant();
@@ -708,8 +1002,12 @@ namespace Rally.World
         /// <summary>A plain text plate (727 place name, 729 street name, 8xx supplementary): border, one line.</summary>
         static SignDesign NamePlate(string key, string text, Color bg, Color fg, float cap)
         {
-            float pad = cap * 0.75f, w = SignCanvas.TextWidth(text, cap) + 2 * pad, h = cap * 2.1f;
-            w = math.max(w, h * 1.4f);
+            var lines = text.Split('\n');
+            float pad = cap * 0.75f, lineH = cap * 1.6f, w = 0;
+            foreach (var l in lines) w = math.max(w, SignCanvas.TextWidth(l, cap));
+            w += 2 * pad;
+            float h = cap * 2.1f + (lines.Length - 1) * lineH;
+            w = math.max(w, cap * 2.1f * 1.4f);
             return new SignDesign
             {
                 Key = key, Shape = PlateShape.Rect, WidthMm = w, HeightMm = h, CornerMm = cap * 0.2f,
@@ -717,7 +1015,8 @@ namespace Rally.World
                 {
                     c.Fill(fg);
                     c.Rect(cap * 0.1f, cap * 0.1f, w - cap * 0.2f, h - cap * 0.2f, cap * 0.12f, bg);
-                    c.Text(text, w / 2, h / 2, cap, fg, true, w - 2 * pad * 0.6f);
+                    for (int i = 0; i < lines.Length; i++)
+                        c.Text(lines[i], w / 2, h / 2 + (i - (lines.Length - 1) / 2f) * lineH, cap, fg, true, w - 2 * pad * 0.6f);
                 },
             };
         }

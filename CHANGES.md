@@ -1,8 +1,54 @@
 # Changes
 
-_Updated 2026-11-22 (Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-22 (Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-22
+
+### Unity: road signs show the right face, one post per side, in NVDB's order
+- Posts no longer carry the plates of both sides of the road: NVDB gives them one point, and the game had stacked up to
+  12 plates (both directions, both sides) on one post. A post is now the plates at one point on one NVDB side; the other
+  side stands across the road. Plates follow NVDB's Plasseringskode (top to bottom); plates back to back share a level,
+  the post ends just over the top plate.
+- Posts are built again when the ground under them moves (roads graded again, a finer DTM): no floating posts.
+- Text plates no longer print NVDB's markup ("@100 m@", "Hågå@", "723.31@"): symbols are dropped, "@@" breaks a line,
+  road numbers become shields ("@723.15@285@@Hønefoss", "64" on a 723 plate). Zone signs show the zone's own limit.
+- Faces corrected after a check against the official designs: 518 / 520 / 522 are blue squares, 526.1 / 526.2 were
+  swapped, 512 is the wide bus plate, 366 / 368 have "Sone" on top, 727.1 place names are white on blue, 306.1 shows a
+  car and a motorcycle. New designs: 552 parking, 570.1 / 570.2 tunnel emergency exits, 527.1 / 527.3 dead end, 605 / 606,
+  711 table direction signs, 804, 807.3 / 807.6, 828.1–3, 524, 306.8, 336, 376 / 378 parking zones, 402.1 / 402.4.
+  88 % of the 74 549 cached plates are drawn (was 76 %).
+- Tests: `SignTests` (posts per side, Plasseringskode, levels and post top, text markup, zone limit, new designs, re-seating).
+
+### Unity: OSM roads per road region, several Overpass servers at once, roads shown as a joined network
+- Roads come in a light roads-only Overpass query per **road region** of 3 × 3 coarse tiles (≈ 6 × 6 km, fixed grid),
+  no longer inside each tile's heavy query for houses and fields (5 MB per tile). A tile's roads are graded only when the
+  regions of the tile and its 8 neighbours are in, so neighbouring tiles always draw from the same answer. Region
+  answers keep only the tags the game reads (`out tags geom`, 18 % smaller); cache keys `osmroads1:` (roads) and
+  `overpass3:` (features, no roads).
+- Overpass servers are chosen by measured health: openstreetmap.fr, ovp.dresel.systems (new), overpass-api.de,
+  maps.mail.ru (new) and private.coffee (kumi.systems removed: the same server). A tiny probe first, then each query
+  goes to the fastest free server, with each server's own slots (dresel 4, the others 2), so different regions and
+  tiles load from several servers at once; a slow one is hedged on the next after 3 × its usual time; a failing or
+  slow one pauses on its own (30 s, doubling); an answer with an Overpass "runtime error" remark counts as a failure.
+- Roads are drawn nearest the car first and before any tile's houses; behind the loading screen the work runs in
+  bigger pieces. A tile's ribbon, carve, bridges and tunnels appear together, and only when every neighbour's roads
+  are drawn too, so no road ends at a tile edge while the neighbour waits, and no bare carved patch shows. The start
+  screen opens once the start tile's roads are shown.
+- Saved-route downloads ask for the road regions of the whole corridor first, and share the servers' slots with driving.
+- A cached area loads without asking any server: tiles cached under the older combined key (`overpass2:`) give their
+  roads and houses from there (no road-region request, no server probe); empty answers are stored. The log counts per
+  data type what came from the cache and what from the network (`cache: dem 61 cached / 1 fetched · osm 38 cached / 0
+  fetched …`). In the browser the cache stores each answer at once: it used to wait, on the first answer of a session,
+  for a walk over the whole store (minutes with 900 MB cached), so the start tiles' terrain waited and was not stored.
+- Measured from an empty cache (Lillehammer / Drammen / Sauda): see `tasks/plan_20261122_road_regions.md` Review.
+- Tests: `RoadRegionsTests`, `OverpassTests` (probes, spreading, slots, hedge, pauses, runtime error, roads parse),
+  `OverlayFetchTests` (roads and features apart), `SavedRoutesTests` (regions first), `RoadGraphTests` (carve only shown).
+
+### Unity: houses show all their walls
+- Every house showed only the insides of its two far walls: the wall and roof triangles were wound the wrong way
+  round for Unity, and the house material hides back faces. They now face out (`Buildings.Builder.Face`), the same
+  rule as bridges and signs. Test: `HouseFaceTests` (every triangle faces along its normal, every wall normal points
+  out of the house).
 
 ### Unity: MY ROUTES, and a route's download kept locally
 - A route made from START and FINISH place names on the map is saved when it is generated; a route made by clicking

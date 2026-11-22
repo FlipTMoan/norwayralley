@@ -59,7 +59,8 @@ namespace Rally.Gameplay
     }
 
     /// <summary>
-    /// The overlay data of a coarse tile, one lane per type: OSM roads + features (Overpass, one answer), SR16 forest, NVDB
+    /// The overlay data of a coarse tile, one lane per type: OSM roads (a road region's answer, RoadRegions) and OSM map
+    /// features (the tile's own answer; both Overpass), SR16 forest, NVDB
     /// surfaces, signs and lights. Each lane asks until it has an answer: no answer (or a failure) pauses that type's service
     /// (<see cref="ServiceBreakers"/>) and asks again after the pause or <see cref="RetryMs"/>, without delaying or asking
     /// the other types again. A landed answer is stored in the <see cref="TileOverlay"/> and reported at once.
@@ -87,16 +88,17 @@ namespace Rally.Gameplay
         }
 
         /// <summary>
-        /// What the world waits for, in a fixed order (terrain, OSM roads, NVDB surfaces / signs / lights, forest): the types with
+        /// What the world waits for, in a fixed order (terrain, OSM roads, OSM features, NVDB surfaces / signs / lights, forest): the types with
         /// tiles outstanding — <paramref name="terrainTiles"/> without their DTM, and each type not landed in <paramref name="tiles"/>
         /// (types without a source are not waited for) — each with its service's pause.
         /// </summary>
         public List<Waiting> Outstanding(int terrainTiles, IEnumerable<TileOverlay> tiles)
         {
-            int roads = 0, surfaces = 0, signs = 0, lights = 0, cover = 0;
+            int roads = 0, features = 0, surfaces = 0, signs = 0, lights = 0, cover = 0;
             foreach (var d in tiles)
             {
                 if (d.Roads == null) roads++;
+                if (d.Features == null) features++;
                 if (Surfaces != null && d.Surfaces == null) surfaces++;
                 if (Signs != null && d.Signs == null) signs++;
                 if (Lights != null && d.Lights == null) lights++;
@@ -106,6 +108,7 @@ namespace Rally.Gameplay
             void Add(string name, int n, CircuitBreaker b) { if (n > 0) list.Add(new Waiting(name, n, b.RemainingMs, Breakers.NameOf(b))); }
             Add("terrain", terrainTiles, Breakers.Dtm);
             Add("OSM roads", roads, Breakers.Overpass);
+            Add("OSM features", features, Breakers.Overpass);
             Add("NVDB surfaces", surfaces, Breakers.Nvdb);
             Add("NVDB signs", signs, Breakers.Nvdb);
             Add("NVDB lights", lights, Breakers.Nvdb);
@@ -134,11 +137,8 @@ namespace Rally.Gameplay
         {
             var lanes = new List<Task>
             {
-                Lane(key, "OSM roads + features", Breakers.Overpass, async c =>
-                {
-                    var r = await Roads(key.Bounds, c);
-                    return r == null ? null : Tuple.Create(r, await Features(key.Bounds, c));
-                }, live, v => { d.Roads = v.Item1; d.Features = v.Item2; d.Pending |= OverlayData.Roads | OverlayData.Features; landed(OverlayData.Roads | OverlayData.Features); }, null, ct),
+                Lane(key, "OSM roads", Breakers.Overpass, c => Roads(key.Bounds, c), live, v => { d.Roads = v; d.Pending |= OverlayData.Roads; landed(OverlayData.Roads); }, null, ct),
+                Lane(key, "OSM map features", Breakers.Overpass, c => Features(key.Bounds, c), live, v => { d.Features = v; d.Pending |= OverlayData.Features; landed(OverlayData.Features); }, null, ct),
                 Lane(key, "SR16 forest", Breakers.Sr16, c => Cover(key.Bounds, c), live, v => { d.Cover = v; d.Pending |= OverlayData.Cover; landed(OverlayData.Cover); }, null, ct),
             };
             if (Surfaces != null)

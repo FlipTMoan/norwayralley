@@ -108,6 +108,10 @@ namespace Rally.Gameplay
     public sealed class PrefetchSources
     {
         public Func<TileKey, CancellationToken, Task<bool>> Dem;
+        /// <summary>A road region's answer into the cache (true when it came), asked for the whole corridor before anything else.</summary>
+        public Func<RoadRegions.Key, CancellationToken, Task<bool>> RoadRegion;
+        /// <summary>The tile's answer from the older combined query is cached (its roads and features come from it, no request).</summary>
+        public Func<Bounds25833, CancellationToken, Task<bool>> OldTile;
         public Func<Bounds25833, CancellationToken, Task<RoadGraphData>> Roads;
         public Func<Bounds25833, CancellationToken, Task<Features>> Features;
         public Func<Bounds25833, CancellationToken, Task<CoverRaster>> Cover;
@@ -177,6 +181,41 @@ namespace Rally.Gameplay
             progress?.Invoke();
             int failed = 0;
             var src = Make(view);
+            // The road regions of the whole corridor first (plan_20261122_road_regions): the roads of a route are what
+            // driving it needs before anything else, and one region answers for 9 tiles.
+            var regionsIn = new HashSet<RoadRegions.Key>();
+            if (src.RoadRegion != null)
+            {
+                var regions = new Queue<RoadRegions.Key>();
+                var seenRegions = new HashSet<RoadRegions.Key>();
+                foreach (var k in tiles.Coarse)
+                {
+                    if (src.OldTile != null && await src.OldTile(k.Bounds, ct)) continue;   // cached already: nothing to ask
+                    foreach (var r in RoadRegions.Around(k)) if (seenRegions.Add(r)) regions.Enqueue(r);
+                }
+                async Task RegionWorker()
+                {
+                    while (regions.Count > 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var r = regions.Dequeue();
+                        if (await Region(r, src, ct)) regionsIn.Add(r);
+                    }
+                }
+                await Task.WhenAll(RegionWorker(), RegionWorker());
+                RallyLog.Info($"routes: \"{route.Name}\" road regions {regionsIn.Count}/{seenRegions.Count} in");
+                // A tile's roads lane only checks its regions (asking again for one that failed): no parse, no copy.
+                var regionFetch = src.RoadRegion;
+                var oldTile = src.OldTile;
+                src.Roads = async (b, c) =>
+                {
+                    if (oldTile != null && await oldTile(b, c)) return new RoadGraphData();
+                    var key = TileKey.At(TileKind.Coarse, new Utm33((b.MinE + b.MaxE) / 2, (b.MinN + b.MaxN) / 2));
+                    foreach (var r in RoadRegions.Around(key))
+                        if (!regionsIn.Contains(r)) { if (await regionFetch(r, c)) regionsIn.Add(r); else return null; }
+                    return new RoadGraphData();
+                };
+            }
             // One worker per level (each helps the other once its own list is done): a coarse tile waiting for a paused
             // Overpass does not hold back the 1 m DTM tiles along the road.
             var coarse = new Queue<TileKey>(tiles.Coarse);
@@ -215,6 +254,23 @@ namespace Rally.Gameplay
                 finally { InFlight--; }
             }
             finally { Leave(); }
+        }
+
+        /// <summary>One road region through the gate, asked again after Overpass's pause until it comes or has failed too often.</summary>
+        async Task<bool> Region(RoadRegions.Key r, PrefetchSources src, CancellationToken ct)
+        {
+            var overpass = Breakers().Overpass;
+            for (int failures = 0; failures < MaxFailures; failures++)
+            {
+                if (overpass.IsOpen) await Delay(Math.Max(1000, overpass.RemainingMs), ct);
+                bool ok = false;
+                try { ok = await Gated(() => src.RoadRegion(r, ct), ct); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception e) { RallyLog.Info($"routes: {r} roads failed: {e.Message}"); }
+                if (ok) return true;
+                if (!overpass.IsOpen) overpass.Trip();
+            }
+            return false;
         }
 
         async Task<bool> Tile(TileKey key, PrefetchSources src, CancellationToken ct)

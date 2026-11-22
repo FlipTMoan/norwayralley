@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-22 (Unity MY ROUTES: SavedRouteList, RouteTiles / RoutePrefetch / PinningCache, cache pins skipped by LRU, deflate works in WebGL; Unity continuous roads: link roads, survey `-previewContinuity`; Unity overlay data per type with one pause per service: OverlayFetch / ServiceBreakers; Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-22 (Unity road regions: RoadRegions, health-based OverpassMirrors with per-server slots, roads before houses, ShowRoads; Unity MY ROUTES: SavedRouteList, RouteTiles / RoutePrefetch / PinningCache, cache pins skipped by LRU, deflate works in WebGL; Unity continuous roads: link roads, survey `-previewContinuity`; Unity overlay data per type with one pause per service: OverlayFetch / ServiceBreakers; Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -235,6 +235,25 @@ flowchart LR
 A coarse tile's overlay data come in one lane per type (`Gameplay/OverlayFetch`, `TileOverlay`): each is applied as it
 lands (roads first where signs and lights stand against them) and a type without an answer pauses only its own service
 (`ServiceBreakers`: Overpass, NVDB, SR16, DTM) and is asked again alone.
+
+OSM roads (2026-11-22) come per **road region** of 3 × 3 coarse tiles (`Gameplay/RoadRegions`, `OverpassQuery.BuildRoads`),
+asked for when a tile is requested (before its DTM); a tile's roads lane returns only when the regions of the tile and its
+8 neighbours are in. `Geo/Osm/OverpassMirrors` spreads queries over the healthy public servers (probe first, fastest free
+server, per-server slots, hedge after 3 × the usual time, per-server pause; road regions before features). The overlay queue
+draws roads nearest the car first and before any tile's houses (`NearestOverlaysFirst`, `OtherRoadsWaiting`); a tile's
+ribbon, carve (`RoadGraph.Shown`), bridges and tunnels are shown together once every wanted neighbour's roads are drawn
+(`ShowRoads`, `RoadRegions.Showable`).
+
+```mermaid
+flowchart LR
+  T[tile requested] -->|at once| R[RoadRegions.Prefetch<br/>regions of tile + 8 neighbours]
+  R --> M[OverpassMirrors<br/>probe · fastest free · slots per server · hedge]
+  T --> D[DTM] --> L[OverlayFetch lanes]
+  L -->|roads: all 1–4 regions in| G[grade · ribbon · bridges<br/>nearest first, before houses]
+  L -->|features: tile query| H[houses · water · fields]
+  G --> S{every wanted neighbour drawn?}
+  S -->|yes| V[show ribbon + carve + bridges]
+```
 
 `FrameProbe` (Core) times every frame and attributes slow ones; `PreviewShots -previewGlide -previewDrive`,
 `-previewSeams` and `-previewContinuity` (roads drawn without gaps, steps or open tunnel / deck ends) are the measuring tools.

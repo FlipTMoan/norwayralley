@@ -300,3 +300,50 @@
   (`UntilCancelled`), and a cancel must not wait for shared work. Test it with held (never-answering) fake loads.
 - The Chrome tool's console buffer keeps only the newest ~150 messages; for a long check, hook `console.log/warn` in the
   page and keep the lines that matter in `window.__logs` before acting.
+
+## 2026-11-22 — houses on two sides: winding against Unity's front face
+- `Buildings.Builder.Face` wound every triangle back to front (its comment said "clockwise is front" but the test it
+  used picked the opposite). Every house showed only the insides of its far walls, for weeks. Screenshots from a
+  distance read as "boxes", so nobody saw it. Rule: any mesh builder gets a test that `cross(v1 − v0, v2 − v0)` points
+  along the vertex normal (Unity's built-in quad: triangles {0,2,1}, normal −z), and a shot from each side of one
+  object.
+
+## 2026-11-22 — road regions: data in is not drawn, reveal rules and survey metrics
+- The road data for the whole start area came in ~10 s after the change, yet the loading survey showed as many loose
+  tile-edge ends as before: the tiles grade and draw one after another (~1–3 s each in town), so "data in" was never the
+  bottleneck any more. Time the pipeline stage by stage (data landed → overlay started → drawn) before picking a fix.
+- A "show only one connected network" rule (a fixpoint over neighbours) held every road back until the whole 38-tile
+  area was graded (49 s); hiding only the ribbon left the carved bed showing (the "bare black patch" the owner saw). A
+  reveal rule must hide everything that draws the road (ribbon, carve, bridges, tunnels) and only wait for neighbours.
+- A wait added "for safety" (roads wait 8 s for the tile's features, for the bridge rule) cost 8 s per tile once the
+  features came after the roads. Check what a new wait does to the queue's throughput in the timeline.
+- Probing every paused mirror "when all are down" inside the retry loop revived the mirror that had just failed the same
+  query. A recovery path belongs at the entry (after the breaker closes), not inside the loop.
+- Survey metrics: counting ribbon *vertices* over unloaded ground counted the unused vertices a tile keeps beyond its
+  own segments; count drawn triangles. A CSV key with a comma (`Coarse(124,3312)`) shifted every column. Measuring
+  against `HeightAt` (the car's ground: tunnel floors) or `CarvedHeightAt` (lags the carve) gives different "floating"
+  counts: say which, and look at a shot.
+- A multi-area editor run compiles at each area's start: editing runtime code while it runs mixes versions between
+  areas. Edit only outside `Assets/` until the run ends.
+- In Chrome the start area sat at "waiting: terrain 4" for minutes and a reload fetched every DTM again: `GeoCache` summed
+  the store's size (an IndexedDB cursor over 6 700 entries, 900 MB of values) before storing the session's first answer,
+  and handed the answer over only after storing it. A one-off accounting step must never sit between a fetch and its
+  caller; and a "cached 0" counter on a reload is the sign to look at the writes, not the reads.
+
+## 2026-11-22 — road signs: one point is not one post, and `pgrep -x Unity` finds nothing
+- NVDB gives every plate of a sign point the same coordinates, the plates on *both* sides of the road included; grouping
+  by distance alone put up to 12 plates (both sides, both directions) on one post. Group by point *and* sideposisjon, and
+  use the data's own order field (Plasseringskode) before inventing a ranking. Survey the raw data (plates per point, by
+  side) before trusting a "same point = same post" rule.
+- The sign survey compared every cached plate with the official designs: 518/520/522 were drawn as round mandatory
+  signs (Norway: blue squares), 526.1/526.2 swapped, 727.1 yellow (blue). Check a design against the official picture,
+  not against what the sign looks like in other countries.
+- The Unity editor's process is named "Unity Main Thre…", so `pgrep -x Unity` never matches and two agents started
+  Unity on the same project at once (the second exits with code 1 and a short log). Use `pgrep "^Unity"`, then wait a
+  random 15–25 s and check again before starting.
+- A pending Unity run compiles whatever is in `Assets/` when it starts: the "before" survey would have run on half-edited
+  code. Park the edits outside `Assets/` (restore the originals) until the before run has compiled.
+- `pgrep -x Unity` never matches the editor (its process name is "Unity Main Thre"), and `pgrep -f "Editor/Unity"` from a
+  shell whose own command line holds that text matches the shell. Wait for the editor with
+  `pgrep -f "^/home/pc/Unity/Hub/Editor/[^ ]*/Editor/Unity "` from a script file, and retry when Unity reports
+  "another Unity instance is running".

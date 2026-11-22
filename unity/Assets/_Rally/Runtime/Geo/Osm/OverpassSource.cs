@@ -7,66 +7,130 @@ using Rally.Core;
 namespace Rally.Geo
 {
     /// <summary>
-    /// buildings.js <c>fetchOsmChunk</c> + <c>parseElements</c>: one cached Overpass answer per chunk,
-    /// split into roads (<see cref="IRoadSource"/>) and everything else (<see cref="IFeatureSource"/>).
-    /// Geometry is converted to EPSG:25833 on parse. A chunk that got no answer (every mirror down)
-    /// returns an empty result and is not cached, so the next ask tries the network again.
+    /// buildings.js <c>fetchOsmChunk</c> + <c>parseElements</c>, as two cached Overpass answers: the roads of a box
+    /// (<see cref="IRoadSource"/>, the light roads-only query, asked per road region) and a tile's buildings, land cover, water
+    /// and power lines (<see cref="IFeatureSource"/>, the heavy one). Geometry is converted to EPSG:25833 on parse. A box that
+    /// got no answer (every mirror down) returns null and is not cached, so the next ask tries the network again.
     /// </summary>
     public sealed class OverpassSource : IRoadSource, IFeatureSource
     {
         /// <summary>buildings.js MAX_PER_CHUNK × 2: stop parsing footprints in a dense town.</summary>
         public const int MaxBuildings = 440;
 
-        readonly CachedSource<string> cache;
+        readonly CachedSource<string> cache, roadsCache;
+        readonly IGeoCache store;
         public readonly OverpassMirrors Mirrors;
 
         public OverpassSource(IGeoCache cache, OverpassMirrors mirrors = null)
         {
             Mirrors = mirrors ?? new OverpassMirrors();
+            store = cache;
             this.cache = CachedSource<string>.Text(cache, "osm", Mirrors.Breaker);
+            roadsCache = CachedSource<string>.Text(cache, "osmroads", Mirrors.Breaker);
+            if (cache is GeoCache g) Contains = g.Contains;
         }
 
-        /// <summary>The <c>elements</c> array of the Overpass answer as JSON text (what the JS client caches), or null.</summary>
+        /// <summary>Is a key stored (no network)? Set for a cache view that is not the GeoCache itself (a route download's).</summary>
+        public Func<string, Task<bool>> Contains;
+
+        /// <summary>Is the tile's version 2 answer (roads and features in one) in the cache? Read without touching the network.</summary>
+        public async Task<bool> HasOldTile(Bounds25833 tile)
+            => Contains != null && await Contains(OverpassQuery.OldCacheKey(LatLonBounds.Of(tile)));
+
+        readonly Dictionary<string, (Task<OsmChunk> chunk, int uses)> oldChunks = new Dictionary<string, (Task<OsmChunk>, int)>();
+
+        /// <summary>
+        /// The tile's version 2 answer, parsed once for its roads and its features (each takes it once), or null when it is not
+        /// cached. A cache that holds an area under the old key gives it without a single Overpass request (2026-11-22 owner:
+        /// "when all scenes are cached, only load the missing pieces").
+        /// </summary>
+        public async Task<OsmChunk> OldTile(Bounds25833 tile)
+        {
+            var key = OverpassQuery.OldCacheKey(LatLonBounds.Of(tile));
+            if (!oldChunks.TryGetValue(key, out var e))
+            {
+                if (Contains == null || !await Contains(key)) return null;
+                if (!oldChunks.TryGetValue(key, out e))
+                {
+                    e = (ParseOld(key), 0);
+                    if (oldChunks.Count > 32) oldChunks.Clear();   // never consumed (tiles dropped): forget them
+                }
+            }
+            if (++e.uses >= 2) oldChunks.Remove(key); else oldChunks[key] = e;
+            return await e.chunk;
+        }
+
+        async Task<OsmChunk> ParseOld(string key)
+        {
+            var bytes = await store.Fetch(key, () => Task.FromResult<byte[]>(null), "osm", isText: true);
+            if (bytes == null) return null;
+            long t0 = FrameProbe.Start();
+            var chunk = Parse(Json.Parse(System.Text.Encoding.UTF8.GetString(bytes)) as List<object>);
+            FrameProbe.Stop("osm.parse", t0);
+            return chunk;
+        }
+
+        /// <summary>The <c>elements</c> array of the tile's feature answer as JSON text (what the JS client caches), or null.</summary>
         public Task<string> FetchElementsJson(LatLonBounds b, CancellationToken ct)
             => cache.Get(OverpassQuery.CacheKey(b), async () =>
             {
-                var text = await Mirrors.Query(OverpassQuery.Build(b), ct);
+                var text = await Mirrors.Query(OverpassQuery.Build(b), ct, OverpassMirrors.Priority.Features);
                 if (text == null) return null;
                 var elements = Json.ParseObject(text).Arr("elements");
                 return Json.Stringify(elements ?? new List<object>());
             });
 
-        string lastChunkKey;
-        Task<OsmChunk> lastChunk;
-
         /// <summary>
-        /// The parsed chunk of a tile. FetchRoads and FetchFeatures of one tile are asked back to back: they share one fetch
-        /// and one parse (each parsed the whole answer on the main thread before). A failed or empty answer is asked again.
+        /// The road answer of a box as cached JSON text (the <c>elements</c>, each with only <see cref="OverpassQuery.RoadTags"/>
+        /// and its geometry), or null. Asked before any feature query (<see cref="OverpassMirrors.Priority.Roads"/>).
         /// </summary>
-        public Task<OsmChunk> FetchChunk(Bounds25833 bounds, CancellationToken ct)
+        public Task<string> FetchRoadsJson(LatLonBounds b, CancellationToken ct)
+            => roadsCache.Get(OverpassQuery.RoadsCacheKey(b), async () =>
+            {
+                var text = await Mirrors.Query(OverpassQuery.BuildRoads(b), ct, OverpassMirrors.Priority.Roads);
+                if (text == null) return null;
+                return Json.Stringify(Slim(Json.ParseObject(text).Arr("elements")));
+            });
+
+        /// <summary>Only what the game reads of a road answer: type, id, the kept tags, the geometry (no bounds, no other tags).</summary>
+        static List<object> Slim(List<object> elements)
         {
-            var key = OverpassQuery.CacheKey(LatLonBounds.Of(bounds));
-            if (key == lastChunkKey && lastChunk != null && (!lastChunk.IsCompleted || lastChunk.Status == TaskStatus.RanToCompletion && lastChunk.Result != null)) return lastChunk;
-            lastChunkKey = key;
-            return lastChunk = FetchChunkOnce(bounds, ct);
+            var list = new List<object>(elements?.Count ?? 0);
+            if (elements == null) return list;
+            foreach (var o in elements)
+            {
+                if (!(o is Dictionary<string, object> el)) continue;
+                var tags = el.Obj("tags");
+                var kept = new Dictionary<string, object>();
+                if (tags != null) foreach (var k in OverpassQuery.RoadTags) if (tags.TryGetValue(k, out var v)) kept[k] = v;
+                list.Add(new Dictionary<string, object> { { "type", el.Str("type") }, { "id", el.Get("id") }, { "tags", kept }, { "geometry", el.Arr("geometry") } });
+            }
+            return list;
         }
 
-        async Task<OsmChunk> FetchChunkOnce(Bounds25833 bounds, CancellationToken ct)
-        {
-            var json = await FetchElementsJson(LatLonBounds.Of(bounds), ct);
-            long t0 = FrameProbe.Start();
-            var chunk = json == null ? null : Parse(Json.Parse(json) as List<object>);
-            FrameProbe.Stop("osm.parse", t0);
-            return chunk;
-        }
-
-        /// <summary>The chunk's roads; null when no mirror answered (the caller asks again: a tile kept "no roads" for good before).</summary>
+        /// <summary>The roads of the box (a road region); null when no mirror answered (the caller asks again).</summary>
         public async Task<RoadGraphData> FetchRoads(Bounds25833 bounds, CancellationToken ct)
-            => (await FetchChunk(bounds, ct))?.Roads;
+        {
+            var json = await FetchRoadsJson(LatLonBounds.Of(bounds), ct);
+            if (json == null) return null;
+            long t0 = FrameProbe.Start();
+            var roads = Parse(Json.Parse(json) as List<object>).Roads;
+            FrameProbe.Stop("osm.parse.roads", t0);
+            return roads;
+        }
 
-        /// <summary>The chunk's buildings, land cover, water and power lines; null when no mirror answered.</summary>
+        /// <summary>The tile's buildings, land cover, water and power lines; null when no mirror answered.</summary>
         public async Task<Features> FetchFeatures(Bounds25833 bounds, CancellationToken ct)
-            => (await FetchChunk(bounds, ct))?.Features;
+        {
+            var old = await OldTile(bounds);
+            if (old != null) return old.Features;
+            var json = await FetchElementsJson(LatLonBounds.Of(bounds), ct);
+            if (json == null) return null;
+            long t0 = FrameProbe.Start();
+            var features = Parse(Json.Parse(json) as List<object>).Features;
+            FrameProbe.Stop("osm.parse", t0);
+            return features;
+        }
 
         /// <summary>buildings.js <c>parseElements</c>.</summary>
         public static OsmChunk Parse(List<object> elements)

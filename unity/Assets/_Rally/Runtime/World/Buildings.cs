@@ -124,8 +124,10 @@ namespace Rally.World
                 {
                     int i0 = b + scratchTris[t], i1 = b + scratchTris[t + 1], i2 = b + scratchTris[t + 2];
                     var tn = math.cross(Verts[i1].Pos - Verts[i0].Pos, Verts[i2].Pos - Verts[i0].Pos);
-                    // Unity (left-handed, y up) front faces are clockwise seen from the normal side: orient every triangle to match.
-                    if (math.dot(tn, n) > 0) { Idx.Add(i0); Idx.Add(i2); Idx.Add(i1); } else { Idx.Add(i0); Idx.Add(i1); Idx.Add(i2); }
+                    // Unity draws a triangle's front where cross(v1 − v0, v2 − v0) points (its built-in quad: {0,2,1}, normal −z), and
+                    // the house material culls back faces: wind every triangle so that cross points along n. The old test was
+                    // inverted, so every house showed only the insides of its far walls (2026-11-22).
+                    if (math.dot(tn, n) > 0) { Idx.Add(i0); Idx.Add(i1); Idx.Add(i2); } else { Idx.Add(i0); Idx.Add(i2); Idx.Add(i1); }
                 }
             }
         }

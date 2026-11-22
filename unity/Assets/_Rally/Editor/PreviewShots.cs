@@ -78,7 +78,9 @@ namespace Rally.Editor
             glide = Array.IndexOf(args, "-previewGlide") >= 0;
             minorSurvey = Array.IndexOf(args, "-previewMinor") >= 0;
             continuity = Array.IndexOf(args, "-previewContinuity") >= 0;
+            signSurvey = Array.IndexOf(args, "-previewSigns") >= 0;
             contSpotsFile = Arg(args, "-previewContSpots");
+            LoadingArgs(args);
             // -previewBlockOverpass SECONDS: every Overpass mirror is a black hole (connections hang) for the first SECONDS of play.
             if (float.TryParse(Arg(args, "-previewBlockOverpass"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blockS))
             {
@@ -126,6 +128,7 @@ namespace Rally.Editor
             {
                 if (benchName != null && !benchArmed && now >= benchArmAt) BenchArm();
                 if (benchArmed) BenchSample();
+                if (loadingSurvey) { LoadingTick(now); return; }   // -previewLoading: snapshots while the world loads, nothing else
                 switch (step)
                 {
                     case 0:   // wait for play mode and the stage
@@ -146,6 +149,7 @@ namespace Rally.Editor
                         if (driveSecs > 0) { cam = game.MainCamera != null ? game.MainCamera : Camera.main; BenchPlan(); benchPoses.Clear(); step = 10; return; }   // -previewDrive: no shots, just the drive
                         if (mud) { MudPlan(); step = 30; return; }   // -previewMud: launches on each surface, no other shots
                         if (continuity) { step = 50; return; }   // -previewContinuity: the road survey once the overlays are in
+                        if (signSurvey) { step = 50; return; }   // -previewSigns: the sign post survey once the overlays are in
                         Plan();
                         step = stageSpec != null ? 40 : 2;
                         return;
@@ -357,6 +361,7 @@ namespace Rally.Editor
             if (lookSpots != null || poseSpec != null || carAtSpec != null) { if (lookSpots != null) LookShots(lookSpots); PoseShots(rig); return; }
             if (seams) { SeamReport(); return; }
             if (continuity) { ContinuityReport(); return; }
+            if (signSurvey) { SignReport(); return; }
             shots.Enqueue(("02_hillside", () => Look(c.xz - hillDir * 30, 4, c.xz + hillDir * 600, 0.45f)));
             shots.Enqueue(("03_overview", () => Look(c.xz - hillDir * 250, 120, c.xz + hillDir * 300, 0f)));
             shots.Enqueue(("04_forest_edge", () => Look(c.xz - fwd * 10, 2.5f, c.xz + fwd * 120, 0.15f)));

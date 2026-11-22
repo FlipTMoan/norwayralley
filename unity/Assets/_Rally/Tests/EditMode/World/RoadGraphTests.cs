@@ -63,6 +63,23 @@ namespace Rally.Tests.World
             Assert.IsNull(ProfileGrader.LaneSpecFor(footway.Tags), "footways are not roads");
         }
 
+        /// <summary>
+        /// The carve appears with the ribbon (plan_20261122_road_regions): a road graded but not shown yet is not carved, so the
+        /// car never stands on a bare carved patch with no road drawn on it.
+        /// </summary>
+        [Test]
+        public void ARoadIsCarvedOnlyOnceItsTileIsShown()
+        {
+            var g = Graph(Way(1, "residential", 1000, 0, 500));
+            var segs = new List<CarveSegment>();
+            g.Shown = k => false;
+            g.CollectCarveSegments(new Bounds25833(0, 0, 2048, 2048), new Utm33(0, 0), segs);
+            Assert.AreEqual(0, segs.Count, "graded, not shown: nothing carved");
+            g.Shown = k => k.Equals(new TileKey(TileKind.Coarse, 0, 0));
+            g.CollectCarveSegments(new Bounds25833(0, 0, 2048, 2048), new Utm33(0, 0), segs);
+            Assert.Greater(segs.Count, 50, "shown: carved");
+        }
+
         [Test]
         public void CarveSegmentsAreTileLocalWithLift()
         {

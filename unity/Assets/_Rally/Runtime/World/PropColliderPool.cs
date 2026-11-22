@@ -60,6 +60,7 @@ namespace Rally.World
             if (handle == 0 || !byHandle.TryGetValue(handle, out var c)) return;
             byHandle.Remove(handle);
             used.Remove(c);
+            if (c == null) return;   // destroyed with the scene before its owner let go (GameController.OnDestroy at teardown)
             c.gameObject.SetActive(false);
             free.Add(c);
         }

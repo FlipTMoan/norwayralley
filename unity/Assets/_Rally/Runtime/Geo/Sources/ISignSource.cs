@@ -32,6 +32,8 @@ namespace Rally.Geo
         public SignFacing Facing;
         public RoadSide Side;
         public Utm33 Position;
+        /// <summary>NVDB Plasseringskode (5128): the plate's place on its post, lowest on top (10, 20, 30 …); 0 when not registered.</summary>
+        public int Order;
         /// <summary>Height from the NVDB geometry, NaN when absent.</summary>
         public double Height = double.NaN;
         /// <summary>Speed in km/h for 362/366 plates, 0 otherwise.</summary>

@@ -86,8 +86,8 @@ namespace Rally.Tests.World
         public void Query_AsksForTheLinkRoads_UnderANewCacheKey()
         {
             var b = new LatLonBounds(59, 6, 59.02, 6.04);
-            StringAssert.Contains("|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$", OverpassQuery.Build(b));
-            StringAssert.StartsWith("overpass2:", OverpassQuery.CacheKey(b), "answers cached without the links are not reused");
+            StringAssert.Contains("|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$", OverpassQuery.BuildRoads(b));
+            StringAssert.StartsWith("osmroads1:", OverpassQuery.RoadsCacheKey(b), "answers cached without the links (overpass1/2) are not reused");
         }
 
         // ---- link roads ------------------------------------------------------------------------------------------

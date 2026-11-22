@@ -1,10 +1,11 @@
 namespace Rally.Geo
 {
     /// <summary>
-    /// The one Overpass query per chunk (buildings.js <c>fetchOsmChunkNow</c>): buildings, land use /
-    /// natural polygons, waterways and highways with full geometry. Ways only for land cover and
-    /// water: multipolygon relations for forests and big lakes can span hundreds of km² and make
-    /// Overpass time out. The Unity game also asks for power lines (not in the JS).
+    /// The Overpass queries. <see cref="Build"/>: one per coarse tile (buildings.js <c>fetchOsmChunkNow</c>), buildings, land
+    /// use / natural polygons, waterways and power lines with full geometry; ways only for land cover and water (multipolygon
+    /// relations for forests and big lakes can span hundreds of km² and make Overpass time out). <see cref="BuildRoads"/>:
+    /// the drivable roads alone, one per road region of 3 × 3 tiles (Rally.Gameplay.RoadRegions), so neighbouring tiles share
+    /// one answer and roads never wait behind a tile's houses and fields (2026-11-22).
     /// </summary>
     public static class OverpassQuery
     {
@@ -22,25 +23,50 @@ namespace Rally.Geo
 
         public static string Build(LatLonBounds b)
         {
-            string bbox = $"{Http.Fixed(b.MinLat, 6)},{Http.Fixed(b.MinLon, 6)},{Http.Fixed(b.MaxLat, 6)},{Http.Fixed(b.MaxLon, 6)}";
+            string bbox = Bbox(b);
             return "[out:json][timeout:45];("
                 + $"way[\"building\"]({bbox});"
                 + $"relation[\"building\"][\"type\"=\"multipolygon\"]({bbox});"
                 + $"way[\"landuse\"~\"^({string.Join("|", AreaLanduse)})$\"]({bbox});"
                 + $"way[\"natural\"~\"^({string.Join("|", AreaNatural)})$\"]({bbox});"
                 + $"way[\"waterway\"~\"^({string.Join("|", Waterways)})$\"]({bbox});"
-                + $"way[\"highway\"~\"^({string.Join("|", RoadClasses)})$\"]({bbox});"
                 + $"way[\"power\"~\"^({string.Join("|", PowerLines)})$\"]({bbox});"
                 + ");out geom;";
         }
 
         /// <summary>
-        /// Bumped whenever <see cref="Build"/> asks for more: answers cached for an older query (no link roads in version 1) are
-        /// not used for the new one.
+        /// The roads of a road region: <c>out tags geom</c> (no node ids, 18 % smaller than <c>out geom</c>; measured 3.4 vs
+        /// 4.1 MB for Lillehammer's 3 × 3 tiles). Only <see cref="RoadTags"/> are kept of the tags (<see cref="OverpassSource"/>).
         /// </summary>
-        public const int Version = 2;
+        public static string BuildRoads(LatLonBounds b)
+            => $"[out:json][timeout:45];way[\"highway\"~\"^({string.Join("|", RoadClasses)})$\"]({Bbox(b)});out tags geom;";
 
-        /// <summary>buildings.js cache key <c>overpass:minLat,minLon,maxLat,maxLon</c> at 5 decimals, with the query <see cref="Version"/>: <c>overpass2:…</c>.</summary>
+        /// <summary>The road tags the game reads (lanes, surface, bridges, tunnels, barred, names, signs); the rest is dropped before caching.</summary>
+        public static readonly string[] RoadTags = { "highway", "name", "ref", "surface", "lanes", "bridge", "tunnel", "ford", "access", "motorroad", "oneway", "maxspeed", "layer" };
+
+        static string Bbox(LatLonBounds b) => $"{Http.Fixed(b.MinLat, 6)},{Http.Fixed(b.MinLon, 6)},{Http.Fixed(b.MaxLat, 6)},{Http.Fixed(b.MaxLon, 6)}";
+
+        /// <summary>
+        /// Bumped whenever <see cref="Build"/> changes: answers cached for an older query (no link roads in version 1, roads
+        /// inside in version 2) are not used for the new one.
+        /// </summary>
+        public const int Version = 3;
+
+        /// <summary>
+        /// The key of a tile's answer from the version 2 query (roads, houses, fields, water and power lines in one): read when
+        /// cached, never asked for any more. A browser that has an area cached under it loads no Overpass answer there again.
+        /// </summary>
+        public static string OldCacheKey(LatLonBounds b)
+            => $"overpass2:{Http.Fixed(b.MinLat, 5)},{Http.Fixed(b.MinLon, 5)},{Http.Fixed(b.MaxLat, 5)},{Http.Fixed(b.MaxLon, 5)}";
+
+        /// <summary>Bumped whenever <see cref="BuildRoads"/> or <see cref="RoadTags"/> change.</summary>
+        public const int RoadsVersion = 1;
+
+        /// <summary>The road region's cache key, <c>osmroads1:minLat,minLon,maxLat,maxLon</c> at 5 decimals.</summary>
+        public static string RoadsCacheKey(LatLonBounds b)
+            => $"osmroads{RoadsVersion}:{Http.Fixed(b.MinLat, 5)},{Http.Fixed(b.MinLon, 5)},{Http.Fixed(b.MaxLat, 5)},{Http.Fixed(b.MaxLon, 5)}";
+
+        /// <summary>buildings.js cache key <c>overpass:minLat,minLon,maxLat,maxLon</c> at 5 decimals, with the query <see cref="Version"/>: <c>overpass3:…</c>.</summary>
         public static string CacheKey(LatLonBounds b)
             => $"overpass{Version}:{Http.Fixed(b.MinLat, 5)},{Http.Fixed(b.MinLon, 5)},{Http.Fixed(b.MaxLat, 5)},{Http.Fixed(b.MaxLon, 5)}";
 

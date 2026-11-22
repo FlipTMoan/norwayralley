@@ -73,6 +73,17 @@ namespace Rally.World
         /// </summary>
         readonly List<TerrainTile> recarveQueue = new List<TerrainTile>();
         public int RecarvePending => recarveQueue.Count;
+
+        /// <summary>A tile overlapping the box waits for its carve (a road shown before its carve floated over the uncut ground).</summary>
+        public bool RecarvePendingWithin(Bounds25833 box)
+        {
+            foreach (var t in recarveQueue)
+            {
+                var b = t.Key.Bounds;
+                if (!(b.MaxE < box.MinE || b.MinE > box.MaxE || b.MaxN < box.MinN || b.MinN > box.MaxN)) return true;
+            }
+            return false;
+        }
         NativeArray<Color32> splatScratch, splat2Scratch, coverScratch;
         readonly float[] fineFade = new float[FineSlices];
         bool fadesDirty = true;
