@@ -54,7 +54,7 @@
               <ui:Label name="cacheInfo" text="Local cache: …" class="cacheInfo" />
               <ui:Button name="cacheClear" text="CLEAR" class="tinyButton" />
             </ui:VisualElement>
-            <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain and place names © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · © OpenStreetMap contributors (ODbL) · road data Statens vegvesen (NLOD) · routing OSRM · borders geoBoundaries (CC BY 4.0)" class="credits" />
+            <ui:Label text="Made by Filip Tobias Moan © 2026 · terrain and place names © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · bioclimatic zones Artsdatabanken (NLOD) · © OpenStreetMap contributors (ODbL) · road data Statens vegvesen (NLOD) · routing OSRM · borders geoBoundaries (CC BY 4.0)" class="credits" />
           </ui:VisualElement>
         </ui:VisualElement>
       </ui:ScrollView>
@@ -121,7 +121,7 @@
           <ui:Label text="STAGES" class="helpHead" />
           <ui:Label text="Route stage: on the MAP, search a town or place name in the START and FINISH boxes (or click the map, start then finish); each pin snaps to the nearest road and the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts (rooms go through the internet; phones cannot link over Bluetooth from a web page). Every stage is a link in the address bar you can share." class="helpText" />
           <ui:Label text="DATA" class="helpHead" />
-          <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces and road signs Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
+          <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · bioclimatic zones and sections (verge plants) Artsdatabanken / Miljødirektoratet (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces and road signs Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
           <ui:Label text="CAR MODELS (CC BY 4.0, Sketchfab)" class="helpHead" />
           <ui:Label text="Porsche 911 by WoTiger (Philipp Busse) · Porsche 911 3.2 Carrera Coupe by cepela · Porsche 911 (930) Turbo 1975 by Lexyc16, improved by Wolf Hal (WolfGames36) · Volvo 240 styled sedan by Libau Media · Placeholder MV6 '83 by Daniel Zhabotinsky · Ford Ranger Offroad by CursedCrown · Off Road 4X4 racer (Baja Bug) by duanesmind · Buggy type 736 by Andre_rmntc. Scaled, re-rigged and recoloured for the game." class="helpText" />
         </ui:ScrollView>

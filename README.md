@@ -408,6 +408,7 @@ SR16 (a sparse default forest is used), no houses, or no signs.
 - Topo basemap: **Kartverket** open topographic map, CC BY 4.0.
 - Routing: **OSRM** / **OpenStreetMap** contributors.
 - Forest species and crown cover: **Skogressurskart SR16 © NIBIO**, NLOD.
+- Bioclimatic zones and sections (verge plants in the Unity game): **Artsdatabanken / Miljødirektoratet**, "Bioklimatiske soner og seksjoner" (test version 2026), NLOD 2.0.
 - Land use, water, buildings: **© OpenStreetMap contributors**, ODbL (Overpass API).
 - Road signs, speed limits and street lights: *Inneholder data under norsk lisens for offentlige
   data (NLOD) tilgjengeliggjort av Statens vegvesen* (NVDB API Les v4).

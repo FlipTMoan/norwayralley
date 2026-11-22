@@ -141,6 +141,23 @@ Shader "Rally/TerrainClipmap"
                 float2 c = floor(p), f = frac(p), u = f * f * (3 - 2 * f);
                 return lerp(lerp(Hash12(c), Hash12(c + float2(1, 0)), u.x), lerp(Hash12(c + float2(0, 1)), Hash12(c + 1), u.x), u.y);
             }
+            // VergeRules' twins (C#): value noise periodic over VERGE_PERIOD m, the flower drifts and the patch pick.
+            #define VERGE_PERIOD 8192.0
+            float4 _VergeOrigin, _VergeFlowers[3];
+            float _VergeShare;
+            float VergeNoise(float2 q, float cell)
+            {
+                float period = VERGE_PERIOD / cell;
+                float2 x = q / cell, c = floor(x), f = x - c, u = f * f * (3 - 2 * f);
+                float2 c1 = c + 1; c1 -= floor(c1 / period) * period;
+                return lerp(lerp(Hash12(c), Hash12(float2(c1.x, c.y)), u.x), lerp(Hash12(float2(c.x, c1.y)), Hash12(c1), u.x), u.y);
+            }
+            float VergeDrift(float2 q) { return 0.7 * VergeNoise(q, 16) + 0.3 * VergeNoise(q, 4); }
+            float VergePatch(float2 q)
+            {
+                float2 w = float2(VergeNoise(q, 16), VergeNoise(q + 97.3, 16)) - 0.5;
+                return Hash12(floor(q / 24 + w * 1.2) + 0.5);
+            }
 
             // Metres per texture repeat of each layer, relative to _Tiling (grass, conifer floor, birch floor, field,
             // rock, heath, bog, snow, sand): the fields and the bog are coarser, the gravel finer.
@@ -247,7 +264,16 @@ Shader "Rally/TerrainClipmap"
                 // noise, because the mask has 8 m texels and a hard, contrasting band showed them as steps.
                 float verge = saturate(mask + (VNoise(wxz / 3.1) - 0.5) * 0.45);
                 albedo = lerp(albedo, albedo * float3(0.82, 0.76, 0.62) + float3(0.05, 0.045, 0.03), smoothstep(0.1, 0.6, verge) * 0.35);
-                albedo = lerp(albedo, float3(0.40, 0.38, 0.33) * (0.9 + 0.2 * nTile), smoothstep(0.65, 1.0, verge) * 0.6);
+                albedo = lerp(albedo, float3(0.40, 0.38, 0.33) * (0.9 + 0.2 * nTile), smoothstep(0.65, 1.0, verge) * 0.3);   // 0.6 before the verge plants: a gravel band 2 m wider than the shoulder
+                // Far verge drifts (VergeLayer): past the 3D plants the verge terrace takes the region's flower colours in the
+                // same drift noise (VergeRules.Drift / PatchPick, UTM-anchored), so lupin or cow-parsley drifts still read.
+                float2 vq = wxz + _VergeOrigin.xy;
+                vq -= floor(vq / VERGE_PERIOD) * VERGE_PERIOD;
+                float vBand = smoothstep(0.12, 0.3, verge) * (1 - smoothstep(0.7, 0.95, verge));
+                float vPick = VergePatch(vq);
+                float3 vFlower = vPick < 0.45 ? _VergeFlowers[0].rgb : vPick < 0.8 ? _VergeFlowers[1].rgb : _VergeFlowers[2].rgb;
+                float vAmount = vBand * smoothstep(1 - _VergeShare, 1.12 - _VergeShare, VergeDrift(vq)) * saturate((dist - 90) / 60) * saturate(w[0] + w[3]);
+                albedo = lerp(albedo, vFlower * 0.8, vAmount * 0.55);
                 // Tangent-space normals blended like the albedo, applied in world space (terrain is mostly up-facing).
                 n = normalize(n + float3(tn.x, 0, tn.y) * 0.8 * (1 - _RetroFlat) * (1 - far * 0.7));
 

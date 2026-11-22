@@ -89,6 +89,7 @@ namespace Rally.Gameplay
         RoadGraph roads;
         SignLayer signs;
         LightLayer lights;
+        VergeLayer verges;
         readonly Dictionary<TileKey, GameObject> ribbons = new Dictionary<TileKey, GameObject>();
         readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> bridgeObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
         readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> tunnelObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
@@ -189,6 +190,8 @@ namespace Rally.Gameplay
             signs = null;
             lights?.Dispose();
             lights = null;
+            verges?.Dispose();
+            verges = null;
             world?.Dispose();
             world = null;
         }
@@ -253,6 +256,8 @@ namespace Rally.Gameplay
             signs = new SignLayer(world.Root, world.PropColliders, p => world.HeightAt(FloatingOrigin.ToWorldXZ(p)));   // the ground the car drives on
             lights = new LightLayer(world.Root, world.PropColliders, p => world.HeightAt(FloatingOrigin.ToWorldXZ(p)), TunnelMaterial());
             world.Lights = lights;
+            verges = new VergeLayer(world.Root, new TileVergeWorld(world, signs, lights));
+            world.Trees.TileAdded += key => verges?.Invalidate(key.Bounds);   // the plants keep clear of the new trunks
             world.Wake = new WaterWake();
             Style?.Apply(world);
             naturalGround = new FlatGround { Height = xz => world.BaseHeightAt(FloatingOrigin.ToUtm(xz)) };
@@ -466,6 +471,7 @@ namespace Rally.Gameplay
                         var db = d.Bounds;
                         world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
                         lights?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));   // masts stand on the new grading
+                        verges?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
                         RallyLog.Info($"overlay: {d} roads set again (a way it shares with {key} was graded again)");
                     }
                     foreach (var m in roads.TakeDirtyTiles()) if (!dirtyTiles.Contains(m)) dirtyTiles.Enqueue(m);
@@ -478,6 +484,10 @@ namespace Rally.Gameplay
                 var fs = world.OnTileFeaturesSteps(key, cover, features);
                 while (fs.MoveNext()) yield return null;
             }
+            // The verge cells here (and the neighbours' along the border: their roads reach in) plant again on the new roads,
+            // land cover, houses, signs and lights.
+            var vb = key.Bounds;
+            verges?.Invalidate(new Bounds25833(vb.MinE - RoadGraph.TilePad, vb.MinN - RoadGraph.TilePad, vb.MaxE + RoadGraph.TilePad, vb.MaxN + RoadGraph.TilePad));
             RallyLog.Info($"overlay: {key} applied: roads {(roadData != null ? "carved + ribbon" : "missing")}, forest {(cover != null ? "tinted + trees" : "missing")}, houses and water {(features != null ? "built" : "missing")}, after {overlayWatch.ElapsedMilliseconds} ms");
         }
 
@@ -954,6 +964,9 @@ namespace Rally.Gameplay
             signs?.Update(FloatingOrigin.ToUtm(carPos), carPos);
             lights?.Update(FloatingOrigin.ToUtm(carPos), carPos);
             FrameProbe.Stop("signs.update", tSigns);
+            long tVerges = FrameProbe.Start();
+            verges?.Update(FloatingOrigin.ToUtm(MainCamera != null ? (float3)MainCamera.transform.position : carPos));   // what the camera sees
+            FrameProbe.Stop("verges.update", tVerges);
             if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
 
             if (flow.Phase == Phase.Intro && Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame && (Hud == null || !Hud.IsTyping)) StartEngine();
@@ -1656,6 +1669,7 @@ namespace Rally.Gameplay
             car = null; audio = null;
             signs?.Dispose(); signs = null;
             lights?.Dispose(); lights = null;
+            verges?.Dispose(); verges = null;
             arrow?.Dispose(); arrow = null;
             gate?.Dispose(); gate = null; gateTimer = 0f;   // its root is under the world's: before the world goes
             world.Dispose();

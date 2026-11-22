@@ -21,7 +21,7 @@ namespace Rally.World
         public readonly HeightGrid Grid;        // carved heights, what the car reads
         public NativeArray<float> Base;          // untouched DTM, what the carve starts from
         public NativeArray<byte> Mask;           // CPU carve mask (CPU path; stays zero on the GPU path)
-        public NativeArray<Color32> Cover;       // coarse tiles: CPU copy of the cover texture (species/crown/class) for the CPU scatter
+        public NativeArray<Color32> Cover;       // coarse tiles: CPU copy of the cover texture (species/crown/class): CPU scatter, verge plants
         public double Latitude;                  // for the tree line / snow line
         public float TreeLine, SnowLine;
         public bool HasHeights, CpuInSync = true;

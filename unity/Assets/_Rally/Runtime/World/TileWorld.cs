@@ -492,7 +492,9 @@ namespace Rally.World
             CoarseAtlas.UploadSlice(CoarseAtlas.Splat, splatScratch, tile.Slice);
             CoarseAtlas.UploadSlice(CoarseAtlas.Splat2, splat2Scratch, tile.Slice);
             CoarseAtlas.UploadSlice(CoarseAtlas.Cover, coverScratch, tile.Slice);
-            if (!CoarseAtlas.Compute) { if (tile.Cover.IsCreated) tile.Cover.Dispose(); tile.Cover = new NativeArray<Color32>(coverScratch, Allocator.Persistent); }
+            // CPU copy of the cover: the CPU scatter (no compute) and the verge plants (both paths) read it.
+            if (tile.Cover.IsCreated) tile.Cover.Dispose();
+            tile.Cover = new NativeArray<Color32>(coverScratch, Allocator.Persistent);
             FrameProbe.Stop(".ov.splat", t0);
             yield return null;
             t0 = FrameProbe.Start();
@@ -844,6 +846,8 @@ namespace Rally.World
         /// <summary>The SR16 raster of the coarse tile under a point (null until loaded); the actors' spawn rules read the crown cover.</summary>
         public CoverRaster CoverAt(Utm33 p) { var t = TileFor(TileKind.Coarse, p); return t != null ? ((TileView)t.UserData).Cover : null; }
         public float TreeLineAt(Utm33 p) { var t = TileFor(TileKind.Coarse, p); return t != null ? t.TreeLine : float.PositiveInfinity; }
+        /// <summary>The coarse tile under a point has its land cover, water and houses (its overlay's features step ran).</summary>
+        public bool FeaturesIn(Utm33 p) { var t = TileFor(TileKind.Coarse, p); return t != null && ((TileView)t.UserData).FeaturesIn; }
 
         public void Dispose()
         {

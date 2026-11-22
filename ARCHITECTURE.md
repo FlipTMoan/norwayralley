@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-22 (Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-22 (Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -199,7 +199,7 @@ flowchart TB
 |---|---|
 | Core | EPSG:25833 frame, floating origin (rebases every 2048 m), the `HeightGrid` ground truth, `IGround`, road profile constants, seeded RNG, log. |
 | Geo | Every geodata request with the JS URL formats, the IndexedDB cache **shared with the JS game** (same database), circuit breakers, fakes for tests. |
-| World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, real road signs (NVDB plates placed on the shoulders, Norwegian faces painted into a shared atlas, one mesh per near tile), street lights (NVDB light points, masts and lit stretches beside the drawn road, one mesh per near tile), physics colliders (buildings mesh, pooled tree capsules, sign posts and light masts as props, water triggers), procedural sky. |
+| World | "Full GPU" ground: heightmaps in a texture array, geometry clipmap with vertex displacement, compute carve (Burst job fallback), landcover splats with tree line and snow line, GPU scatter of species-typed trees drawn with `RenderMeshIndirect`, water (lakes, rivers, sea, wake), extruded OSM buildings, real road signs (NVDB plates placed on the shoulders, Norwegian faces painted into a shared atlas, one mesh per near tile), street lights (NVDB light points, masts and lit stretches beside the drawn road, one mesh per near tile), road-verge grass, wildflowers and bushes by bioclimatic region (64 m cells near the camera, plants put on the drawn ground by the shader), physics colliders (buildings mesh, pooled tree capsules, sign posts and light masts as props, water triggers), procedural sky. |
 | Roads | OSM road graph with NVDB attributes, grading, carve segments, ribbon meshes, `Nearest` (all roads, on the ground, or bridge decks). Bridges: spans from `bridge=*` or a water crossing, deck profile (bank to bank, clearance, ramps), one deck/rail/pier mesh per tile with a rail/pier collider; spans carve nothing and the car's ground (`TileWorld`, an `ILayeredGround`) is the deck while the car is up on it. Tunnels: `tunnel=yes` ways are tubes graded straight between their portals (under the sea 40 m down), carve nothing (the mountain stays), drawn as tube + lamps + portals (Rally/Tunnel), solid walls; the car's ground is the floor while it is below the roof, the terrain shader cuts holes at portals; avalanche galleries are roofed roads. Ways that share an OSM node meet at one height (node registry). |
 | Track | Stage line (4 m samples, segment-nearest), pace notes (positive = left in Unity's frame), the seeded `RoadWalk` endless-stage generator. |
 | Vehicle | Faithful port of `car.js` as a pure `CarSim` + PhysX overlap collisions, water triggers, per-system damage (engine, steering, suspension corners, radiator, body, windscreen, lights) feeding back into the sim, GPU dents, particles, lights, audio. The garage: one `CarSpec` per car (mass, power, gears, driven wheels, grip, travel, turbo lag, body box measured off the model) and `Garage` (wire ids, names, credits, card stats). |
@@ -234,6 +234,24 @@ flowchart LR
 
 `FrameProbe` (Core) times every frame and attributes slow ones; `PreviewShots -previewGlide -previewDrive` and
 `-previewSeams` are the measuring tools.
+
+### Unity road verges (2026-11-22)
+
+```mermaid
+flowchart LR
+  BIO[Geo/Bioclimate<br/>1 km zone + section grid] --> RULES
+  ROADS[IRoadQuery segments<br/>ground · decks · tunnels] --> B[VergeBuilder<br/>UTM lattice per 64 m cell:<br/>metres past the shoulder edge]
+  TW[TileWorld: cover · carved ground ·<br/>trees · houses] --> B
+  SL[SignLayer · LightLayer posts] --> B
+  B --> RULES[VergeRules<br/>bands · region palette · land cover]
+  RULES --> M[VergeMesh<br/>crossed cards, root in UV1]
+  M --> L[VergeLayer<br/>one renderer per cell: herbs ≤ 130 m, bushes ≤ 260 m,<br/>WorkBudget, Invalidate]
+  L --> SH[Rally/Verge shader<br/>ground lookup · wind · rank fade]
+  L -->|_VergeFlowers, _VergeShare| T[TerrainClipmap far verge tint]
+```
+
+The vertex shader looks up the drawn ground at each plant's root (`TerrainGround.hlsl`), so the meshes hold no heights and
+survive re-carves; WebGL 2 needs nothing beyond what the clipmap already uses.
 
 ### Unity bridges (2026-11-20)
 

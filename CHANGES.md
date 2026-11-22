@@ -1,8 +1,21 @@
 # Changes
 
-_Updated 2026-11-22 (Unity: street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-22 (Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-22
+
+### Unity: road verges with grass, wildflowers and bushes, by region
+- Beside every drawn road: a mown strip of short grass, then tall grass with wildflowers in drifts, then bushes in
+  thickets toward the forest edge. Nothing on carriageways, shoulders, junction mouths, driveways, bridge decks, tunnel
+  footprints, houses, steep cuttings or water, nor at sign posts, light masts and tree trunks. Drawn within 130 m (herbs)
+  and 260 m (bushes) of the camera, thinning out with distance; further out the verge keeps the drifts' colours in the
+  terrain. The car drives through them.
+- The plants follow the region: Artsdatabanken's bioclimatic zones and sections (NLOD 2.0, a 1 km grid shipped with the
+  game) pick one of seven palettes — lupins and cow parsley in the lowland east, foxglove and bracken on the west coast,
+  tyrihjelm and globe-flower in the north, sparse dry verges with juniper in the continental valleys, heather, crowberry
+  and dwarf birch above the tree line. Lupins mostly along main roads, none above 800 m; no flowers near the snow line.
+- All textures and meshes are made in code (`Editor/VergeTextures`, `World/Verges/`, `Resources/Verge/Verge.shader`).
+  The flat ground just past the gravel shoulder is painted less grey. Tests: `VergeTests`.
 
 ### Unity: street lights along the roads (NVDB)
 - Real street lights from Statens vegvesen's NVDB: every registered light point (87 Belysningspunkt) with its mast's

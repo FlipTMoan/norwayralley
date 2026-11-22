@@ -256,3 +256,13 @@
 - "GRAVEL in a tunnel" was two bugs, neither in the tunnel code: on a stage the car read the stage line's default surface
   (gravel everywhere, so the 120 km/h gravel limit held every asphalt stage), and a frozen car (countdown) never updated
   its surface. Log the car's own SurfaceKind next to `SurfaceAt` at the spot (`-previewStage`) before suspecting the data.
+
+## 2026-11-22 — verge plants: float frames, shared globals and thin cut-out strokes
+- "The same plant whichever cell builds it" failed at first: each cell computed its lattice and the road segments in its
+  own local floats, so a few points near a band edge or the mm key rounded differently. Compute shared geometry in one
+  frame for all cells (here the coarse tile's corner) and derive positions from the global lattice index in double.
+- A global another system sets only on one path (`_TreeSnowLine`: the trees' CPU path only) defaults to 0 on the other
+  and would have turned every plant white in the editor (compute path). Give a new shader its own global, set it with a
+  safe default at construction.
+- Procedural cut-out textures: strokes under ~2 final pixels lose most of their texels to the alpha cutoff (the first
+  atlas read as sparse, separate tufts). Clamp stroke widths in final pixels, not in metres.

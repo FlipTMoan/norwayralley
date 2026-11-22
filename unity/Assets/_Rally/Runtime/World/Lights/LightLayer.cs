@@ -48,6 +48,17 @@ namespace Rally.World
         public int BuiltTiles { get { int n = 0; foreach (var t in tiles.Values) if (t.Go != null) n++; return n; } }
         public int PostCount { get { int n = 0; foreach (var t in tiles.Values) n += t.Posts.Count; return n; } }
 
+        /// <summary>The feet (E, N) of the masts inside <paramref name="b"/> (the verge plants keep clear of them).</summary>
+        public void PostsIn(Bounds25833 b, List<double2> output)
+        {
+            foreach (var t in tiles.Values)
+            {
+                var tb = t.Key.Bounds;
+                if (tb.MinE > b.MaxE || tb.MaxE < b.MinE || tb.MinN > b.MaxN || tb.MaxN < b.MinN) continue;
+                foreach (var p in t.Posts) if (b.Contains(p.Position)) output.Add(new double2(p.Position.E, p.Position.N));
+            }
+        }
+
         /// <summary>A coarse tile's posts (replacing any earlier set for it).</summary>
         public void SetTile(TileKey key, List<LightPost> posts)
         {

@@ -333,3 +333,39 @@ log lists any shader that fails for GLES 3.0. Known cost of the fallback: `Textu
   beyond 1.5 km; Rally/Tunnel material (vertex colours: galvanised tapered mast Ø 180 → 100 mm sunk 0.5 m, arm rising 12 %,
   flat light grey LED head, warm emissive underside). Feet from `TileWorld.HeightAt`; a regrade of a tile's roads rebuilds
   the meshes over it (`Invalidate`). Capsules from `PropColliderPool` for masts within 35 m, also at once on a car placement.
+
+### Road verges: grass, wildflowers and bushes (2026-11-22)
+- **Where (`Verges/VergeBuilder`):** a UTM-anchored lattice (herbs every 0.8 m, bushes every 3.2 m, jittered by a hash of
+  the global index) in 64 m cells; each point is measured against every road on the ground near the cell
+  (`IRoadQuery.CollectCarveSegments`): metres beyond the nearest drawn shoulder edge. Nothing on a carriageway or shoulder
+  (+0.25 m), so junction mouths and driveways stay clear; nothing on a bridge deck or a tunnel's footprint, in a house box
+  (+1 m), within 1 m of a sign post or light mast (bushes 2 m), on a tree trunk, on water, below 0.6 m (sea) or on slopes
+  over 35°. Geometry is computed from the coarse tile's corner, so a plant does not depend on which cell built it.
+- **What (`Verges/VergeRules`):** bands from the shoulder edge — mown grass 0–1.5 m, tall grass with flower drifts (55–60 % of the band, flowers 1.25× the grass, so drifts read from the chase camera) to the
+  palette's band (6 m; forest 3 m; built-up land: lawn to 6 m, nothing else), bushes 3–12 m in thickets (patch noise; dense
+  at a forest edge, few beside fields, none on rock or built-up land). Bog: cotton grass, meadowsweet, dwarf birch. Within
+  150 m under the snow line: no flowers. Lupins weighted ×2 on two-lane roads, ×0.5 on minor roads (none on northern minor
+  roads), none above 800 m.
+- **Region (`Geo/Bioclimate`, `VergeRules.RegionFor`):** Artsdatabanken's "Bioklimatiske soner og seksjoner" (test version
+  2026, Miljødirektoratet, NLOD 2.0) baked by `unity/Tools/bake_bioclimate.py` into `Geo/Resources/bioclimate.bytes`
+  (1 km grid, EPSG:25833, 1.8 MB, byte = zone | section << 4; read from the map service's export with one renderer colour
+  per class). The zone is corrected by the local height against the tile's tree line (above it alpine, more than 300 m
+  under it north boreal at most). Seven palettes: lowland south/east (BN: cow parsley, lupins, cranesbill, vetch, clover,
+  daisies; dog rose, raspberry, hazel), inland boreal (SB/MB: lupins, fireweed, buttercup, harebell; grey alder, willow,
+  birch, juniper), north (NB or north of 65.5° N: fireweed, globe-flower, wood cranesbill, tyrihjelm, meadowsweet; birch,
+  willow), oceanic west (O3, and O2 up to MB: foxglove, bracken, heather, lady's mantle; juniper, rowan, bog myrtle),
+  continental (C1: dry grass, harebell, yarrow, sparse; juniper), low alpine (LA: heather, crowberry, bistort; dwarf birch)
+  and middle/high alpine (sparse tufts, no bushes).
+- **Drawing (`VergeMesh`, `VergeLayer`, `Resources/Verge/Verge.shader`):** one mesh and one renderer per cell: herbs within
+  130 m, bushes within 260 m of the camera (nearest first, at most 3 a frame while `WorkBudget` lasts; dropped 40 m further out; a
+  cell waits for its tile's overlay, `TileWorld.FeaturesIn`). Herbs are two crossed cards, bushes three at 60° plus an
+  inner one, from `Resources/Verge/VergeAtlas.png` (8 × 8 cells of 128 px, painted by `Editor/VergeTextures`, menu Rally →
+  Build Verge Atlas; mip coverage preserved). The vertex shader puts each plant on the drawn ground at its root
+  (`TerrainGround.hlsl`), so re-carves and fine tiles need no rebuild; it thins the plants by rank with distance and
+  shrinks them before they go; wind on the tops; the shader picks the fade range and wind by the vertex alpha (herb / bush); cells within 80 m cast shadows and the shadow pass collapses the herbs, so only bushes cast. Plain MeshRenderers: no compute, no
+  instancing. The car drives through them. Rebuilt (`Invalidate`) when a tile's overlay is applied, a tile's roads are set
+  again, or its trees arrive (`TreeIndex.TileAdded`). The coarse tiles keep their CPU cover copy on the compute path too
+  (64 KB a tile).
+- **Far away:** the terrain shader tints the verge terrace in the same drift noise with the three main flower colours of
+  the palette at the camera (`_VergeFlowers`, `_VergeShare`, `_VergeOrigin`; `VergeRules.Drift` / `PatchPick` are the C#
+  twins), from 90 m out. The flat band past the shoulder is painted half as gravel-grey as before.

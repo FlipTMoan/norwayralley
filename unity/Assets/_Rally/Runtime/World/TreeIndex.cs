@@ -27,6 +27,8 @@ namespace Rally.World
         readonly HashSet<int2> seen = new HashSet<int2>();
 
         public int Count => map.Count();
+        /// <summary>A tile's trees were added (the verge plants keep clear of the trunks: VergeLayer rebuilds its cells there).</summary>
+        public event System.Action<TileKey> TileAdded;
 
         public void AddTile(TileKey key, Utm33 origin, NativeArray<TreeInstance> instances, int count, VegetationSetSO set)
         {
@@ -47,6 +49,7 @@ namespace Rally.World
                 map.Add(b, hit);
             }
             keysByTile[key] = keys;
+            TileAdded?.Invoke(key);
         }
 
         public void RemoveTile(TileKey key)
