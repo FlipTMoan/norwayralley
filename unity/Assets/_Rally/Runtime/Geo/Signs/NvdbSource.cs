@@ -12,14 +12,23 @@ namespace Rally.Geo
     /// Fartsgrense (speed limits as polylines). Pages follow <c>metadata.neste.href</c> up to
     /// <see cref="MaxPages"/>. The <c>X-Client</c> header names the app, as NVDB asks. Unreachable
     /// NVDB yields an empty set, never an error: signs are decoration. Licence: <see cref="Attribution"/>.
+    /// Street lights (<see cref="FetchLights"/>) come from the same API: 87 Belysningspunkt, 181 Lysmast, 86 Belysningsstrekning.
     /// </summary>
-    public sealed class NvdbSource : ISignSource
+    public sealed class NvdbSource : ISignSource, ILightSource
     {
         public const string Attribution = "Inneholder data under norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Statens vegvesen.";
         public const string Base = "https://nvdbapiles.atlas.vegvesen.no/vegobjekter/api/v4/vegobjekter";
         public const int TypeSignPlate = 96, TypeSpeedLimit = 105;
         public const int PropSignNumber = 5530, PropFacing = 1894, PropText = 1910, PropKmh = 2021, PropSize = 1970;
         public const int TypeRoadSurface = 241, PropMassetype = 1216;   // roads.js: Vegdekke, Massetype
+        /// <summary>Belysningspunkt: Plassering, Avstand fra vegkant, Bruksområde (datakatalog, checked 2026-11-22).</summary>
+        public const int TypeLightPoint = 87, PropLightPlacement = 1874, PropLightFromEdge = 1883, PropLightUse = 1272;
+        /// <summary>Lysmast: Mastelengde synlig, Utligger, Utliggerarmens lengde.</summary>
+        public const int TypeLightMast = 181, PropMastLength = 1338, PropMastArm = 3895, PropMastArmLength = 10020;
+        /// <summary>Belysningsstrekning: Avstand innbyrdes, Bruksområde.</summary>
+        public const int TypeLightStretch = 86, PropStretchSpacing = 1714, PropStretchUse = 1271;
+        /// <summary>A mast without a parent relation belongs to the light point within this distance.</summary>
+        public const double MastJoin = 0.5;
         public const int TimeoutMs = 20000;
         public const int MaxPages = 20;
         public static readonly IReadOnlyDictionary<string, string> Headers = new Dictionary<string, string>
@@ -31,9 +40,12 @@ namespace Rally.Geo
         public NvdbSource(IGeoCache cache) { this.cache = CachedSource<string>.Text(cache, "nvdb"); }
 
         /// <summary>kartutsnitt=minE,minN,maxE,maxN at one decimal, srid 5973 (25833 + height).</summary>
-        public static string FirstPageUrl(int typeId, Bounds25833 b)
+        public static string FirstPageUrl(int typeId, Bounds25833 b, string include = "geometri,egenskaper,lokasjon")
             => $"{Base}/{typeId}?kartutsnitt={Http.Fixed(b.MinE, 1)},{Http.Fixed(b.MinN, 1)},{Http.Fixed(b.MaxE, 1)},{Http.Fixed(b.MaxN, 1)}"
-             + "&srid=5973&inkluder=geometri,egenskaper,lokasjon&antall=1000";
+             + $"&srid=5973&inkluder={include}&antall=1000";
+
+        /// <summary>The lights' include: their relations join a mast to its point.</summary>
+        public const string LightInclude = "geometri,egenskaper,relasjoner";
 
         /// <summary>
         /// Every sign plate and speed limit in the bounds, each page through the GeoCache (kind "nvdb", like the road
@@ -81,9 +93,36 @@ namespace Rally.Geo
             return lines;
         }
 
-        async Task<List<Dictionary<string, object>>> FetchObjects(int typeId, Bounds25833 b, CancellationToken ct)
+        /// <summary>
+        /// The street lights in the bounds: every 87 Belysningspunkt with its 181 Lysmast joined (by the mast's parent relation,
+        /// else by position), and the 86 Belysningsstrekning lines. Through the GeoCache like the signs; unreachable NVDB
+        /// yields no lights, never an error.
+        /// </summary>
+        public async Task<LightSet> FetchLights(Bounds25833 bounds, CancellationToken ct)
         {
-            string url = FirstPageUrl(typeId, b);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeoutMs);
+            try
+            {
+                var points = FetchObjects(TypeLightPoint, bounds, cts.Token, LightInclude);
+                var masts = FetchObjects(TypeLightMast, bounds, cts.Token, LightInclude);
+                var stretches = FetchObjects(TypeLightStretch, bounds, cts.Token, LightInclude);
+                var set = new LightSet();
+                foreach (var o in await points) { var p = ParseLightPoint(o); if (p != null) set.Points.Add(p); }
+                JoinMasts(set.Points, await masts);
+                foreach (var o in await stretches) { var l = ParseLightStretch(o); if (l != null) set.Stretches.Add(l); }
+                return set;
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested)
+            {
+                RallyLog.Warn($"overlay: street lights unavailable: {e.Message}");
+                return LightSet.Empty;
+            }
+        }
+
+        async Task<List<Dictionary<string, object>>> FetchObjects(int typeId, Bounds25833 b, CancellationToken ct, string include = null)
+        {
+            string url = include != null ? FirstPageUrl(typeId, b, include) : FirstPageUrl(typeId, b);
             var objects = new List<Dictionary<string, object>>();
             for (int page = 0; page < MaxPages && url != null; page++)
             {
@@ -216,6 +255,70 @@ namespace Rally.Geo
             var geometry = Wkt.Parse(obj.Obj("geometri")?.Str("wkt"));
             if (geometry == null || geometry.Points.Count < 2) return null;
             return new SpeedLimitSegment { Kmh = (int)kmh, Points = geometry.Points };
+        }
+    
+        static double Number(string verdi)
+            => double.TryParse(verdi, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
+
+        /// <summary>One Belysningspunkt → its point; null without a POINT. Plassering other than a mast (wall, rail, roof …) → not OnMast.</summary>
+        public static LightPoint ParseLightPoint(Dictionary<string, object> obj)
+        {
+            var geometry = Wkt.Parse(obj.Obj("geometri")?.Str("wkt"));
+            if (geometry == null || geometry.Type != "POINT") return null;
+            var placement = Property(obj, PropLightPlacement);
+            return new LightPoint
+            {
+                Id = obj.Long("id"),
+                Position = geometry.Points[0],
+                Height = geometry.Heights[0],
+                OnMast = placement == null || placement == "Lysmast" || placement == "Mindre stolpe",
+                FromEdge = Number(Property(obj, PropLightFromEdge)),
+                Use = Property(obj, PropLightUse),
+            };
+        }
+
+        /// <summary>
+        /// Each Lysmast's height and arm onto its Belysningspunkt: the parent named in the mast's relasjoner.foreldre, else the
+        /// point within <see cref="MastJoin"/> m (the mast and its point share coordinates in NVDB).
+        /// </summary>
+        public static void JoinMasts(List<LightPoint> points, List<Dictionary<string, object>> masts)
+        {
+            var byId = new Dictionary<long, LightPoint>();
+            foreach (var p in points) byId[p.Id] = p;
+            foreach (var m in masts)
+            {
+                LightPoint point = null;
+                var parents = m.Obj("relasjoner")?.Arr("foreldre");
+                if (parents != null)
+                    foreach (var r in parents)
+                        if (r is Dictionary<string, object> rel && (long)(rel.Obj("type")?.Num("id", -1) ?? -1) == TypeLightPoint)
+                            foreach (var id in rel.Arr("vegobjekter") ?? new List<object>())
+                                if (id is double d && byId.TryGetValue((long)d, out var q)) point = q;
+                if (point == null)
+                {
+                    var g = Wkt.Parse(m.Obj("geometri")?.Str("wkt"));
+                    if (g == null) continue;
+                    double best = MastJoin;
+                    foreach (var p in points)
+                    {
+                        double dist = Math.Sqrt((p.Position.E - g.Points[0].E) * (p.Position.E - g.Points[0].E) + (p.Position.N - g.Points[0].N) * (p.Position.N - g.Points[0].N));
+                        if (dist <= best) { best = dist; point = p; }
+                    }
+                }
+                if (point == null) continue;
+                point.MastLength = Number(Property(m, PropMastLength));
+                point.Arm = Property(m, PropMastArm) == "Ja";
+                point.ArmLength = Number(Property(m, PropMastArmLength));
+            }
+        }
+
+        /// <summary>One Belysningsstrekning → its polyline and post spacing; null without a LINESTRING.</summary>
+        public static LightStretch ParseLightStretch(Dictionary<string, object> obj)
+        {
+            var geometry = Wkt.Parse(obj.Obj("geometri")?.Str("wkt"));
+            if (geometry == null || geometry.Type != "LINESTRING" || geometry.Points.Count < 2) return null;
+            double spacing = Number(Property(obj, PropStretchSpacing));
+            return new LightStretch { Id = obj.Long("id"), Points = geometry.Points, Spacing = double.IsNaN(spacing) ? 0 : spacing, Use = Property(obj, PropStretchUse) };
         }
     }
 }

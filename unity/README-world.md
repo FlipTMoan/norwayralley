@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-20 (road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-22 (street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -11,7 +11,8 @@ Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
    Houses also keep their footprint rings (`BuildingSet.Rings`, metres from each `FootprintBox` centre): `TileWorld`
    implements `ISolidGround.FootprintPush` over the coarse tiles within 50 m of the car (`Footprints`), which the car uses
    where the wall mesh cannot judge (inside a house, past half way through a wall). `RefreshColliders` moves the tree pool
-   at once after a teleport. Sign posts take the prop pool nearest first; full pools are logged once.
+   at once after a teleport, and the street-light masts near the spot (`TileWorld.Lights`). Sign posts and masts take the
+   prop pool nearest first; full pools are logged once.
 2. **WorldStyle asset** (Create → Rally → World Style): assign
    - `TerrainMaterial`: a material on `Rally/TerrainClipmap` with `_Albedo` (alpha = height) / `_Normals` Texture2DArrays of
      9 slices in `LandcoverSplat.Layer*` order: grass, conifer floor, birch floor, field, rock, heath, bog, snow, sand/gravel.
@@ -313,3 +314,22 @@ log lists any shader that fails for GLES 3.0. Known cost of the fallback: `Textu
   shadow caster and depth passes.
 - **Not drawn:** codes without a design (701/709/711 junction boards, 725 distance boards, 6xx service signs, U722 local
   signposting, 828 extent arrows …); they are counted as "without a design" in the overlay log.
+
+### Street lights (2026-11-22)
+- **Data:** `NvdbSource.FetchLights(tile bounds + 40 m)` — NVDB v4 type 87 Belysningspunkt (point; 1874 Plassering, 1883
+  Avstand fra vegkant, 1272 Bruksområde), 181 Lysmast (1338 Mastelengde synlig, 3895 Utligger, 10020 Utliggerarmens lengde;
+  joined to its 87 by `relasjoner.foreldre`, else by position ≤ 0.5 m) and 86 Belysningsstrekning (line; 1714 Avstand
+  innbyrdes, 1271 Bruksområde), `inkluder=geometri,egenskaper,relasjoner`, every page through the GeoCache (`nvdb`).
+  Unreachable NVDB: no lights, a warning, never an error. Offline: `FakeSources.Lights` (a lit stretch + two masts per chunk).
+  OSM `highway=street_lamp` is not used: the Overpass query asks for ways only.
+- **Placement (`LightPlacement`):** a point stands at its place along the nearest ground road within 20 m, on its side,
+  1 m (Avstand fra vegkant) beyond the road's flat band (carriageway + shoulder) or at its real distance up to 3 m further.
+  A lit stretch gets a post every Avstand innbyrdes (default 40 m) on its right in its digitising direction, where no
+  registered point is within half the spacing (tunnel stretches excepted). Dropped: lamps not on a mast (wall, rail, roof),
+  points nearer a bridge deck or tunnel than a ground road, feet on any road's flat band, on a deck or in a tube
+  (`TileWorld.TunnelAt`). Mast height from Mastelengde, else 10 m on two-lane roads and 8 m on the others; arm from Utligger
+  (2 m without a length), else a 0.4 m bracket.
+- **Mesh (`LightMesh`) and layer (`LightLayer`):** one mesh per tile built within 1 km of the car (one per frame), dropped
+  beyond 1.5 km; Rally/Tunnel material (vertex colours: galvanised tapered mast Ø 180 → 100 mm sunk 0.5 m, arm rising 12 %,
+  flat light grey LED head, warm emissive underside). Feet from `TileWorld.HeightAt`; a regrade of a tile's roads rebuilds
+  the meshes over it (`Invalidate`). Capsules from `PropColliderPool` for masts within 35 m, also at once on a car placement.

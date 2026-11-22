@@ -1,0 +1,142 @@
+{
+ "objekter": [
+  {
+   "id": 529654546,
+   "egenskaper": [
+    {
+     "id": 1338,
+     "navn": "Mastelengde, synlig",
+     "verdi": 8.0
+    },
+    {
+     "id": 10020,
+     "navn": "Utliggerarmens lengde",
+     "verdi": 2.0
+    },
+    {
+     "id": 4838,
+     "navn": "Geometri, punkt",
+     "verdi": "POINT Z (256123.897 6781720.131 231.784)"
+    },
+    {
+     "id": 1189,
+     "navn": "Type",
+     "verdi": "Stålmast, rett"
+    },
+    {
+     "id": 3895,
+     "navn": "Utligger",
+     "verdi": "Ja"
+    }
+   ],
+   "geometri": {
+    "wkt": "POINT Z (256123.897 6781720.131 231.784)",
+    "srid": 5973
+   },
+   "relasjoner": {
+    "foreldre": [
+     {
+      "listeid": 220027,
+      "id": 200027,
+      "type": {
+       "id": 87,
+       "navn": "Belysningspunkt"
+      },
+      "vegobjekter": [
+       529654545
+      ],
+      "relasjonstype": "vegobjektIder"
+     }
+    ]
+   }
+  },
+  {
+   "id": 528308794,
+   "egenskaper": [
+    {
+     "id": 1338,
+     "navn": "Mastelengde, synlig",
+     "verdi": 10.0
+    },
+    {
+     "id": 10020,
+     "navn": "Utliggerarmens lengde",
+     "verdi": 0.0
+    },
+    {
+     "id": 4838,
+     "navn": "Geometri, punkt",
+     "verdi": "POINT Z (257981.347 6782256.685 418.107)"
+    },
+    {
+     "id": 1189,
+     "navn": "Type",
+     "verdi": "Stålmast, rett"
+    },
+    {
+     "id": 3895,
+     "navn": "Utligger",
+     "verdi": "Nei"
+    }
+   ],
+   "geometri": {
+    "wkt": "POINT Z (257981.347 6782256.685 418.107)",
+    "srid": 5973
+   },
+   "relasjoner": {
+    "foreldre": [
+     {
+      "listeid": 220027,
+      "id": 200027,
+      "type": {
+       "id": 87,
+       "navn": "Belysningspunkt"
+      },
+      "vegobjekter": [
+       528308793
+      ],
+      "relasjonstype": "vegobjektIder"
+     }
+    ]
+   }
+  },
+  {
+   "id": 1025843331,
+   "egenskaper": [
+    {
+     "id": 4838,
+     "navn": "Geometri, punkt",
+     "verdi": "POINT(257986.74798760426 6782206.071778484)"
+    },
+    {
+     "id": 1189,
+     "navn": "Type",
+     "verdi": "Stålmast"
+    }
+   ],
+   "geometri": {
+    "wkt": "POINT(257986.748 6782206.072)",
+    "srid": 5973
+   },
+   "relasjoner": {
+    "foreldre": [
+     {
+      "listeid": 220027,
+      "id": 200027,
+      "type": {
+       "id": 87,
+       "navn": "Belysningspunkt"
+      },
+      "vegobjekter": [
+       1025843332
+      ],
+      "relasjonstype": "vegobjektIder"
+     }
+    ]
+   }
+  }
+ ],
+ "metadata": {
+  "returnert": 3
+ }
+}

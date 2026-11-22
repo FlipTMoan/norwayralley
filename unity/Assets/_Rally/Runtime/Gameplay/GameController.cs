@@ -81,12 +81,14 @@ namespace Rally.Gameplay
         ILandcoverSource landcoverSource;
         NvdbSource surfaceSource;            // NVDB Vegdekke (gravel / asphalt); null with the fake sources
         ISignSource signSource;              // NVDB Skiltplate + Fartsgrense (the same NvdbSource), FakeSources.Signs offline
+        ILightSource lightSource;            // NVDB Belysningspunkt + Lysmast + Belysningsstrekning (the same NvdbSource), FakeSources.Lights offline
         IRouter router;
 
         // World
         TileWorld world;
         RoadGraph roads;
         SignLayer signs;
+        LightLayer lights;
         readonly Dictionary<TileKey, GameObject> ribbons = new Dictionary<TileKey, GameObject>();
         readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> bridgeObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
         readonly Dictionary<TileKey, (GameObject go, Mesh draw, Mesh solid)> tunnelObjects = new Dictionary<TileKey, (GameObject, Mesh, Mesh)>();
@@ -185,6 +187,8 @@ namespace Rally.Gameplay
             session?.Close();
             signs?.Dispose();
             signs = null;
+            lights?.Dispose();
+            lights = null;
             world?.Dispose();
             world = null;
         }
@@ -220,6 +224,7 @@ namespace Rally.Gameplay
                 router = new FakeSources.Router();
                 surfaceSource = null;
                 signSource = new FakeSources.Signs { Road = osm };
+                lightSource = new FakeSources.Lights { Road = osm };
                 return;
             }
             var overpass = new OverpassSource(cache);
@@ -229,6 +234,7 @@ namespace Rally.Gameplay
             router = new OsrmRouter(cache);
             surfaceSource = new NvdbSource(cache);
             signSource = surfaceSource;
+            lightSource = surfaceSource;
         }
 
         /// <summary>TileWorld + RoadGraph + clipmap + forest + colliders, styled by the WorldStyle asset.</summary>
@@ -245,6 +251,8 @@ namespace Rally.Gameplay
             world.TreeColliders = new TreeColliderPool(world.Trees);
             world.PropColliders = new PropColliderPool();
             signs = new SignLayer(world.Root, world.PropColliders, p => world.HeightAt(FloatingOrigin.ToWorldXZ(p)));   // the ground the car drives on
+            lights = new LightLayer(world.Root, world.PropColliders, p => world.HeightAt(FloatingOrigin.ToWorldXZ(p)), TunnelMaterial());
+            world.Lights = lights;
             world.Wake = new WaterWake();
             Style?.Apply(world);
             naturalGround = new FlatGround { Height = xz => world.BaseHeightAt(FloatingOrigin.ToUtm(xz)) };
@@ -330,7 +338,8 @@ namespace Rally.Gameplay
             var coverTask = landcoverSource.FetchCover(key.Bounds, ct);
             var surfaceTask = surfaceSource != null ? surfaceSource.FetchSurfaces(RoadGraph.SurfaceQueryBounds(key), ct) : Task.FromResult<List<RoadSurfaceLine>>(null);
             var signTask = signSource != null ? signSource.FetchSigns(key.Bounds, ct) : Task.FromResult<SignSet>(null);
-            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null; SignSet signSet = null;
+            var lightTask = lightSource != null ? lightSource.FetchLights(LightQueryBounds(key), ct) : Task.FromResult<LightSet>(null);
+            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null; SignSet signSet = null; LightSet lightSet = null;
             var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
             float waitSince = -1f;
             System.Collections.IEnumerator steps = null;
@@ -350,6 +359,12 @@ namespace Rally.Gameplay
                 if (signSet != null) RallyLog.Info($"overlay: {key} NVDB signs: {signSet.Plates.Count} plates, {signSet.SpeedLimits.Count} speed limits after {overlayWatch.ElapsedMilliseconds} ms");
             }
             catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB signs failed: {e.Message}"); }
+            try
+            {
+                lightSet = await lightTask;
+                if (lightSet != null) RallyLog.Info($"overlay: {key} NVDB street lights: {lightSet.Points.Count} points, {lightSet.Stretches.Count} lit stretches after {overlayWatch.ElapsedMilliseconds} ms");
+            }
+            catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB street lights failed: {e.Message}"); }
             try { cover = await coverTask; RallyLog.Info(cover != null ? $"overlay: {key} SR16 forest raster {cover.Width}×{cover.Height} cells (16 m) after {overlayWatch.ElapsedMilliseconds} ms" : $"overlay: {key} SR16 forest: none after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} SR16 failed: {e.Message}"); }
             var overlay = new TileResult { Key = key };
             overlay.Apply = () =>
@@ -362,7 +377,7 @@ namespace Rally.Gameplay
                     if (steps == null)
                     {
                         if (roadData != null && Time.realtimeSinceStartup - waitSince < NeighbourWait && NeighbourPending(key)) return false;
-                        steps = OverlaySteps(key, roadData, features, cover, surfaces, signSet, overlayWatch);
+                        steps = OverlaySteps(key, roadData, features, cover, surfaces, signSet, lightSet, overlayWatch);
                         overlay.Stepping = true;
                     }
                     // One step per call (roads, ribbon, bridges, signs, splat, water, houses, their collider, carve): the queue
@@ -378,12 +393,19 @@ namespace Rally.Gameplay
             }
         }
 
+        /// <summary>The lights are asked for a little beyond the tile: a registered point just across the edge keeps a made-up post away.</summary>
+        static Bounds25833 LightQueryBounds(TileKey key)
+        {
+            var b = key.Bounds;
+            return new Bounds25833(b.MinE - LightPlacement.DefaultSpacing, b.MinN - LightPlacement.DefaultSpacing, b.MaxE + LightPlacement.DefaultSpacing, b.MaxN + LightPlacement.DefaultSpacing);
+        }
+
         /// <summary>
         /// A coarse tile's overlay in steps, so no frame does all of it (it was grading, re-carving up to nine tiles, ribbon,
         /// bridges and their collider, signs, splat, water, houses and their collider, all in one frame): the re-carves go to
         /// TileWorld's queue, everything else is one step per MoveNext.
         /// </summary>
-        System.Collections.IEnumerator OverlaySteps(TileKey key, RoadGraphData roadData, Features features, CoverRaster cover, List<RoadSurfaceLine> surfaces, SignSet signSet, System.Diagnostics.Stopwatch overlayWatch)
+        System.Collections.IEnumerator OverlaySteps(TileKey key, RoadGraphData roadData, Features features, CoverRaster cover, List<RoadSurfaceLine> surfaces, SignSet signSet, LightSet lightSet, System.Diagnostics.Stopwatch overlayWatch)
         {
             if (roadData != null)
             {
@@ -422,6 +444,11 @@ namespace Rally.Gameplay
                 if (signSet != null) PlaceSigns(key, signSet);
                 FrameProbe.Stop(".ov.signs", t0);
                 yield return null;
+                if (!world.Tiles.ContainsKey(key)) yield break;
+                t0 = FrameProbe.Start();
+                if (lightSet != null) PlaceLights(key, lightSet);
+                FrameProbe.Stop(".ov.lights", t0);
+                yield return null;
                 // Neighbours cut from a grading this tile replaced (a way graded again now that its ground is in): set them
                 // again, redraw their ribbon and bridges, carve again — or two gradings of one road meet at the border.
                 // Setting one again can flag more (a way that took its height from a regraded one follows it): until settled.
@@ -438,6 +465,7 @@ namespace Rally.Gameplay
                         BuildBridges(d, again);
                         var db = d.Bounds;
                         world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
+                        lights?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));   // masts stand on the new grading
                         RallyLog.Info($"overlay: {d} roads set again (a way it shares with {key} was graded again)");
                     }
                     foreach (var m in roads.TakeDirtyTiles()) if (!dirtyTiles.Contains(m)) dirtyTiles.Enqueue(m);
@@ -475,6 +503,14 @@ namespace Rally.Gameplay
             int placed = 0; foreach (var post in posts) placed += post.Plates.Count;
             signs.SetTile(key, posts);
             RallyLog.Info($"overlay: {key} signs: {placed} plates on {posts.Count} posts ({made.Count} speed-limit changes without a plate), {skipped} without a design, {offRoad} away from the roads");
+        }
+
+        /// <summary>The tile's NVDB street lights (and posts along lit stretches without registered points) beside its roads, never in a tunnel.</summary>
+        void PlaceLights(TileKey key, LightSet set)
+        {
+            var posts = LightPlacement.Place(set, roads, key.Bounds, p => world.TunnelAt(FloatingOrigin.ToWorldXZ(p), out _), out var st);
+            lights.SetTile(key, posts);
+            RallyLog.Info($"overlay: {key} street lights: {st.Real} registered + {st.Filled} along lit stretches; skipped {st.NotOnMast} not on a mast, {st.OffRoad} away from the roads, {st.DeckOrTunnel} on a bridge or in a tunnel, {st.OnRoad} on a road");
         }
 
         /// <summary>
@@ -619,7 +655,7 @@ namespace Rally.Gameplay
         {
             if (ribbons.TryGetValue(tile.Key, out var go)) { Destroy(go); ribbons.Remove(tile.Key); }
             DropBridges(tile.Key);
-            if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); }
+            if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); lights?.RemoveTile(tile.Key); }
         }
 
         #endregion
@@ -916,6 +952,7 @@ namespace Rally.Gameplay
             FrameProbe.Stop("world.update", tWorld);
             long tSigns = FrameProbe.Start();
             signs?.Update(FloatingOrigin.ToUtm(carPos), carPos);
+            lights?.Update(FloatingOrigin.ToUtm(carPos), carPos);
             FrameProbe.Stop("signs.update", tSigns);
             if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
 
@@ -1618,6 +1655,7 @@ namespace Rally.Gameplay
             if (car != null) Destroy(car.gameObject);
             car = null; audio = null;
             signs?.Dispose(); signs = null;
+            lights?.Dispose(); lights = null;
             arrow?.Dispose(); arrow = null;
             gate?.Dispose(); gate = null; gateTimer = 0f;   // its root is under the world's: before the world goes
             world.Dispose();

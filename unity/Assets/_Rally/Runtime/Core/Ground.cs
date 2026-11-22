@@ -64,7 +64,7 @@ namespace Rally.Core
     /// </summary>
     public interface ISolidGround
     {
-        /// <summary>Retarget the pooled colliders (trees) to a world position now: after a teleport, before testing it.</summary>
+        /// <summary>Retarget the pooled colliders (trees, street-light masts) to a world position now: after a teleport, before testing it.</summary>
         void RefreshColliders(float3 world);
         /// <summary>
         /// The shortest move (world xz) that takes the car box (centre, yaw, half extents) out of every house it reaches more than

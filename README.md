@@ -393,6 +393,7 @@ three open services for what is really there, and draws it low-poly:
 | Buildings | OpenStreetMap footprints (`building=*`, `out geom`) | Each footprint's minimum-area rectangle gives the house its heading and size; `building=*` picks a family (house, cabin, barn, shed, boathouse, church with tower, industrial hall, apartment block) for height, roof pitch and colours |
 | Roads (free drive, side roads) | OpenStreetMap `highway=*` centre lines | Carved into the chunk heights and drawn as ribbons (asphalt or gravel by class / `surface=*`); indexed so the car, trees, houses and signs know where the nearest road is. `bridge=*` ways (and untagged water crossings, also on the OSRM stage road) become bridges |
 | Road signs | **Statens vegvesen NVDB API v4** (`Skiltplate`, type 96) plus `Fartsgrense` (type 105) | Real sign plates on posts beside the stage road, facing oncoming traffic; speed-limit signs are synthesised where the limit changes and no plate is registered |
+| Street lights (Unity game) | **NVDB API v4** `Belysningspunkt` (87), `Lysmast` (181), `Belysningsstrekning` (86) | Masts with their real height and arm beside the drawn road; posts every registered spacing along lit stretches without points; solid for the car |
 
 Everything is fetched per chunk, cached with the chunk, and degrades
 gracefully. NIBIO and NVDB answer in a second or two; the public Overpass
@@ -408,7 +409,7 @@ SR16 (a sparse default forest is used), no houses, or no signs.
 - Routing: **OSRM** / **OpenStreetMap** contributors.
 - Forest species and crown cover: **Skogressurskart SR16 © NIBIO**, NLOD.
 - Land use, water, buildings: **© OpenStreetMap contributors**, ODbL (Overpass API).
-- Road signs and speed limits: *Inneholder data under norsk lisens for offentlige
+- Road signs, speed limits and street lights: *Inneholder data under norsk lisens for offentlige
   data (NLOD) tilgjengeliggjort av Statens vegvesen* (NVDB API Les v4).
 - Scene packaging: the bundled **3d_terrain** project.
 - Car models in the Unity build (Sketchfab, CC BY 4.0): Porsche 911 by WoTiger (Philipp Busse); Porsche 911 3.2 Carrera

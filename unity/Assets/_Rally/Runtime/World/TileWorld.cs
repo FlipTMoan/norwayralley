@@ -47,6 +47,8 @@ namespace Rally.World
         public VegetationRenderer Vegetation;
         public TreeColliderPool TreeColliders;
         public PropColliderPool PropColliders;
+        /// <summary>The street lights (owned by the game): <see cref="RefreshColliders"/> moves their mast colliders to a placement too.</summary>
+        public LightLayer Lights;
         public WaterWake Wake;
         public WorldStyleSO Style;
         /// <summary>The scheduler wants this tile fetched: the driver asks Rally.Geo and calls <see cref="OnTileData"/> (or <see cref="FetchFailed"/>).</summary>
@@ -799,7 +801,7 @@ namespace Rally.World
             return Water.WaterAt(t != null ? ((TileView)t.UserData).Water : null, p, CarvedHeightAt(p));
         }
 
-        public void RefreshColliders(float3 world) { TreeColliders?.Update(world); Physics.SyncTransforms(); }
+        public void RefreshColliders(float3 world) { TreeColliders?.Update(world); Lights?.RefreshColliders(world); Physics.SyncTransforms(); }
 
         readonly List<TerrainTile> footprintTiles = new List<TerrainTile>(4);
 

@@ -103,6 +103,30 @@ namespace Rally.Geo
             }
         }
 
+        /// <summary>
+        /// Street lights beside the <see cref="Osm"/> road of each chunk: a lit stretch along it from 100 to 700 m into the
+        /// chunk (40 m spacing, no registered points: the game fills it on its right, the south side), and two registered
+        /// 10 m masts with 2 m arms 5 m north of the line at 800 and 840 m. Empty without <see cref="Road"/>.
+        /// </summary>
+        public sealed class Lights : ILightSource
+        {
+            public Osm Road;
+
+            public Task<LightSet> FetchLights(Bounds25833 b, CancellationToken ct)
+            {
+                var set = new LightSet();
+                if (Road == null) return Task.FromResult(set);
+                double e0 = (b.MinE + b.MaxE) / 2 - 1024;   // the 2048 m chunk's west edge (the game pads the bounds evenly)
+                long id = 5000 + ((long)Math.Floor(e0 / 2048) & 0xffff) * 16;
+                var stretch = new LightStretch { Id = id, Spacing = 40, Use = "Veg/gate" };
+                for (double e = e0 + 100; e <= e0 + 700; e += 25) stretch.Points.Add(new Utm33(e, Road.RoadN(b, e)));
+                set.Stretches.Add(stretch);
+                for (int k = 0; k < 2; k++)
+                    set.Points.Add(new LightPoint { Id = id + 1 + k, Position = new Utm33(e0 + 800 + 40 * k, Road.RoadN(b, e0 + 800) + 5), MastLength = 10, Arm = true, ArmLength = 2, Use = "Veg/gate" });
+                return Task.FromResult(set);
+            }
+        }
+
         /// <summary>Straight line between the picks at 50 m steps; every point is "on a road".</summary>
         public sealed class Router : IRouter
         {

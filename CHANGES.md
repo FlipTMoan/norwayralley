@@ -1,6 +1,19 @@
 # Changes
 
-_Updated 2026-11-21 (JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-22 (Unity: street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+
+## 2026-11-22
+
+### Unity: street lights along the roads (NVDB)
+- Real street lights from Statens vegvesen's NVDB: every registered light point (87 Belysningspunkt) with its mast's
+  height and arm (181 Lysmast), and posts every "Avstand innbyrdes" (default 40 m) along lit stretches (86
+  Belysningsstrekning) that have no registered points. Galvanised tapered masts, optional 2 m arm, flat LED head with a
+  faint warm underside; one mesh per tile near the car (`World/Lights/LightMesh.cs`, `LightLayer.cs`).
+- Placed beside the drawn road, 1 m outside its shoulder, never on a carriageway, a bridge deck or in a tunnel
+  (`LightPlacement.cs`); the feet follow a regraded road. Masts are solid (pooled capsules, layer Props), and the car is
+  never placed inside one (the masts' colliders move with every placement).
+- `NvdbSource.FetchLights` (GeoCache kind `nvdb`; NVDB unreachable → no lights). Lillehammer test box: 589 points, 143
+  masts, 9 lit stretches. Tests: `LightTests` (fixtures from the live API), `LightPlayTests`.
 
 ## 2026-11-21
 
