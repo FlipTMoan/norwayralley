@@ -1,8 +1,24 @@
 # Changes
 
-_Updated 2026-11-22 (Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-22 (Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-22
+
+### Unity: MY ROUTES, and a route's download kept locally
+- A route made from START and FINISH place names on the map is saved when it is generated; a route made by clicking
+  pins gets SAVE ROUTE. MY ROUTES (start screen and map panel) lists them with DRIVE, RENAME (in the row, ≤ 60
+  characters) and DELETE (YES / NO in the row, no browser dialog). The list is localStorage `rally.routes`; the route
+  line is stored compactly (polyline6) in the cache, and DRIVE uses it without asking OSRM.
+- Each saved route's 3D world is downloaded in the background along the route line: the coarse tiles of the stage and
+  every 1 m tile within 100 m of the road over the whole route. At most two requests at a time, behind driving, and each
+  map service's pause is respected. Progress shows per level ("fine 412/412 · coarse 38/38") with the size.
+- The cache pins a saved route's entries: least-recently-used eviction skips them, a tile two routes share is counted
+  once, and deleting a route only unpins (its data becomes ordinary cache). The first saved route asks the browser to
+  keep the storage (`navigator.storage.persist()`); if refused, MY ROUTES says so. The cache line shows the MB kept for
+  MY ROUTES.
+- Checked for the compact formats to come: the managed DeflateStream works in the WebGL build.
+- Tests: `SavedRoutesTests` (list, reload, pins and eviction, file store pins, tile list at both levels, pacing, pauses,
+  a drive with the network off from the cache), `SavedRoutePlayTests` (a saved route drives its own line on 1 m ground).
 
 ### Unity: roads continue where the map joins them
 - Roads no longer stop at tile borders in towns: the Overpass answer was cut off after the 440th house, and every road

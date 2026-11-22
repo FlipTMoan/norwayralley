@@ -22,6 +22,7 @@ namespace Rally.Geo
         [DllImport("__Internal")] static extern void RallyMapStatus(string text);
         [DllImport("__Internal")] static extern void RallyMapSetPin(int which, double lat, double lon);
         [DllImport("__Internal")] static extern void RallyMapSetRoute(string json);
+        [DllImport("__Internal")] static extern void RallyMapSetRoutes(string json, string note);
         [DllImport("__Internal")] static extern void RallyLoaderText(string text);
         [DllImport("__Internal")] static extern void RallyLoaderHide();
 
@@ -37,6 +38,8 @@ namespace Rally.Geo
         public static void MapStatus(string text) => RallyMapStatus(text ?? "");
         public static void MapSetPin(int which, double lat, double lon) => RallyMapSetPin(which, lat, lon);
         public static void MapSetRoute(string json) => RallyMapSetRoute(json ?? "[]");
+        /// <summary>MY ROUTES in the map panel: [{ id, name, info }] JSON and a note line.</summary>
+        public static void MapSetRoutes(string json, string note) => RallyMapSetRoutes(json ?? "[]", note ?? "");
         public static void LoaderText(string text) => RallyLoaderText(text ?? "");
         public static void LoaderHide() => RallyLoaderHide();
 #else
@@ -52,6 +55,7 @@ namespace Rally.Geo
         public static void MapStatus(string text) { }
         public static void MapSetPin(int which, double lat, double lon) { }
         public static void MapSetRoute(string json) { }
+        public static void MapSetRoutes(string json, string note) { }
         public static void LoaderText(string text) { }
         public static void LoaderHide() { }
 #endif

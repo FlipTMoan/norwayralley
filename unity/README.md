@@ -1,6 +1,6 @@
 # Grand Tour Norway — Unity 6 web build
 
-_Updated 2026-11-20 (direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; solid houses, trees, posts and rails at every placement and spin; gravel roads max 120 km/h, on the road while a wheel is on it; renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
+_Updated 2026-11-22 (MY ROUTES: saved routes, downloaded and pinned for offline driving; 2026-11-20: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; solid houses, trees, posts and rails at every placement and spin; gravel roads max 120 km/h, on the road while a wheel is on it; renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game, named **Grand Tour Norway** since 2026-11-20 (the JS game keeps the name Retro
 Norway Rally). The rename touched only what the player sees (`productName`, page and start-screen title, the loader,
@@ -92,7 +92,7 @@ debug window (F10 / F3) shows the same frame-time numbers while you play.
 
 The Leaflet map tiles, PeerJS and the geodata services (Kartverket WCS, NIBIO SR16, Overpass,
 NVDB, OSRM) are fetched live (the map's place search asks Kartverket's stedsnavn API directly, uncached) and cached in IndexedDB (`rally-cache`, the same database the JS game
-uses, 10 GB LRU). In the editor the same cache lives under `Application.persistentDataPath/rally-cache`.
+uses, up to 32 GB LRU; entries pinned by a saved route are never evicted). In the editor the same cache lives under `Application.persistentDataPath/rally-cache`.
 
 ### WebGPU or WebGL 2?
 
@@ -155,7 +155,7 @@ unity/
     Geo/                              every geodata client (ports of worldgen.js, buildings.js, landcover.js, signs.js, stage.js, cache.js)
       Sources/                        the interfaces + plain data: IDemSource, IRoadSource, IFeatureSource, ILandcoverSource, ISignSource, IRouter, IGeoCache
       Http/                           Http (UnityWebRequest + await), CircuitBreaker (60 s open / 45 s retry), CachedSource<T>
-      Cache/                          GeoCache (LRU, 10 GB), IdbBackend (web, via idb.jslib), FileBackend (editor), MemoryBackend (tests)
+      Cache/                          GeoCache (LRU up to 32 GB, pins for saved routes), IdbBackend (web, via idb.jslib), FileBackend (editor), MemoryBackend (tests)
       Dem/                            GeoTiff decoder, KartverketDem (WCS GetCoverage)
       Osm/                            OverpassQuery, OverpassMirrors (race + penalties), OverpassSource (roads + features)
       Landcover/                      Sr16Colours, Sr16Source (NIBIO WMS)
@@ -329,6 +329,10 @@ map in the web build. Type a town or place name in the START or FINISH box (Kart
 and villages first, shown as "Hovden — tettsted, Bykle"; ↑ ↓ Enter Esc) or click the map (start, then finish);
 pins snap to the nearest road of the chosen profile within 1 km, GENERATE ROUTE and
 FREE DRIVE HERE load the stage and update the address bar so it can be shared. The start screen also has
-GEARBOX and SLIDING (0–3) toggles, saved in the browser, and the local cache size with CLEAR. On phones and
+GEARBOX and SLIDING (0–3) toggles, saved in the browser, and the local cache size with CLEAR. **MY ROUTES** (on the start
+screen and above the map): a route made from START and FINISH place names is kept when it is generated, a pin route with
+SAVE ROUTE; each row has DRIVE, RENAME (≤ 60 characters, in the row) and DELETE (YES / NO in the row) and shows how much of
+the route's 3D world is downloaded ("cached 100 %, 38 MB · fine 412/412 · coarse 38/38"). The list is localStorage
+`rally.routes`; the line and every tile along it are pinned in the cache, so a downloaded route drives offline. On phones and
 narrow screens ◀ ▶ BRAKE GAS DRIFT buttons appear. Gamepad: triggers throttle/brake, left stick steers,
 B handbrake, A jump, shoulders gears. Off-road routing on the map is not in the Unity build yet.

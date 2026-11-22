@@ -77,6 +77,96 @@ namespace Rally.UI
             ShowStartScreen(true);   // the UXML opens on the start screen; the game's first phase (Loading) keeps it
         }
 
+        /// <summary>One saved route in MY ROUTES: its id, name and the info line (length, download state).</summary>
+        public struct RouteRow { public string Id, Name, Info; }
+
+        /// <summary>MY ROUTES buttons: DRIVE, the new name after RENAME (OK or Enter), DELETE after its YES.</summary>
+        public event System.Action<string> RouteDriveClicked, RouteDeleteClicked;
+        public event System.Action<string, string> RouteRenamed;
+        System.Collections.Generic.List<RouteRow> routeRows = new System.Collections.Generic.List<RouteRow>();
+        string renaming, confirming;
+        TextField renameField;
+
+        /// <summary>
+        /// Fill MY ROUTES (hidden while there are none). A refresh with the same routes only rewrites the info lines, so a
+        /// rename being typed is not lost; RENAME and DELETE ask in the row itself.
+        /// </summary>
+        public void SetRoutes(System.Collections.Generic.IReadOnlyList<RouteRow> rows, string note)
+        {
+            var panel = root?.Q("myRoutes"); var list = root?.Q("routesList");
+            if (panel == null || list == null) return;
+            var n = root.Q<Label>("routesNote"); if (n != null) n.text = note ?? "";
+            bool same = rows.Count == routeRows.Count && list.childCount == rows.Count;
+            for (int i = 0; same && i < rows.Count; i++) same = rows[i].Id == routeRows[i].Id && rows[i].Name == routeRows[i].Name;
+            routeRows = new System.Collections.Generic.List<RouteRow>(rows);
+            panel.style.display = rows.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            if (same) { for (int i = 0; i < rows.Count; i++) { var info = list[i].Q<Label>(className: "routeInfo"); if (info != null) info.text = rows[i].Info; } return; }
+            DrawRoutes();
+        }
+
+        void DrawRoutes()
+        {
+            var list = root.Q("routesList");
+            list.Clear();
+            renameField = null;
+            if (renaming != null && routeRows.FindIndex(r => r.Id == renaming) < 0) renaming = null;
+            if (confirming != null && routeRows.FindIndex(r => r.Id == confirming) < 0) confirming = null;
+            foreach (var r in routeRows)
+            {
+                string id = r.Id;
+                var row = new VisualElement { name = "route-" + id }; row.AddToClassList("routeRow");
+                var text = new VisualElement(); text.AddToClassList("routeText");
+                if (renaming == id)
+                {
+                    renameField = new TextField { value = r.Name, maxLength = 60, name = "routeName" };
+                    renameField.AddToClassList("routeField");
+                    renameField.RegisterCallback<KeyDownEvent>(e =>
+                    {
+                        if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) { CommitRename(); e.StopPropagation(); }
+                        else if (e.keyCode == KeyCode.Escape) { renaming = null; DrawRoutes(); e.StopPropagation(); }
+                    }, TrickleDown.TrickleDown);
+                    text.Add(renameField);
+                }
+                else { var name = new Label(r.Name.Replace("→", "-")); name.AddToClassList("routeName"); text.Add(name); }   // the HUD font has no arrow
+                var info = new Label(r.Info); info.AddToClassList("routeInfo"); text.Add(info);
+                row.Add(text);
+                if (renaming == id)
+                {
+                    row.Add(RouteButton("OK", "routeOk", CommitRename));
+                    row.Add(RouteButton("CANCEL", "routeCancel", () => { renaming = null; DrawRoutes(); }));
+                }
+                else if (confirming == id)
+                {
+                    var ask = new Label("Delete this route?"); ask.AddToClassList("routeAsk"); row.Add(ask);
+                    row.Add(RouteButton("YES, DELETE", "routeYes", () => { confirming = null; RouteDeleteClicked?.Invoke(id); }, true));
+                    row.Add(RouteButton("NO", "routeNo", () => { confirming = null; DrawRoutes(); }));
+                }
+                else
+                {
+                    row.Add(RouteButton("DRIVE", "routeDrive", () => RouteDriveClicked?.Invoke(id)));
+                    row.Add(RouteButton("RENAME", "routeRename", () => { renaming = id; confirming = null; DrawRoutes(); renameField?.Focus(); }));
+                    row.Add(RouteButton("DELETE", "routeDelete", () => { confirming = id; renaming = null; DrawRoutes(); }, true));
+                }
+                list.Add(row);
+            }
+        }
+
+        void CommitRename()
+        {
+            string id = renaming, name = renameField?.value?.Trim();
+            renaming = null;
+            if (id != null && !string.IsNullOrEmpty(name)) RouteRenamed?.Invoke(id, name);
+            DrawRoutes();
+        }
+
+        static Button RouteButton(string text, string name, System.Action click, bool danger = false)
+        {
+            var b = new Button(click) { text = text, name = name };
+            b.AddToClassList("toggleButton");
+            if (danger) b.AddToClassList("routeDanger");
+            return b;
+        }
+
         /// <summary>One car on the start-screen chooser.</summary>
         public struct CarCard { public string Name, Stats; public Texture2D Picture; }
 

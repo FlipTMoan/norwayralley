@@ -1,6 +1,7 @@
 /*
  * IndexedDB store for Rally.Geo.IdbBackend — the same database cache.js uses (`rally-cache`,
- * store `entries`, records { key, kind, value, size, at } with an index on `at`), so the JS
+ * store `entries`, records { key, kind, value, size, at, pins? } with an index on `at`; `pins` lists the saved
+ * routes that keep a record, which LRU eviction skips), so the JS
  * game and the Unity game share one cache on the origin. Values: ArrayBuffer for binary
  * entries; for text entries the parsed JSON object (what the JS client stores and expects).
  * Every call takes a request id and answers through the C# callback it was given.
@@ -97,8 +98,13 @@ mergeInto(LibraryManager.library, {
     }
     RallyIdb.open().then(function (db) {
       if (!db) { RallyIdb.bool(cb, id, false); return; }
-      return RallyIdb.request(RallyIdb.store('readwrite').put({ key: key, kind: kind, value: value, size: size, at: at }))
-        .then(function () { RallyIdb.bool(cb, id, true); });
+      // One transaction: an existing record's pins (the saved routes that keep it) survive the rewrite.
+      var store = RallyIdb.store('readwrite');
+      return RallyIdb.request(store.get(key)).then(function (old) {
+        var rec = { key: key, kind: kind, value: value, size: size, at: at };
+        if (old && old.pins && old.pins.length) rec.pins = old.pins;
+        return RallyIdb.request(store.put(rec));
+      }).then(function () { RallyIdb.bool(cb, id, true); });
     }).catch(function (e) { console.warn('rally-cache put failed', e); RallyIdb.bool(cb, id, false); });
   },
 
@@ -111,6 +117,45 @@ mergeInto(LibraryManager.library, {
     }).catch(function () { RallyIdb.bool(cb, id, false); });
   },
 
+  /** Add saved route `pin` to a record's pins (value untouched, in one transaction); false when the key is not stored. */
+  RallyIdbAddPin__deps: ['$RallyIdb'],
+  RallyIdbAddPin: function (id, keyPtr, pinPtr, cb) {
+    var key = UTF8ToString(keyPtr), pin = UTF8ToString(pinPtr);
+    RallyIdb.open().then(function (db) {
+      if (!db) { RallyIdb.bool(cb, id, false); return; }
+      var store = RallyIdb.store('readwrite');
+      return RallyIdb.request(store.get(key)).then(function (rec) {
+        if (!rec) { RallyIdb.bool(cb, id, false); return; }
+        var pins = rec.pins || [];
+        if (pins.indexOf(pin) >= 0) { RallyIdb.bool(cb, id, true); return; }
+        rec.pins = pins.concat([pin]);
+        return RallyIdb.request(store.put(rec)).then(function () { RallyIdb.bool(cb, id, true); });
+      });
+    }).catch(function (e) { console.warn('rally-cache pin failed', e); RallyIdb.bool(cb, id, false); });
+  },
+
+  /** Take saved route `pin` off every record (nothing is deleted). */
+  RallyIdbRemovePin__deps: ['$RallyIdb'],
+  RallyIdbRemovePin: function (id, pinPtr, cb) {
+    var pin = UTF8ToString(pinPtr);
+    RallyIdb.open().then(function (db) {
+      if (!db) { RallyIdb.bool(cb, id, false); return; }
+      var cursor = RallyIdb.store('readwrite').openCursor();
+      cursor.onsuccess = function () {
+        var c = cursor.result;
+        if (!c) { RallyIdb.bool(cb, id, true); return; }
+        var rec = c.value;
+        if (rec.pins && rec.pins.indexOf(pin) >= 0) {
+          rec.pins = rec.pins.filter(function (p) { return p !== pin; });
+          if (!rec.pins.length) delete rec.pins;
+          c.update(rec);
+        }
+        c.continue();
+      };
+      cursor.onerror = function () { RallyIdb.bool(cb, id, false); };
+    }).catch(function () { RallyIdb.bool(cb, id, false); });
+  },
+
   RallyIdbClear__deps: ['$RallyIdb'],
   RallyIdbClear: function (id, cb) {
     RallyIdb.open().then(function (db) {
@@ -119,7 +164,7 @@ mergeInto(LibraryManager.library, {
     }).catch(function () { RallyIdb.bool(cb, id, false); });
   },
 
-  /** All entries' { key, size, at, kind } oldest first as JSON (no values: cheap). */
+  /** All entries' { key, size, at, kind, pins } oldest first as JSON (no values: cheap). */
   RallyIdbList__deps: ['$RallyIdb'],
   RallyIdbList: function (id, cb) {
     var answer = function (rows) {
@@ -134,7 +179,7 @@ mergeInto(LibraryManager.library, {
       cursor.onsuccess = function () {
         var c = cursor.result;
         if (!c) { answer(out); return; }
-        out.push({ key: c.value.key, size: c.value.size, at: c.value.at, kind: c.value.kind });
+        out.push({ key: c.value.key, size: c.value.size, at: c.value.at, kind: c.value.kind, pins: (c.value.pins || []).join(',') });
         c.continue();
       };
       cursor.onerror = function () { answer(out); };
@@ -155,12 +200,15 @@ mergeInto(LibraryManager.library, {
     done(-1, -1);
   },
 
-  /** cache.js requestPersistence: ask the browser to keep the store across storage pressure (best effort). */
-  RallyStoragePersist: function () {
+  /** cache.js requestPersistence: ask the browser to keep the store across storage pressure; cb(1) when granted. */
+  RallyStoragePersist: function (cb) {
+    var done = function (ok) { if (cb) {{{ makeDynCall('vi', 'cb') }}}(ok ? 1 : 0); };
     try {
       if (navigator.storage && navigator.storage.persist) {
-        navigator.storage.persist().then(function (ok) { console.info('rally-cache: persistent storage ' + (ok ? 'granted' : 'not granted')); });
+        navigator.storage.persist().then(function (ok) { console.info('rally-cache: persistent storage ' + (ok ? 'granted' : 'not granted')); done(ok); }, function () { done(false); });
+        return;
       }
     } catch (e) { /* unsupported */ }
+    done(false);
   },
 });

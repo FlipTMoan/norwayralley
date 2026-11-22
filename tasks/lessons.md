@@ -280,3 +280,23 @@
   69 s): make the run outlast the event under test (`-previewDrive`).
 - Moving new `.cs` files out of the project for an "old code" test run made Unity delete their `.meta` files: move the
   `.meta` files with them (or accept new GUIDs for files nothing references yet).
+
+## 2026-11-22 — saved routes: no-op delays spin, lookups touch the LRU, pkill matches its own shell
+- A retry loop that waits "while the breaker is open" spun forever in a test whose `Delay` was a no-op on a real clock:
+  the pause never ran out, and the EditMode run hung (the log stopped growing; that was the sign). A test that stubs
+  `Delay` must also advance the clock the code waits on (`ServiceBreakers(null, () => clock)`, `Delay = ms => clock += ms`).
+- A test helper that checked "is this key cached?" with `cache.Fetch` was itself a cache hit and refreshed the entry's
+  LRU time, so the eviction test saw the wrong entry go. Look at the store (`backend.ListByAge()`), never through the API
+  that counts as a use.
+- `pkill -f "<the Unity command>"` from a shell whose own command line contains the pattern killed the shell (exit 144)
+  and not Unity. Kill Unity by pid (`ps -eo pid,args | grep "[E]ditor/Unity"`).
+- The download's request gate is a small queue of `TaskCompletionSource`, not `SemaphoreSlim` (whose async waiters may
+  resume on the thread pool in the no-context EditMode tests, racing the single-threaded queue); not measured, chosen
+  to keep tests deterministic.
+- In Chrome the first download sat at 0 % because both of its two request slots went to coarse tiles waiting for a
+  hanging Overpass; one worker per detail level fixed it. Then DELETE hung, and the next download got no slot at all:
+  a cancelled download kept its slots while its loads (shared with driving through the cache, so not aborted) hung.
+  Rule: a request gate must give the slot back on cancellation, not on completion of the underlying load
+  (`UntilCancelled`), and a cancel must not wait for shared work. Test it with held (never-answering) fake loads.
+- The Chrome tool's console buffer keeps only the newest ~150 messages; for a long check, hook `console.log/warn` in the
+  page and keep the lines that matter in `window.__logs` before acting.

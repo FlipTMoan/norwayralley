@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-22 (Unity continuous roads: link roads, survey `-previewContinuity`; Unity overlay data per type with one pause per service: OverlayFetch / ServiceBreakers; Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-22 (Unity MY ROUTES: SavedRouteList, RouteTiles / RoutePrefetch / PinningCache, cache pins skipped by LRU, deflate works in WebGL; Unity continuous roads: link roads, survey `-previewContinuity`; Unity overlay data per type with one pause per service: OverlayFetch / ServiceBreakers; Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -316,6 +316,44 @@ sequenceDiagram
 
 Keys typed in a box are stopped in a window capture listener registered before Unity loads, so G / M / R / N / H / Esc
 do not reach the game; Esc closes the list, then the map.
+
+### Unity MY ROUTES: saved routes and their download kept locally (2026-11-22)
+
+`Gameplay/SavedRoutes.cs` keeps the list (localStorage `rally.routes`, newest first, names ≤ 60 characters); the OSRM
+line is a cache entry `route:<id>` (polyline6, `Geo/Routing/Polyline.cs`). A GENERATE from two place names saves the
+route once it is routed; SAVE ROUTE saves a pin route. An OSRM link whose picks match a saved route drives the saved
+line without asking OSRM. `GameController.Routes.cs` wires the list to the start screen (`HudController.SetRoutes`) and
+the map panel (`MapSetRoutes` → `rallyMap.setRoutes`; rows come back as `{ev:'route', action, id}`).
+
+```mermaid
+flowchart LR
+  G[GENERATE with names / SAVE ROUTE] --> S[SavedRouteList<br/>localStorage rally.routes]
+  G --> L["cache route:id<br/>(polyline6, pinned)"]
+  L --> T[RouteTiles.Along<br/>coarse within 4.7 km · fine within 100 m]
+  T --> P[RoutePrefetch<br/>≤ 2 requests · yields to driving · per-service pauses]
+  P --> V[PinningCache view]
+  V --> C[GeoCache: entry pins = route ids<br/>LRU skips pinned]
+  P -->|progress| S
+  D[DELETE] -->|Unpin: entries become plain LRU| C
+```
+
+- **One tile list, two levels.** `RouteTiles.Along(line)` gives every coarse tile within `LoadRadius` + 300 m (the
+  scheduler's ring sits 3.5 s ahead of the car) and every fine tile within `FineBand` (100 m) of the line, by the
+  scheduler's own band rule, over the whole route; the download and the pins use it. The live scheduler still holds
+  at most 24 fine tiles (`FineMaxLive`); ahead of the car they now come from the cache.
+- **Pins.** Each cache record has a pin list (IndexedDB field `pins`, line 6 of a `.meta` file); a rewrite (LRU touch)
+  keeps it, `AddPin` / `RemovePin` change it in one transaction. Eviction still drops the entry used longest ago first
+  but skips pinned ones; an entry several routes share is one record and counted once. Deleting a route only unpins.
+- **Pacing.** The download goes through the game's own sources (same cache keys), at most two requests at a time, each
+  waiting up to 5 s while the driving world has tiles pending, and each data type behind its service's breaker shared
+  with driving. One worker per level, so a coarse tile waiting for a slow Overpass does not hold back the 1 m DTM tiles;
+  waits are counted in frames. A tile that fails 3 times is left out (route "partial"; DRIVE tries again). DELETE
+  removes the row at once and the stopped download gives its request slots back at once; a load still shared with
+  driving may finish but pins nothing more.
+- **Persistence.** The first saved route asks `navigator.storage.persist()`; refused → MY ROUTES says the downloads may
+  be cleared by the browser.
+- **Deflate in WebGL** (for the compact formats still to come): the managed `System.IO.Compression.DeflateStream`
+  works in the IL2CPP WebGL build (590 KB inflated in 8 ms in Chrome); no jslib or own inflater needed.
 
 ### Unity car chooser (2026-11-20)
 

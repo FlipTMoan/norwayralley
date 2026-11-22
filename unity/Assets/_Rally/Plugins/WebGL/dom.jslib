@@ -83,6 +83,13 @@ mergeInto(LibraryManager.library, {
     if (window.rallyMap) window.rallyMap.setRoute(pts);
   },
 
+  /** MY ROUTES rows in the map panel: [{ id, name, info }] JSON and a note line (e.g. "may be cleared by the browser"). */
+  RallyMapSetRoutes: function (jsonPtr, notePtr) {
+    var rows = [];
+    try { rows = JSON.parse(UTF8ToString(jsonPtr) || '[]'); } catch (e) { rows = []; }
+    if (window.rallyMap && window.rallyMap.setRoutes) window.rallyMap.setRoutes(rows, UTF8ToString(notePtr));
+  },
+
   /** Loader hook: the template's progress bar text once Unity is up. */
   RallyLoaderText: function (textPtr) {
     var el = document.getElementById('loading-text');

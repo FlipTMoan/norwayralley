@@ -8,7 +8,7 @@ namespace Rally.Geo
     /// <summary>
     /// Port of cache.js <c>createCache</c>: every geodata answer (DEM tiles, Overpass, NVDB, SR16, OSRM,
     /// map tiles) is stored under its canonical URL with a byte budget (at most 32 GB, keeping 10 % of the disk free) and least-recently-used
-    /// eviction. A hit never touches the network, which is both the speed-up and the resilience: a
+    /// eviction; entries pinned by a saved route (<see cref="Pin"/>) are never evicted. A hit never touches the network, which is both the speed-up and the resilience: a
     /// place driven once keeps working when a service is down. Parallel asks for one key share one load.
     /// </summary>
     public sealed class GeoCache : IGeoCache
@@ -179,6 +179,7 @@ namespace Rally.Geo
                 foreach (var e in list)
                 {
                     if (sum <= budget) break;
+                    if (e.Pinned) continue;      // a saved route's data stays; it counts towards the budget once, however many routes share it
                     await backend.Delete(e.Key);
                     sum -= e.Size;
                     dropped++;
@@ -192,10 +193,26 @@ namespace Rally.Geo
         public async Task<CacheStats> Stats()
         {
             var list = await backend.ListByAge();
-            long sum = 0;
-            foreach (var e in list) sum += e.Size;
+            long sum = 0, pinned = 0;
+            foreach (var e in list) { sum += e.Size; if (e.Pinned) pinned += e.Size; }
             bytes = sum;
-            return new CacheStats(list.Count, sum, budget);
+            return new CacheStats(list.Count, sum, budget, pinned);
+        }
+
+        /// <summary>Mark the stored entry <paramref name="key"/> as used by saved route <paramref name="id"/>: eviction skips it. False when it is not stored.</summary>
+        public async Task<bool> Pin(string key, string id)
+        {
+            if (disabled) return false;
+            try { return await backend.AddPin(key, id); }
+            catch (Exception e) { RallyLog.Info($"cache: pin skipped ({e.Message})"); return false; }
+        }
+
+        /// <summary>Saved route <paramref name="id"/> is gone: its entries become plain LRU entries again (nothing is deleted now).</summary>
+        public async Task Unpin(string id)
+        {
+            if (disabled) return;
+            try { await backend.RemovePin(id); }
+            catch (Exception e) { RallyLog.Info($"cache: unpin skipped ({e.Message})"); }
         }
 
         public async Task Clear()

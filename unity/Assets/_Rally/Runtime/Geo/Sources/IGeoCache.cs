@@ -17,6 +17,8 @@ namespace Rally.Geo
     {
         public readonly int Entries;
         public readonly long Bytes, Budget;
-        public CacheStats(int entries, long bytes, long budget) { Entries = entries; Bytes = bytes; Budget = budget; }
+        /// <summary>Bytes of the entries saved routes keep (each entry once), part of <see cref="Bytes"/>.</summary>
+        public readonly long PinnedBytes;
+        public CacheStats(int entries, long bytes, long budget, long pinnedBytes = 0) { Entries = entries; Bytes = bytes; Budget = budget; PinnedBytes = pinnedBytes; }
     }
 }

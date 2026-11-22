@@ -39,6 +39,10 @@
             <ui:Button name="helpBtn" text="? HELP" class="toggleButton" />
           </ui:VisualElement>
           <ui:Label name="startControls" text="WASD / arrows drive · SPACE jump · SHIFT handbrake · Q/E gears · ESC this menu · H help" class="startControls" />
+          <ui:VisualElement name="myRoutes" class="friends myRoutes">
+            <ui:VisualElement class="row"><ui:Label text="MY ROUTES" class="friendsTitle" /><ui:Label name="routesNote" text="" class="routesNote" /></ui:VisualElement>
+            <ui:VisualElement name="routesList" class="routesList" />
+          </ui:VisualElement>
           <ui:VisualElement name="friends" class="friends">
             <ui:Label text="DRIVE WITH FRIENDS" class="friendsTitle" />
             <ui:VisualElement class="row friendsRow">
@@ -120,6 +124,7 @@
           <ui:Label text="Top left: stage time, penalty and distance to the finish. Top right: the pace note for the next turn - metres to it and its kind (EASY LEFT, HAIRPIN RIGHT ...). The yellow arrow on the road 15-30 m ahead shows the way: it follows the route round the next bend (in free drive the road you are on). The finish is a checkered banner over the road with a checkered line under it. Bottom: speed in km/h, gear (R = reverse), rev bar (red near the limiter), the surface under the car (ASPHALT, GRAVEL, OFF ROAD, WATER) and the red damage bar. Off road, and less on gravel, the wheels spin under full power: the revs jump, mud or stones fly and the car pulls a little less - ease the throttle for grip." class="helpText" />
           <ui:Label text="STAGES" class="helpHead" />
           <ui:Label text="Route stage: on the MAP, search a town or place name in the START and FINISH boxes (or click the map, start then finish); each pin snaps to the nearest road and the stage follows real roads to a finish time. Endless (N, or a ?seed= link): the road ahead keeps being picked as you drive, no finish. Free drive (a ?drive= link): any road, no clock. DRIVE WITH FRIENDS: HOST A ROOM and share the 4-letter code, the others JOIN; you race each other's ghosts (rooms go through the internet; phones cannot link over Bluetooth from a web page). Every stage is a link in the address bar you can share." class="helpText" />
+          <ui:Label text="MY ROUTES (on the start screen and in the MAP): a route made from START and FINISH place names is kept there when you generate it; a route made by clicking pins is kept with SAVE ROUTE. Each row shows its length and how much of its 3D world is downloaded (fine 1 m tiles along the road and coarse tiles around it, e.g. fine 412/412 · coarse 38/38). The download runs in the background, slowly, so driving always comes first; a fully downloaded route drives without the internet. DRIVE loads it, RENAME changes its name (up to 60 characters, Enter or OK), DELETE asks YES / NO in the row. Deleting a route keeps its data as ordinary cache that is freed when room is needed. The cache CLEAR button also empties the routes' downloads (DRIVE downloads them again). If the browser does not make storage persistent, MY ROUTES says the downloads may be cleared by the browser." class="helpText" />
           <ui:Label text="DATA" class="helpHead" />
           <ui:Label text="Terrain © Kartverket (CC BY 4.0) · forest SR16 © NIBIO (NLOD) · bioclimatic zones and sections (verge plants) Artsdatabanken / Miljødirektoratet (NLOD) · roads, buildings and water © OpenStreetMap contributors (ODbL) · road surfaces and road signs Statens vegvesen NVDB (NLOD) · borders geoBoundaries (CC BY 4.0). Made by Filip Tobias Moan © 2026." class="helpText" />
           <ui:Label text="CAR MODELS (CC BY 4.0, Sketchfab)" class="helpHead" />

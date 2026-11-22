@@ -24,9 +24,11 @@ namespace Rally.Geo
         [DllImport("__Internal")] static extern void RallyIdbPut(int id, string key, string kind, byte[] value, int length, int isText, double size, double at, BoolCallback cb);
         [DllImport("__Internal")] static extern void RallyIdbDelete(int id, string key, BoolCallback cb);
         [DllImport("__Internal")] static extern void RallyIdbClear(int id, BoolCallback cb);
+        [DllImport("__Internal")] static extern void RallyIdbAddPin(int id, string key, string pin, BoolCallback cb);
+        [DllImport("__Internal")] static extern void RallyIdbRemovePin(int id, string pin, BoolCallback cb);
         [DllImport("__Internal")] static extern void RallyIdbList(int id, StringCallback cb);
         [DllImport("__Internal")] static extern void RallyIdbFree(IntPtr ptr);
-        [DllImport("__Internal")] static extern void RallyStoragePersist();
+        [DllImport("__Internal")] static extern void RallyStoragePersist(PersistCallback cb);
         [DllImport("__Internal")] static extern void RallyStorageEstimate(int id, EstimateCallback cb);
 #else
         static void RallyIdbOpen(int id, BoolCallback cb) => cb(id, 0);
@@ -34,14 +36,17 @@ namespace Rally.Geo
         static void RallyIdbPut(int id, string key, string kind, byte[] value, int length, int isText, double size, double at, BoolCallback cb) => cb(id, 0);
         static void RallyIdbDelete(int id, string key, BoolCallback cb) => cb(id, 0);
         static void RallyIdbClear(int id, BoolCallback cb) => cb(id, 0);
+        static void RallyIdbAddPin(int id, string key, string pin, BoolCallback cb) => cb(id, 0);
+        static void RallyIdbRemovePin(int id, string pin, BoolCallback cb) => cb(id, 0);
         static void RallyIdbList(int id, StringCallback cb) => cb(id, "[]");
         static void RallyIdbFree(IntPtr ptr) { }
-        static void RallyStoragePersist() { }
+        static void RallyStoragePersist(PersistCallback cb) => cb(0);
         static void RallyStorageEstimate(int id, EstimateCallback cb) => cb(id, -1, -1);
 #endif
 
         public delegate void BoolCallback(int id, int ok);
         public delegate void StringCallback(int id, string json);
+        public delegate void PersistCallback(int granted);
         /// <summary>found, value pointer + length (malloc'd by JS; freed here), isText, kind, size, at.</summary>
         public delegate void EstimateCallback(int id, double quota, double usage);
         public delegate void GetCallback(int id, int found, IntPtr value, int length, int isText, string kind, double size, double at);
@@ -130,6 +135,22 @@ namespace Rally.Geo
             await tcs.Task;
         }
 
+        public async Task<bool> AddPin(string key, string pin)
+        {
+            if (!await Available()) return false;
+            var tcs = new TaskCompletionSource<bool>();
+            RallyIdbAddPin(Register(tcs), key, pin, OnBool);
+            return await tcs.Task;
+        }
+
+        public async Task RemovePin(string pin)
+        {
+            if (!await Available()) return;
+            var tcs = new TaskCompletionSource<bool>();
+            RallyIdbRemovePin(Register(tcs), pin, OnBool);
+            await tcs.Task;
+        }
+
         public async Task Clear()
         {
             if (!await Available()) return;
@@ -149,12 +170,20 @@ namespace Rally.Geo
             foreach (var row in rows)
             {
                 if (!(row is Dictionary<string, object> r)) continue;
-                list.Add(new CacheEntryInfo(r.Str("key"), r.Str("kind"), (long)r.Num("size", 0), r.Num("at", 0)));
+                list.Add(new CacheEntryInfo(r.Str("key"), r.Str("kind"), (long)r.Num("size", 0), r.Num("at", 0), r.Str("pins")));
             }
             return list; // the jslib reads the `at` index cursor, so rows arrive oldest first
         }
 
-        /// <summary>cache.js <c>requestPersistence</c>: ask the browser to keep the store across storage pressure.</summary>
-        public static void RequestPersistence() => RallyStoragePersist();
+        static Action<bool> persisted;
+
+        [MonoPInvokeCallback(typeof(PersistCallback))]
+        static void OnPersist(int granted) { var cb = persisted; persisted = null; cb?.Invoke(granted != 0); }
+
+        /// <summary>
+        /// cache.js <c>requestPersistence</c>: ask the browser to keep the store across storage pressure
+        /// (<c>navigator.storage.persist()</c>); <paramref name="done"/> hears whether it was granted (false outside the browser).
+        /// </summary>
+        public static void RequestPersistence(Action<bool> done = null) { persisted = done; RallyStoragePersist(OnPersist); }
     }
 }

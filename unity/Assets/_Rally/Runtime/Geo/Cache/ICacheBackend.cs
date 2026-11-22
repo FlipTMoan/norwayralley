@@ -9,7 +9,24 @@ namespace Rally.Geo
         public readonly string Key, Kind;
         public readonly long Size;
         public readonly double At;
-        public CacheEntryInfo(string key, string kind, long size, double at) { Key = key; Kind = kind; Size = size; At = at; }
+        /// <summary>The saved routes that keep this entry (comma-separated ids, see <see cref="CachePins"/>); empty: a plain LRU entry.</summary>
+        public readonly string Pins;
+        public CacheEntryInfo(string key, string kind, long size, double at, string pins = "") { Key = key; Kind = kind; Size = size; At = at; Pins = pins ?? ""; }
+        public bool Pinned => Pins.Length > 0;
+    }
+
+    /// <summary>A pin list is the ids of the saved routes that use an entry, comma-separated ("r1a2,r9f0"); ids have no commas.</summary>
+    public static class CachePins
+    {
+        public static bool Has(string pins, string id) => System.Array.IndexOf((pins ?? "").Split(','), id) >= 0;
+        public static string Add(string pins, string id) => string.IsNullOrEmpty(pins) ? id : Has(pins, id) ? pins : pins + "," + id;
+        public static string Remove(string pins, string id)
+        {
+            if (string.IsNullOrEmpty(pins)) return "";
+            var kept = new List<string>();
+            foreach (var p in pins.Split(',')) if (p.Length > 0 && p != id) kept.Add(p);
+            return string.Join(",", kept);
+        }
     }
 
     /// <summary>
@@ -42,10 +59,15 @@ namespace Rally.Geo
     {
         Task<bool> Available();
         Task<CacheEntry> Get(string key);
+        /// <summary>Store the entry; an existing entry's pins are kept (pins change only through AddPin / RemovePin).</summary>
         Task Put(CacheEntry entry);
+        /// <summary>Add saved route <paramref name="id"/> to the entry's pins; false when there is no such entry.</summary>
+        Task<bool> AddPin(string key, string id);
+        /// <summary>Take <paramref name="id"/> off every entry's pins. Nothing is deleted: unpinned entries become plain LRU entries.</summary>
+        Task RemovePin(string id);
         Task Delete(string key);
         Task Clear();
-        /// <summary>All entries' key/size/at/kind, oldest first.</summary>
+        /// <summary>All entries' key/size/at/kind/pins, oldest first.</summary>
         Task<List<CacheEntryInfo>> ListByAge();
         /// <summary>Disk or quota figures for the budget (<see cref="GeoCache.BudgetFor"/>).</summary>
         Task<StorageRoom> Room();

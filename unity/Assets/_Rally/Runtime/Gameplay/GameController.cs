@@ -27,7 +27,7 @@ namespace Rally.Gameplay
     /// Streaming is never allowed to stall a frame: fetches run as tasks, their results queue up and one is
     /// applied per frame (one carve / upload per frame, the stream.js budget).
     /// </summary>
-    public sealed class GameController : MonoBehaviour
+    public sealed partial class GameController : MonoBehaviour
     {
         #region Inspector
 
@@ -176,10 +176,14 @@ namespace Rally.Gameplay
                 Hud.DebugTapped += () => Hud.DebugVisible = !Hud.DebugVisible;
                 Hud.CarClicked += ChooseCar;
                 Hud.MenuClicked += BackToMenu;
+                Hud.RouteDriveClicked += DriveSavedRoute;
+                Hud.RouteRenamed += RenameSavedRoute;
+                Hud.RouteDeleteClicked += DeleteSavedRoute;
                 logWindow = Hud.GetComponent<Rally.UI.LogWindow>();
             }
             LoadSettings();
             ShowCarCards();
+            InitRoutes();
             var mapGo = new GameObject("Map");                     // the name the template's SendMessage targets
             mapGo.AddComponent<MapEvents>().Handler = OnMapEvent;
             flow.PhaseChanged += p => Hud?.ShowStartScreen(p == Phase.Intro || p == Phase.Loading);
@@ -215,16 +219,24 @@ namespace Rally.Gameplay
         /// <summary>Real services on the web (IndexedDB cache shared with the JS game); FakeSources or the file cache in the editor.</summary>
         void CreateSources()
         {
+            // One cache for the session (not one per stage): saved-route downloads share its in-flight loads with driving.
 #if UNITY_WEBGL && !UNITY_EDITOR
             bool fake = false;
-            cache = new GeoCache(new IdbBackend());
-            _ = ((GeoCache)cache).RefreshBudget();          // 32 GB at most, 10 % of the disk / quota kept free
-            IdbBackend.RequestPersistence();
+            if (cache == null)
+            {
+                cache = new GeoCache(new IdbBackend());
+                _ = ((GeoCache)cache).RefreshBudget();          // 32 GB at most, 10 % of the disk / quota kept free
+                IdbBackend.RequestPersistence(OnPersistence);
+            }
 #else
             bool fake = UseFakeSources;
-            cache = new GeoCache(FileBackend.Default());
-            _ = ((GeoCache)cache).RefreshBudget();
+            if (cache == null)
+            {
+                cache = new GeoCache(FileBackend.Default());
+                _ = ((GeoCache)cache).RefreshBudget();
+            }
 #endif
+            fakeSources = fake;
             if (fake)
             {
                 var osm = new FakeSources.Osm();
@@ -745,10 +757,9 @@ namespace Rally.Gameplay
                 case ShareLinks.Kind.Demo:
                 {
                     status = "ROUTING";
-                    var profile = link.Profile == "cycling" ? RouteProfile.Cycling : link.Profile == "foot" ? RouteProfile.Foot : RouteProfile.Driving;
-                    var result = await router.Route(link.A, link.B, profile, cts.Token);
+                    var line = await StageLine();
                     stagePoints.Clear();
-                    foreach (var c in result.Coordinates) stagePoints.Add(Proj.ToUtm(c));
+                    foreach (var c in line) stagePoints.Add(Proj.ToUtm(c));
                     BuildStage(link.Kind == ShareLinks.Kind.Osrm ? "OSRM stage" : "Demo stage", "osrm");
                     AddSectorPlans(0, 0f, stage.Length);
                     break;
@@ -1502,6 +1513,7 @@ namespace Rally.Gameplay
             o["start"] = new Dictionary<string, object> { { "lat", start.Lat }, { "lon", start.Lon } };
             if (link.Kind == ShareLinks.Kind.Osrm) o["finish"] = new Dictionary<string, object> { { "lat", link.B.Lat }, { "lon", link.B.Lon } };
             BrowserDom.MapOpen(Json.Stringify(o));
+            ShowRoutes();
             if (stage != null)
             {
                 var pts = new List<object>();
@@ -1535,6 +1547,7 @@ namespace Rally.Gameplay
                         var snap = await router.Nearest(p, Profile(profileName), 1000, cts.Token);
                         if (snap == null) { BrowserDom.MapStatus($"{label}: no {profileName} road within 1 km. Move the pin nearer a mapped road or trail."); break; }
                         var sp = snap.Value;
+                        pinRoads[which == 0 ? 0 : 1] = sp.Name;
                         BrowserDom.MapSetPin(which, sp.Point.Lat, sp.Point.Lon);
                         string road = string.IsNullOrEmpty(sp.Name) ? "the road" : sp.Name;
                         BrowserDom.MapStatus($"{label} snapped {sp.DistanceM:0} m onto {road}." + (which == 0 ? " Now click the FINISH, or FREE DRIVE HERE." : " GENERATE ROUTE when ready."));
@@ -1546,6 +1559,7 @@ namespace Rally.Gameplay
                         var a = e.Obj("start"); var b = e.Obj("finish");
                         if (a == null || b == null) break;
                         if (profileName == "offroad") { BrowserDom.MapStatus("Off-road routing is not in the Unity build yet: pick driving, cycling or foot."); break; }
+                        saveAsName = NamedRoute(e.Arr("names"));     // made from START / FINISH names: kept in MY ROUTES once routed
                         CloseMap();
                         await LoadStage(ShareLinks.Osrm(new LatLon(a.Num("lat"), a.Num("lon")), new LatLon(b.Num("lat"), b.Num("lon")), profileName));
                         break;
@@ -1556,6 +1570,25 @@ namespace Rally.Gameplay
                         if (a == null) break;
                         CloseMap();
                         await LoadStage(ShareLinks.Drive(new LatLon(a.Num("lat"), a.Num("lon"))));
+                        break;
+                    }
+                    case "save":
+                    {
+                        var a = e.Obj("start"); var b = e.Obj("finish");
+                        if (a == null || b == null) break;
+                        if (profileName == "offroad") { BrowserDom.MapStatus("Off-road routes cannot be saved yet: pick driving, cycling or foot."); break; }
+                        await SaveRouteFromMap(new LatLon(a.Num("lat"), a.Num("lon")), new LatLon(b.Num("lat"), b.Num("lon")), profileName, e.Arr("names"));
+                        break;
+                    }
+                    case "route":
+                    {
+                        string id = e.Str("id");
+                        switch (e.Str("action"))
+                        {
+                            case "drive": CloseMap(); DriveSavedRoute(id); break;
+                            case "rename": RenameSavedRoute(id, e.Str("name")); break;
+                            case "delete": DeleteSavedRoute(id); break;
+                        }
                         break;
                     }
                     case "close": mapOpen = false; break;
@@ -1572,6 +1605,7 @@ namespace Rally.Gameplay
             if (cache == null) return;
             await cache.Clear();
             RallyLog.Info("cache: cleared by the player");
+            OnCacheCleared();
             await RefreshCacheInfo();
         }
 
@@ -1581,7 +1615,8 @@ namespace Rally.Gameplay
             try
             {
                 var st = await cache.Stats();
-                Hud.SetCacheInfo($"Local cache: {st.Entries} items, {st.Bytes / 1048576.0:0.0} MB of {st.Budget / 1073741824.0:0} GB");
+                Hud.SetCacheInfo($"Local cache: {st.Entries} items, {st.Bytes / 1048576.0:0.0} MB of {st.Budget / 1073741824.0:0} GB"
+                    + (st.PinnedBytes > 0 ? $" ({st.PinnedBytes / 1048576.0:0.0} MB kept for MY ROUTES)" : ""));
             }
             catch (Exception e) { Hud.SetCacheInfo("Local cache: " + e.Message); }
         }
@@ -1712,6 +1747,7 @@ namespace Rally.Gameplay
         /// </summary>
         public async Task LoadFromQuery(string query)
         {
+            RallyLog.Info($"stage: loading {query}");
             flow.Reload();
             Teardown();
             link = ShareLinks.Parse(query) ?? new ShareLinks.Link(ShareLinks.Kind.Free, DefaultStart, default, "driving", 0);
@@ -1730,6 +1766,7 @@ namespace Rally.Gameplay
             status = "";
             flow.WorldReady();
             _ = RefreshCacheInfo();
+            ResumeDownloads();
             if (session != null) car.Frozen = flow.Phase != Phase.Racing;   // a reload mid-room: the phase did not change, so OnPhase did not run
         }
 

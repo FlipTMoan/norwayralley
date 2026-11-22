@@ -54,7 +54,7 @@ namespace Rally.Geo
         {
             var meta = Meta(key);
             if (!File.Exists(meta)) return Task.FromResult<CacheEntry>(null);
-            var e = ReadMeta(meta);
+            var e = ReadMeta(File.ReadAllLines(meta));
             e.Value = File.ReadAllBytes(Bin(key));
             return Task.FromResult(e);
         }
@@ -62,11 +62,42 @@ namespace Rally.Geo
         public Task Put(CacheEntry entry)
         {
             File.WriteAllBytes(Bin(entry.Key), entry.Value);
-            File.WriteAllLines(Meta(entry.Key), new[]
+            string meta = Meta(entry.Key), pins = "";
+            if (File.Exists(meta)) { try { pins = ReadPins(File.ReadAllLines(meta)); } catch (Exception) { /* a broken meta file has no pins */ } }
+            WriteMeta(meta, entry, pins);
+            return Task.CompletedTask;
+        }
+
+        static void WriteMeta(string path, CacheEntry e, string pins) => File.WriteAllLines(path, new[]
+        {
+            e.Key, e.Kind ?? "data", e.Size.ToString(CultureInfo.InvariantCulture),
+            e.At.ToString("R", CultureInfo.InvariantCulture), e.IsText ? "text" : "bytes", pins ?? "",
+        });
+
+        /// <summary>Line 6 of a meta file: the saved routes that pin the entry (absent in files written before 2026-11-22).</summary>
+        static string ReadPins(string[] lines) => lines.Length > 5 ? lines[5] : "";
+
+        public Task<bool> AddPin(string key, string id)
+        {
+            var meta = Meta(key);
+            if (!File.Exists(meta)) return Task.FromResult(false);
+            var lines = File.ReadAllLines(meta);
+            WriteMeta(meta, ReadMeta(lines), CachePins.Add(ReadPins(lines), id));
+            return Task.FromResult(true);
+        }
+
+        public Task RemovePin(string id)
+        {
+            foreach (var f in Directory.GetFiles(root, "*.meta"))
             {
-                entry.Key, entry.Kind ?? "data", entry.Size.ToString(CultureInfo.InvariantCulture),
-                entry.At.ToString("R", CultureInfo.InvariantCulture), entry.IsText ? "text" : "bytes",
-            });
+                try
+                {
+                    var lines = File.ReadAllLines(f);
+                    var pins = ReadPins(lines);
+                    if (CachePins.Has(pins, id)) WriteMeta(f, ReadMeta(lines), CachePins.Remove(pins, id));
+                }
+                catch (Exception) { /* a half-written meta file is skipped, as in ListByAge */ }
+            }
             return Task.CompletedTask;
         }
 
@@ -88,16 +119,15 @@ namespace Rally.Geo
             var list = new List<CacheEntryInfo>();
             foreach (var f in Directory.GetFiles(root, "*.meta"))
             {
-                try { var e = ReadMeta(f); list.Add(new CacheEntryInfo(e.Key, e.Kind, e.Size, e.At)); }
+                try { var lines = File.ReadAllLines(f); var e = ReadMeta(lines); list.Add(new CacheEntryInfo(e.Key, e.Kind, e.Size, e.At, ReadPins(lines))); }
                 catch (Exception) { /* a half-written meta file is simply not listed */ }
             }
             list.Sort((a, b) => a.At.CompareTo(b.At));
             return Task.FromResult(list);
         }
 
-        static CacheEntry ReadMeta(string path)
+        static CacheEntry ReadMeta(string[] lines)
         {
-            var lines = File.ReadAllLines(path);
             return new CacheEntry
             {
                 Key = lines[0], Kind = lines[1],

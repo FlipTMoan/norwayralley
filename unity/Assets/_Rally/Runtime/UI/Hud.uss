@@ -32,6 +32,16 @@
 .startInfo { font-size: 12px; color: rgb(255, 255, 255); margin-top: 8px; min-height: 16px; white-space: normal; -unity-text-align: middle-center; max-width: 760px; }
 .bigButton { font-size: 22px; padding: 12px 36px; margin: 0; background-color: rgb(255, 196, 64); color: rgb(20, 20, 20); border-width: 0; border-radius: 6px; }
 .friends { margin-top: 14px; padding: 8px 14px; background-color: rgba(0, 0, 0, 0.5); border-radius: 8px; align-items: center; }
+/* MY ROUTES (HudController.SetRoutes): one row per saved route, DRIVE / RENAME / DELETE, rename and the delete question in the row. */
+.myRoutes { align-items: stretch; width: 92%; max-width: 760px; display: none; }
+.routesNote { font-size: 9px; color: rgb(230, 170, 80); margin: 0 0 4px 10px; }
+.routeRow { flex-direction: row; align-items: center; flex-wrap: wrap; padding: 3px 0; border-bottom-width: 1px; border-color: rgba(255, 196, 64, 0.15); }
+.routeText { flex-grow: 1; flex-shrink: 1; flex-basis: 260px; min-width: 0; }
+.routeName { font-size: 12px; color: rgb(255, 255, 255); margin: 0; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routeInfo { font-size: 9px; color: rgb(200, 200, 200); margin: 0; padding: 0; white-space: normal; }
+.routeAsk { font-size: 11px; color: rgb(255, 140, 110); margin-right: 4px; }
+.routeField { font-size: 12px; margin: 0; }
+.routeDanger { border-color: rgb(255, 110, 80); color: rgb(255, 140, 110); }
 .friendsTitle { font-size: 11px; color: rgb(255, 196, 64); margin-bottom: 4px; }
 .friendsRow { flex-wrap: wrap; justify-content: center; }
 .friendsOr { font-size: 10px; color: rgb(200, 200, 200); margin: 0 4px; }

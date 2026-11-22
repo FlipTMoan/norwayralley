@@ -36,6 +36,21 @@
     .place li span { color: #a9b3ad; }
     .place li[aria-selected="true"], .place li:hover { background: #26302b; color: var(--pin); }
     @media (pointer: coarse) { .place input { font-size: 16px; } .place li { padding: 10px; } }
+    #map-routes { margin: 0 16px 8px; font-size: 12px; }
+    #map-routes[hidden] { display: none; }
+    #map-routes .head { display: flex; gap: 10px; align-items: baseline; letter-spacing: .2em; color: #f0ce58; font-size: 11px; margin-bottom: 4px; }
+    #map-routes .note { letter-spacing: 0; color: #d3a24a; }
+    #map-routes ul { list-style: none; margin: 0; padding: 0; max-height: min(26vh, 200px); overflow-y: auto; border: 1px solid #3a463f; border-radius: 4px; }
+    #map-routes li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 5px 8px; border-bottom: 1px solid #26302b; }
+    #map-routes li:last-child { border-bottom: 0; }
+    #map-routes .text { flex: 1 1 260px; min-width: 0; }
+    #map-routes .name { color: #e9e6dc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #map-routes .info { color: #a9b3ad; font-size: 11px; }
+    #map-routes input { box-sizing: border-box; width: 100%; background: #26302b; color: #e9e6dc; border: 1px solid #f0ce58; border-radius: 4px; padding: 3px 6px; font: inherit; }
+    #map-routes button { background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 4px 9px; cursor: pointer; font-size: 11px; }
+    #map-routes button.primary { background: #f0ce58; color: #111614; font-weight: bold; }
+    #map-routes button.danger { border-color: #d34a31; color: #f08a74; }
+    #map-routes .ask { color: #f08a74; }
     #map { flex: 1; min-height: 0; margin: 0 16px; border: 1px solid #3a463f; }
     #map-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; font-size: 13px; }
     #map-foot select, #map-foot button { background: #26302b; color: #e9e6dc; border: 1px solid #3a463f; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
@@ -75,6 +90,10 @@
         <div class="place-field"><input id="place-1" type="search" placeholder="Search a town or place…" autocomplete="off" spellcheck="false" enterkeyhint="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="place-1-list"><ul id="place-1-list" role="listbox" hidden></ul></div>
       </div>
     </div>
+    <div id="map-routes" hidden>
+      <div class="head"><span>MY ROUTES</span><span id="map-routes-note" class="note"></span></div>
+      <ul id="map-routes-list"></ul>
+    </div>
     <div id="map"></div>
     <div id="map-foot">
       <label>ROUTE BY
@@ -86,6 +105,7 @@
         </select>
       </label>
       <button id="map-free" disabled title="Stream the world around the start point and drive anywhere on the real roads">FREE DRIVE HERE</button>
+      <button id="map-save" disabled title="Route it and keep it in MY ROUTES (routes made from START / FINISH names are kept on their own); its 3D world is downloaded for driving offline">SAVE ROUTE</button>
       <button id="map-generate" class="primary" disabled>GENERATE ROUTE</button>
       <div id="map-status">Search a place name above or click the map to set the START point, then the FINISH — each pin snaps to the nearest road within 1 km — or FREE DRIVE from the start.</div>
     </div>
@@ -155,7 +175,9 @@
     // ---- Leaflet route picker (map.js), driven from C# through dom.jslib ------------------
     // Events to Unity: SendMessage('Map', 'OnMapEvent', JSON) with
     //   { ev: 'pick', which: 0|1, lat, lon } | { ev: 'generate', start, finish, profile }
-    //   | { ev: 'free', start, profile } | { ev: 'close' }
+    //   | { ev: 'free', start, profile } | { ev: 'close' } | { ev: 'save', start, finish, profile, names }
+    //   | { ev: 'route', action: 'drive' | 'rename' | 'delete', id, name? }   (MY ROUTES rows)
+    // 'generate' and 'save' carry names: [start, finish] — the place names picked in the boxes ('' for a clicked pin).
     window.rallyMap = (function () {
       var NORWAY = [[57.5, 3.5], [71.4, 31.5]];
       var map = null, pins = [null, null], routeLine = null, worldRect = null, next = 0;
@@ -164,6 +186,7 @@
       var profileEl = document.getElementById('map-profile');
       var freeBtn = document.getElementById('map-free');
       var genBtn = document.getElementById('map-generate');
+      var saveBtn = document.getElementById('map-save');
 
       function send(payload) { if (unityInstance) unityInstance.SendMessage('Map', 'OnMapEvent', JSON.stringify(payload)); }
       function latLon(ll) { return ll ? { lat: ll.lat, lon: ll.lng } : null; }
@@ -172,7 +195,7 @@
       }
       function buttons() {
         freeBtn.disabled = !pins[0];
-        genBtn.disabled = !(pins[0] && pins[1]);
+        genBtn.disabled = saveBtn.disabled = !(pins[0] && pins[1]);
       }
       function setPin(which, lat, lon) {
         if (!map) return;
@@ -194,8 +217,12 @@
           send({ ev: 'pick', which: which, lat: e.latlng.lat, lon: e.latlng.lng });
         });
         document.getElementById('map-close').onclick = function () { api.close(); send({ ev: 'close' }); };
+        function names() { return [boxes[0].input.value.trim(), boxes[1].input.value.trim()]; }
         genBtn.onclick = function () {
-          send({ ev: 'generate', start: latLon(pins[0].getLatLng()), finish: latLon(pins[1].getLatLng()), profile: profileEl.value });
+          send({ ev: 'generate', start: latLon(pins[0].getLatLng()), finish: latLon(pins[1].getLatLng()), profile: profileEl.value, names: names() });
+        };
+        saveBtn.onclick = function () {
+          send({ ev: 'save', start: latLon(pins[0].getLatLng()), finish: latLon(pins[1].getLatLng()), profile: profileEl.value, names: names() });
         };
         freeBtn.onclick = function () { send({ ev: 'free', start: latLon(pins[0].getLatLng()), profile: profileEl.value }); };
       }
@@ -327,7 +354,88 @@
         }, true);
       });
 
+      // ---- MY ROUTES (saved routes, kept by C# in localStorage rally.routes) ------------------------------------
+      // C# sends the rows (setRoutes); DRIVE / RENAME / DELETE come back as 'route' events. Rename and the delete
+      // question happen in the row itself (no browser dialogs); a progress update only rewrites the info lines.
+      var routesEl = document.getElementById('map-routes'), routesList = document.getElementById('map-routes-list');
+      var routesNote = document.getElementById('map-routes-note');
+      var routes = [], editing = null, asking = null, renameInput = null;
+      function routeButton(text, cls, fn) {
+        var b = document.createElement('button');
+        b.textContent = text; if (cls) b.className = cls;
+        b.addEventListener('click', fn);
+        return b;
+      }
+      function drawRoutes() {
+        routesList.textContent = '';
+        renameInput = null;
+        var wasHidden = routesEl.hidden;
+        routesEl.hidden = routes.length === 0;
+        if (map && wasHidden !== routesEl.hidden) map.invalidateSize();
+        routes.forEach(function (r) {
+          var li = document.createElement('li');
+          li.dataset.id = r.id;
+          var text = document.createElement('div'); text.className = 'text';
+          if (editing === r.id) {
+            renameInput = document.createElement('input');
+            renameInput.maxLength = 60; renameInput.value = r.name; renameInput.setAttribute('aria-label', 'Route name');
+            text.appendChild(renameInput);
+          } else {
+            var name = document.createElement('div'); name.className = 'name'; name.textContent = r.name; name.title = r.name;
+            text.appendChild(name);
+          }
+          var info = document.createElement('div'); info.className = 'info'; info.textContent = r.info;
+          text.appendChild(info);
+          li.appendChild(text);
+          if (editing === r.id) {
+            li.appendChild(routeButton('OK', 'primary', commitRename));
+            li.appendChild(routeButton('CANCEL', '', cancelRename));
+          } else if (asking === r.id) {
+            var ask = document.createElement('span'); ask.className = 'ask'; ask.textContent = 'Delete this route?';
+            li.appendChild(ask);
+            li.appendChild(routeButton('YES, DELETE', 'danger', function () { asking = null; send({ ev: 'route', action: 'delete', id: r.id }); }));
+            li.appendChild(routeButton('NO', '', function () { asking = null; drawRoutes(); }));
+          } else {
+            li.appendChild(routeButton('DRIVE', 'primary', function () { send({ ev: 'route', action: 'drive', id: r.id }); }));
+            li.appendChild(routeButton('RENAME', '', function () { editing = r.id; asking = null; drawRoutes(); if (renameInput) { renameInput.focus(); renameInput.select(); } }));
+            li.appendChild(routeButton('DELETE', 'danger', function () { asking = r.id; editing = null; drawRoutes(); }));
+          }
+          routesList.appendChild(li);
+        });
+      }
+      function commitRename() {
+        var id = editing, name = renameInput ? renameInput.value.trim() : '';
+        editing = null;
+        if (id && name) send({ ev: 'route', action: 'rename', id: id, name: name.slice(0, 60) });
+        drawRoutes();
+      }
+      function cancelRename() { editing = null; drawRoutes(); }
+      function renameKey(e) {
+        if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+      }
+      // The rename box is typed into like the place boxes: its keys never reach the game.
+      ['keydown', 'keypress', 'keyup'].forEach(function (type) {
+        window.addEventListener(type, function (e) {
+          if (!renameInput || e.target !== renameInput) return;
+          e.stopImmediatePropagation();
+          if (type === 'keydown') renameKey(e);
+        }, true);
+      });
+
       var api = {
+        setRoutes: function (list, note) {
+          list = list || [];
+          routesNote.textContent = note || '';
+          var same = list.length === routes.length && list.every(function (r, i) { return r.id === routes[i].id && r.name === routes[i].name; });
+          routes = list;
+          if (editing && !list.some(function (r) { return r.id === editing; })) editing = null;
+          if (asking && !list.some(function (r) { return r.id === asking; })) asking = null;
+          if (same && routesList.children.length === list.length) {
+            // progress only: keep the rows (and a rename being typed), rewrite the info lines
+            list.forEach(function (r, i) { var info = routesList.children[i].querySelector('.info'); if (info) info.textContent = r.info; });
+          } else drawRoutes();
+        },
         open: function (options) {
           overlay.classList.add('open');
           ensure();
