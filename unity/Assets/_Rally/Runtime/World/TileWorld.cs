@@ -103,6 +103,8 @@ namespace Rally.World
             public Features Features;
             public CoverRaster Cover;
             public bool FeaturesIn;   // splat / water / houses built: the scatter may read the cover slice
+            /// <summary>The water and house objects built from the features (built again when the forest or the map lands later).</summary>
+            public GameObject WaterObject, BuildingsObject;
         }
 
         /// <summary>streamStats() of the JS for the HUD status line.</summary>
@@ -499,10 +501,16 @@ namespace Rally.World
             yield return null;
             t0 = FrameProbe.Start();
             view.Water = Water.Build(features, key, p => tile.SampleBase(p));
+            if (view.WaterObject != null)   // built before (the forest and the map features land on their own)
+            {
+                foreach (var mf in view.WaterObject.GetComponentsInChildren<MeshFilter>()) RallyObjects.Destroy(mf.sharedMesh);
+                RallyObjects.Destroy(view.WaterObject);
+                view.WaterObject = null;
+            }
             if (view.Water.Count > 0 && Style != null)
             {
                 Water.BuildMeshes(view.Water, p => tile.SampleBase(p), out var lakes, out var rivers);
-                Water.CreateTileObject(view.Water, lakes, rivers, Style.LakeMaterial, Style.RiverMaterial, view.Root.transform, worldOrigin);
+                view.WaterObject = Water.CreateTileObject(view.Water, lakes, rivers, Style.LakeMaterial, Style.RiverMaterial, view.Root.transform, worldOrigin);
             }
             FrameProbe.Stop(".ov.water", t0);
             yield return null;
@@ -513,7 +521,8 @@ namespace Rally.World
             FrameProbe.Stop(".ov.buildings", t0);
             yield return null;
             t0 = FrameProbe.Start();
-            if (Style != null) Buildings.CreateTileObject(view.Buildings, Style.BuildingMaterial, view.Root.transform, worldOrigin);   // the MeshCollider bakes here
+            RallyObjects.Destroy(view.BuildingsObject);
+            view.BuildingsObject = Style != null ? Buildings.CreateTileObject(view.Buildings, Style.BuildingMaterial, view.Root.transform, worldOrigin) : null;   // the MeshCollider bakes here
             FrameProbe.Stop(".ov.collider", t0);
             yield return null;
             view.FeaturesIn = true;

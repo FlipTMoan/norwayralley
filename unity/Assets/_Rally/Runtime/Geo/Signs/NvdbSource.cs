@@ -11,7 +11,7 @@ namespace Rally.Geo
     /// kartutsnitt — 96 Skiltplate (every sign plate as a point with its sign number) and 105
     /// Fartsgrense (speed limits as polylines). Pages follow <c>metadata.neste.href</c> up to
     /// <see cref="MaxPages"/>. The <c>X-Client</c> header names the app, as NVDB asks. Unreachable
-    /// NVDB yields an empty set, never an error: signs are decoration. Licence: <see cref="Attribution"/>.
+    /// NVDB yields null, never an error: the caller asks again after NVDB's pause (Rally.Gameplay.OverlayFetch). Licence: <see cref="Attribution"/>.
     /// Street lights (<see cref="FetchLights"/>) come from the same API: 87 Belysningspunkt, 181 Lysmast, 86 Belysningsstrekning.
     /// </summary>
     public sealed class NvdbSource : ISignSource, ILightSource
@@ -67,14 +67,14 @@ namespace Rally.Geo
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 RallyLog.Warn($"overlay: road signs unavailable: {e.Message}");
-                return SignSet.Empty;
+                return null;
             }
         }
 
         /// <summary>
         /// roads.js <c>fetchRoadSurfaces</c>: the registered road surfaces (241 Vegdekke) in the bounds; objects
-        /// without a Massetype are skipped (the register is patchy on municipal roads). Unreachable NVDB yields an
-        /// empty list, so the roads keep their OSM surface.
+        /// without a Massetype are skipped (the register is patchy on municipal roads). Unreachable NVDB yields null
+        /// (asked again later); meanwhile the roads keep their OSM surface.
         /// </summary>
         public async Task<List<RoadSurfaceLine>> FetchSurfaces(Bounds25833 bounds, CancellationToken ct)
         {
@@ -88,7 +88,7 @@ namespace Rally.Geo
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 RallyLog.Warn($"overlay: road surfaces unavailable: {e.Message}");
-                lines.Clear();
+                return null;
             }
             return lines;
         }
@@ -96,7 +96,7 @@ namespace Rally.Geo
         /// <summary>
         /// The street lights in the bounds: every 87 Belysningspunkt with its 181 Lysmast joined (by the mast's parent relation,
         /// else by position), and the 86 Belysningsstrekning lines. Through the GeoCache like the signs; unreachable NVDB
-        /// yields no lights, never an error.
+        /// yields null (asked again later), never an error.
         /// </summary>
         public async Task<LightSet> FetchLights(Bounds25833 bounds, CancellationToken ct)
         {
@@ -116,7 +116,7 @@ namespace Rally.Geo
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 RallyLog.Warn($"overlay: street lights unavailable: {e.Message}");
-                return LightSet.Empty;
+                return null;
             }
         }
 

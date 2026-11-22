@@ -22,10 +22,10 @@ namespace Rally.Tests.Geo
                 + "way[\"landuse\"~\"^(farmland|meadow|orchard|farmyard|grass|forest|residential|industrial|commercial|retail|quarry|cemetery)$\"](59.000000,6.000000,59.020000,6.040000);"
                 + "way[\"natural\"~\"^(wood|water|wetland|scrub|grassland|heath|bare_rock|scree|sand)$\"](59.000000,6.000000,59.020000,6.040000);"
                 + "way[\"waterway\"~\"^(river|stream|canal|drain|ditch)$\"](59.000000,6.000000,59.020000,6.040000);"
-                + "way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track)$\"](59.000000,6.000000,59.020000,6.040000);"
+                + "way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$\"](59.000000,6.000000,59.020000,6.040000);"
                 + "way[\"power\"~\"^(line|minor_line)$\"](59.000000,6.000000,59.020000,6.040000);"
                 + ");out geom;", q);
-            Assert.AreEqual("overpass:59.00000,6.00000,59.02000,6.04000", OverpassQuery.CacheKey(Bbox));
+            Assert.AreEqual("overpass2:59.00000,6.00000,59.02000,6.04000", OverpassQuery.CacheKey(Bbox));
             StringAssert.StartsWith("data=%5Bout%3Ajson%5D%5Btimeout%3A45%5D%3B(way%5B%22building%22%5D(59.000000%2C6.000000", OverpassQuery.Body(q));
         }
 
@@ -97,7 +97,7 @@ namespace Rally.Tests.Geo
             var mirrors = new OverpassMirrors(ask, () => now);
             var source = new OverpassSource(new GeoCache(new MemoryBackend()), mirrors);
             var bounds = Bbox.ToUtmEnvelope();
-            Assert.AreEqual(0, source.FetchRoads(bounds, default).Sync().Ways.Count);
+            Assert.IsNull(source.FetchRoads(bounds, default).Sync(), "no answer is null (asked again), not an empty answer");
             Assert.AreEqual(4, calls);
             Assert.IsTrue(mirrors.Breaker.IsOpen);
             Assert.AreEqual(4, mirrors.Down().Count);

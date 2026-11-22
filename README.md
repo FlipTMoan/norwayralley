@@ -400,7 +400,10 @@ gracefully. NIBIO and NVDB answer in a second or two; the public Overpass
 mirrors can be slow or down, so OSM features arrive separately, are retried
 every 45 s, and a circuit breaker skips Overpass for a minute after every
 mirror failed. Degradation: if a service is unreachable the chunk simply has no trees from
-SR16 (a sparse default forest is used), no houses, or no signs.
+SR16 (a sparse default forest is used), no houses, or no signs. The Unity game pauses each service on its own (Overpass, NVDB, SR16, the
+DTM; the status line shows e.g. "NVDB paused 42 s") and asks only that one again; the others keep
+loading. It also asks Overpass for the ramps and slip roads (`*_link`), so roads join at motorway
+and trunk junctions.
 
 ## Credits
 

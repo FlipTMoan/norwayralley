@@ -42,6 +42,8 @@ namespace Rally.Editor
         static double nextTrace, exhaustT0;
         static bool exhaust, mud, treeShots;
         static string lookSpots, poseSpec, carAtSpec;
+        static string[] blockedMirrors;
+        static double blockUntil;
         static readonly Queue<string> mudRuns = new Queue<string>();
         static string mudRun;
         static double mudT0;
@@ -75,6 +77,16 @@ namespace Rally.Editor
             seams = Array.IndexOf(args, "-previewSeams") >= 0;
             glide = Array.IndexOf(args, "-previewGlide") >= 0;
             minorSurvey = Array.IndexOf(args, "-previewMinor") >= 0;
+            continuity = Array.IndexOf(args, "-previewContinuity") >= 0;
+            contSpotsFile = Arg(args, "-previewContSpots");
+            // -previewBlockOverpass SECONDS: every Overpass mirror is a black hole (connections hang) for the first SECONDS of play.
+            if (float.TryParse(Arg(args, "-previewBlockOverpass"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blockS))
+            {
+                blockedMirrors = (string[])Rally.Geo.OverpassMirrors.Endpoints.Clone();
+                for (int i = 0; i < blockedMirrors.Length; i++) Rally.Geo.OverpassMirrors.Endpoints[i] = "https://10.255.255.1/api/interpreter";
+                blockUntil = EditorApplication.timeSinceStartup + blockS;
+                Debug.Log($"PreviewShots: Overpass blocked for {blockS} s");
+            }
             if (float.TryParse(Arg(args, "-previewBudgetMs"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var budgetMs)) WorkBudget.BaseMs = WorkBudget.FrameMs = budgetMs;   // A/B of the streaming budget (inf: no slicing)
             seamSpotsFile = Arg(args, "-previewSeamSpots");
             driveSecs = float.TryParse(Arg(args, "-previewDrive"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ds) ? ds : 0f;
@@ -104,6 +116,12 @@ namespace Rally.Editor
         static void Tick()
         {
             double now = EditorApplication.timeSinceStartup;
+            if (blockedMirrors != null && now >= blockUntil)
+            {
+                for (int i = 0; i < blockedMirrors.Length; i++) Rally.Geo.OverpassMirrors.Endpoints[i] = blockedMirrors[i];
+                blockedMirrors = null;
+                Debug.Log("PreviewShots: Overpass unblocked");
+            }
             try
             {
                 if (benchName != null && !benchArmed && now >= benchArmAt) BenchArm();
@@ -127,6 +145,7 @@ namespace Rally.Editor
                         if (minorSurvey) { MinorRoadReport(); Finish(0); return; }   // -previewMinor: the speed survey only
                         if (driveSecs > 0) { cam = game.MainCamera != null ? game.MainCamera : Camera.main; BenchPlan(); benchPoses.Clear(); step = 10; return; }   // -previewDrive: no shots, just the drive
                         if (mud) { MudPlan(); step = 30; return; }   // -previewMud: launches on each surface, no other shots
+                        if (continuity) { step = 50; return; }   // -previewContinuity: the road survey once the overlays are in
                         Plan();
                         step = stageSpec != null ? 40 : 2;
                         return;
@@ -156,6 +175,11 @@ namespace Rally.Editor
                         if (!bench) { Finish(0); return; }
                         BenchPlan();
                         step = 10;
+                        return;
+                    case 50:   // -previewContinuity: wait for the overlay queue, then the survey and its shots
+                        if (!ContinuityReady(now)) return;
+                        Plan();
+                        step = 2;
                         return;
                     case 40:   // -previewStage: the engine runs (live race HUD state, the arrow), then the shots
                         if (game.Phase != Phase.Racing) return;
@@ -332,6 +356,7 @@ namespace Rally.Editor
             if (stageSpec != null) { StageShots(rig); game.StartEngine(); return; }
             if (lookSpots != null || poseSpec != null || carAtSpec != null) { if (lookSpots != null) LookShots(lookSpots); PoseShots(rig); return; }
             if (seams) { SeamReport(); return; }
+            if (continuity) { ContinuityReport(); return; }
             shots.Enqueue(("02_hillside", () => Look(c.xz - hillDir * 30, 4, c.xz + hillDir * 600, 0.45f)));
             shots.Enqueue(("03_overview", () => Look(c.xz - hillDir * 250, 120, c.xz + hillDir * 300, 0f)));
             shots.Enqueue(("04_forest_edge", () => Look(c.xz - fwd * 10, 2.5f, c.xz + fwd * 120, 0.15f)));

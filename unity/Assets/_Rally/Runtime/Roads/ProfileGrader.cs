@@ -19,7 +19,9 @@ namespace Rally.Roads
         public const int GradePasses = 3;
         public const double SampleStep = 5;     // roads.js resample(world, 5)
 
-        static readonly HashSet<string> RoadKinds = new HashSet<string> { "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "living_street", "service", "track" };
+        /// <summary>The drivable OSM classes (Rally.Geo.OverpassQuery.RoadClasses). A <c>*_link</c> (ramp, slip road) is one lane unless its `lanes` tag says more.</summary>
+        static readonly HashSet<string> RoadKinds = new HashSet<string> { "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "living_street", "service", "track",
+            "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link" };
         static readonly HashSet<string> TwoLaneKinds = new HashSet<string> { "motorway", "trunk", "primary", "secondary", "tertiary" };
         static readonly HashSet<string> Unpaved = new HashSet<string> { "gravel", "unpaved", "dirt", "ground", "compacted", "fine_gravel", "earth", "grass", "sand", "mud", "pebblestone" };
 
@@ -174,7 +176,10 @@ namespace Rally.Roads
             return p;
         }
 
-        /// <summary>Every `step` metres of arc length (the last point kept): even spacing however dense the input is.</summary>
+        /// <summary>
+        /// Every `step` metres of arc length (both ends kept): even spacing however dense the input is. A way shorter than a
+        /// quarter step keeps its two ends (it used to collapse to its last point and was never drawn).
+        /// </summary>
         public static List<double2> ResampleEven(IReadOnlyList<double2> points, double step)
         {
             var o = new List<double2> { points[0] };
@@ -186,7 +191,7 @@ namespace Rally.Roads
                 while (at <= len) { o.Add(a + (b - a) * (at / len)); at += step; }
                 carry = len - (at - step);
             }
-            if (carry > step * 0.25) o.Add(points[points.Count - 1]);
+            if (carry > step * 0.25 || o.Count == 1) o.Add(points[points.Count - 1]);
             else o[o.Count - 1] = points[points.Count - 1];
             return o;
         }

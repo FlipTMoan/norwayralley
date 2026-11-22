@@ -228,6 +228,41 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
 - `TileWorld.GetStats()` = loaded coarse / fine counts, pending (queued + loading) and the CPU height bytes, shown in
   the HUD status line like `streamStats()` in the JS.
 
+## Continuous roads and one pause per data type (2026-11-22)
+
+- **Survey:** `PreviewShots -previewContinuity` (Editor/PreviewContinuity.cs) waits until the overlay queue is idle, then walks
+  every fetched drivable way of the tiles whose roads are in, every 2 m along its graded line, and raycasts the drawn
+  ribbon: gaps, steps in the drawn surface, joints (ways graded apart at a shared node), tube ends and deck ends with
+  neither road nor ground at the floor / deck height 3 m out, ways never drawn; tile seams flagged. Writes
+  `continuity.csv`, `continuity.txt`, `continuity_spots.txt` and shots of the worst places (`-previewContSpots FILE`
+  shoots a before run's places).
+- **What made roads stop:** the Overpass parser stopped at the 440th house and dropped everything listed after it (by
+  id), so new roads went missing in town tiles and stopped at the tile border (`OverpassSource.Parse` now only skips
+  further houses); the ramps and slip roads (`*_link`) were never asked for (`OverpassQuery.RoadClasses`; a link has its
+  road's class, one lane unless tagged, motorway / trunk links barred from stages like their roads; the cache key is
+  `overpass2:` so answers cached without links are asked again); ways under ~6 m (connectors at tunnel mouths and
+  junctions) were never drawn (`ProfileGrader.ResampleEven` keeps both ends, runs of two samples are drawn); and a way
+  going on from another's end was not drawn over its first 5 m as if the other's ribbon covered it
+  (`RoadGraph.UnderAnother`: a sample — and the middle of a segment — is left to another road only under one of that
+  road's segments, within 0.3 m of its height, and only to a road that outranks it: class, then length, then id, so two
+  ways graded in different orders cannot each leave the junction to the other). Also: a way that comes back to one of
+  its own nodes takes its first pass's height there (`EaseOntoNodes`; loops met up to 18 m apart); a way crossing a tile
+  without a node in it is graded and drawn there (`Crosses`; a 1.2 km tunnel segment left 204 m of tube undrawn); and
+  only one tile overlay steps at a time (a second could step alongside and have its roads set again halfway).
+- **Overlay data per type** (`Gameplay/OverlayFetch.cs`): a coarse tile's OSM roads + features, SR16 forest and NVDB
+  surfaces, signs and lights are fetched in separate lanes into a `TileOverlay`; whatever lands is applied at once
+  (`GameController.QueueOverlay` / `OverlaySteps`, steps as before). Roads wait once for NVDB's first surface answer (and
+  are graded again if surfaces land later); signs and lights are placed when the roads are in; land cover, water and
+  houses are built with whichever of forest and features is in, and again when the other lands. A type without an answer
+  (sources return null) pauses only its own service — `ServiceBreakers` Overpass / NVDB / SR16 / DTM, 60 s — and asks
+  again after the pause or 45 s; the others are neither delayed nor asked again. The HUD status line shows a paused
+  service ("NVDB paused 42 s"); the LOG bar's progress line lists what the world still waits for, per type with tile
+  counts and pauses (`waiting: terrain 24 · OSM roads 13 (paused 40 s) · NVDB signs 3 · forest 2`, first two + "+n" on a
+  narrow screen; `OverlayFetch.Outstanding`), the log writes `stream: waiting for X: n tiles` / `stream: X all in` when a
+  type starts / stops being waited for, and the start loader says "Waiting for OSM roads (Overpass busy, retry in 40 s)…".
+  Before, a tile awaited all six fetches in turn, and an Overpass answer that never came
+  left the tile without roads for good.
+
 ## Deviations from the JS worth knowing
 
 - No separate corridor mesh: the clipmap draws the carved terrace directly, so `CARVE_MARGIN` (0.3 m) is not applied.

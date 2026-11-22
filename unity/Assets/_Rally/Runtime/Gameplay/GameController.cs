@@ -96,6 +96,11 @@ namespace Rally.Gameplay
         Material tunnelMaterial;
         readonly Queue<TileResult> results = new Queue<TileResult>();
         TileResult activeOverlay;
+        /// <summary>Each coarse tile's overlay data as it lands, one lane per type (<see cref="OverlayFetch"/>).</summary>
+        readonly Dictionary<TileKey, TileOverlay> overlays = new Dictionary<TileKey, TileOverlay>();
+        OverlayFetch fetch;
+        /// <summary>One pause per data service (Overpass, NVDB, SR16, DTM): a failing one holds back only its own data.</summary>
+        ServiceBreakers breakers;
         FlatGround naturalGround;            // the uncarved DTM as an IGround, for StageRoute.AssignRoadY
 
         // Track
@@ -149,6 +154,8 @@ namespace Rally.Gameplay
             public float Since;
             /// <summary>An overlay between its steps (not one waiting to start): it continues before anything else.</summary>
             public bool Stepping;
+            /// <summary>A coarse tile's overlay (<see cref="QueueOverlay"/>): only one steps at a time.</summary>
+            public bool Overlay;
         }
 
         #endregion
@@ -228,6 +235,7 @@ namespace Rally.Gameplay
                 surfaceSource = null;
                 signSource = new FakeSources.Signs { Road = osm };
                 lightSource = new FakeSources.Lights { Road = osm };
+                CreateFetch(null);
                 return;
             }
             var overpass = new OverpassSource(cache);
@@ -238,6 +246,22 @@ namespace Rally.Gameplay
             surfaceSource = new NvdbSource(cache);
             signSource = surfaceSource;
             lightSource = surfaceSource;
+            CreateFetch(overpass.Mirrors.Breaker);
+        }
+
+        /// <summary>The per-type lanes over the sources (<see cref="OverlayFetch"/>), Overpass keeping its own mirror breaker.</summary>
+        void CreateFetch(CircuitBreaker overpassBreaker)
+        {
+            breakers = new ServiceBreakers(overpassBreaker);
+            fetch = new OverlayFetch
+            {
+                Breakers = breakers,
+                Roads = roadSource.FetchRoads, Features = featureSource.FetchFeatures, Cover = landcoverSource.FetchCover,
+                Surfaces = surfaceSource != null ? new Func<Bounds25833, CancellationToken, Task<List<RoadSurfaceLine>>>(surfaceSource.FetchSurfaces) : null,
+                Signs = signSource != null ? new Func<Bounds25833, CancellationToken, Task<SignSet>>(signSource.FetchSigns) : null,
+                Lights = lightSource != null ? new Func<Bounds25833, CancellationToken, Task<LightSet>>(lightSource.FetchLights) : null,
+                SurfaceBounds = RoadGraph.SurfaceQueryBounds, LightBounds = LightQueryBounds,
+            };
         }
 
         /// <summary>TileWorld + RoadGraph + clipmap + forest + colliders, styled by the WorldStyle asset.</summary>
@@ -292,7 +316,15 @@ namespace Rally.Gameplay
             RallyLog.Info($"tile: {key} requested ({key.CellM:0.#} m cells)");
             try
             {
-                var grid = await dem.Fetch(key.Bounds, key.CellM, ct);
+                // The DTM's own pause: a failing elevation service is not asked for every tile the scheduler retries.
+                while (breakers.Dtm.IsOpen) await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1000, breakers.Dtm.RemainingMs)), ct);
+                HeightGrid grid;
+                try { grid = await dem.Fetch(key.Bounds, key.CellM, ct); }
+                catch (Exception e) when (!(e is OperationCanceledException))
+                {
+                    if (!breakers.Dtm.IsOpen) { breakers.Dtm.Trip(); RallyLog.Warn($"tile: DTM paused {CircuitBreaker.OpenMs / 1000:0} s ({e.Message}); other data keeps loading"); }
+                    throw;
+                }
                 if (grid == null || grid.N != TileScheduler.Samples)
                 {
                     grid?.Dispose();
@@ -335,67 +367,74 @@ namespace Rally.Gameplay
             return key.RectDistance(FloatingOrigin.ToUtm(car.State.Pos)) < FineTileHoldDistance;
         }
 
-        /// <summary>Overpass (roads + features) and SR16 for a coarse tile, independently; a missing answer is asked again after 45 s (stream.js osmRetryAt).</summary>
+        /// <summary>
+        /// The overlay data of a coarse tile, each type on its own (<see cref="OverlayFetch"/>): OSM roads + features, SR16 forest,
+        /// NVDB surfaces, signs and lights. Whatever lands is applied at once (<see cref="QueueOverlay"/>); a type without an answer
+        /// is asked again after its own service's pause, without holding back or asking again for the others. (It used to await
+        /// all six in turn and, when the roads were missing, ask every type again after 45 s.)
+        /// </summary>
         async Task FetchFeatures(TileKey key, CancellationToken ct)
         {
-            var roadTask = roadSource.FetchRoads(key.Bounds, ct);
-            var featureTask = featureSource.FetchFeatures(key.Bounds, ct);
-            var coverTask = landcoverSource.FetchCover(key.Bounds, ct);
-            var surfaceTask = surfaceSource != null ? surfaceSource.FetchSurfaces(RoadGraph.SurfaceQueryBounds(key), ct) : Task.FromResult<List<RoadSurfaceLine>>(null);
-            var signTask = signSource != null ? signSource.FetchSigns(key.Bounds, ct) : Task.FromResult<SignSet>(null);
-            var lightTask = lightSource != null ? lightSource.FetchLights(LightQueryBounds(key), ct) : Task.FromResult<LightSet>(null);
-            RoadGraphData roadData = null; Features features = null; CoverRaster cover = null; List<RoadSurfaceLine> surfaces = null; SignSet signSet = null; LightSet lightSet = null;
-            var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
+            var d = new TileOverlay();
+            overlays[key] = d;
+            bool Live() => world != null && world.Tiles.ContainsKey(key) && overlays.TryGetValue(key, out var cur) && cur == d;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            RallyLog.Info($"overlay: {key} asking OSM roads + features, NIBIO SR16 forest and NVDB surfaces, signs and lights");
+            await fetch.Fetch(key, d, Live, what =>
+            {
+                if ((what & OverlayData.Roads) != 0) RallyLog.Info($"overlay: {key} roads {d.Roads.Ways.Count} ways after {watch.ElapsedMilliseconds} ms");
+                if ((what & OverlayData.Features) != 0)
+                {
+                    if (d.Features != null) RallyLog.Info($"overlay: {key} map features: {d.Features.Buildings.Count} buildings, {d.Features.Areas.Count} land-use areas, {d.Features.Waterways.Count} waterways, {d.Features.PowerLines.Count} power lines after {watch.ElapsedMilliseconds} ms");
+                    else RallyLog.Info($"overlay: {key} map features: none after {watch.ElapsedMilliseconds} ms");
+                }
+                if ((what & OverlayData.Cover) != 0) RallyLog.Info($"overlay: {key} SR16 forest raster {d.Cover.Width}×{d.Cover.Height} cells (16 m) after {watch.ElapsedMilliseconds} ms");
+                if ((what & OverlayData.Signs) != 0) RallyLog.Info($"overlay: {key} NVDB signs: {d.Signs.Plates.Count} plates, {d.Signs.SpeedLimits.Count} speed limits after {watch.ElapsedMilliseconds} ms");
+                if ((what & OverlayData.Lights) != 0) RallyLog.Info($"overlay: {key} NVDB street lights: {d.Lights.Points.Count} points, {d.Lights.Stretches.Count} lit stretches after {watch.ElapsedMilliseconds} ms");
+                if ((what & OverlayData.Surfaces) != 0) RallyLog.Info($"overlay: {key} NVDB road surfaces: {d.Surfaces.Count} lines after {watch.ElapsedMilliseconds} ms");
+                QueueOverlay(key, d);
+            }, ct);
+        }
+
+        /// <summary>NVDB's first surface answer may take its full timeout; the roads wait for it (once) at most this long.</summary>
+        const float SurfaceWait = NvdbSource.TimeoutMs / 1000f + 1f;
+
+        /// <summary>
+        /// Apply what has landed for the tile (<see cref="TileOverlay.Pending"/>) in steps (<see cref="OverlaySteps"/>); data
+        /// that lands meanwhile joins the overlay that is queued or stepping.
+        /// </summary>
+        void QueueOverlay(TileKey key, TileOverlay d)
+        {
+            if (d.Queued || d.Pending == OverlayData.None) return;
+            d.Queued = true;
             float waitSince = -1f;
             System.Collections.IEnumerator steps = null;
-            RallyLog.Info($"overlay: {key} asking OSM roads + features and NIBIO SR16 forest");
-            try { roadData = await roadTask; RallyLog.Info($"overlay: {key} roads {roadData?.Ways.Count ?? 0} ways after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} roads failed: {e.Message}"); }
-            try
-            {
-                features = await featureTask;
-                if (features != null) RallyLog.Info($"overlay: {key} map features: {features.Buildings.Count} buildings, {features.Areas.Count} land-use areas, {features.Waterways.Count} waterways, {features.PowerLines.Count} power lines after {overlayWatch.ElapsedMilliseconds} ms");
-                else RallyLog.Info($"overlay: {key} map features: none after {overlayWatch.ElapsedMilliseconds} ms");
-            }
-            catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} features failed: {e.Message}"); }
-            try { surfaces = await surfaceTask; } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB road surface failed: {e.Message}"); }
-            try
-            {
-                signSet = await signTask;
-                if (signSet != null) RallyLog.Info($"overlay: {key} NVDB signs: {signSet.Plates.Count} plates, {signSet.SpeedLimits.Count} speed limits after {overlayWatch.ElapsedMilliseconds} ms");
-            }
-            catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB signs failed: {e.Message}"); }
-            try
-            {
-                lightSet = await lightTask;
-                if (lightSet != null) RallyLog.Info($"overlay: {key} NVDB street lights: {lightSet.Points.Count} points, {lightSet.Stretches.Count} lit stretches after {overlayWatch.ElapsedMilliseconds} ms");
-            }
-            catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} NVDB street lights failed: {e.Message}"); }
-            try { cover = await coverTask; RallyLog.Info(cover != null ? $"overlay: {key} SR16 forest raster {cover.Width}×{cover.Height} cells (16 m) after {overlayWatch.ElapsedMilliseconds} ms" : $"overlay: {key} SR16 forest: none after {overlayWatch.ElapsedMilliseconds} ms"); } catch (OperationCanceledException) { throw; } catch (Exception e) { RallyLog.Info($"overlay: {key} SR16 failed: {e.Message}"); }
-            var overlay = new TileResult { Key = key };
+            var overlay = new TileResult { Key = key, Overlay = true };
             overlay.Apply = () =>
-                {
-                    if (world == null || !world.Tiles.ContainsKey(key)) return true;
-                    if (!world.Scheduler.IsReady(key)) return false;    // the DTM result is still ahead in the queue
-                    // The roads are graded on the ground they run over, also in the neighbours (the runs reach TilePad into them,
-                    // the ways further): wait for the neighbours' DTMs that are on their way, at most NeighbourWait seconds.
-                    if (waitSince < 0f) waitSince = Time.realtimeSinceStartup;
-                    if (steps == null)
-                    {
-                        if (roadData != null && Time.realtimeSinceStartup - waitSince < NeighbourWait && NeighbourPending(key)) return false;
-                        steps = OverlaySteps(key, roadData, features, cover, surfaces, signSet, lightSet, overlayWatch);
-                        overlay.Stepping = true;
-                    }
-                    // One step per call (roads, ribbon, bridges, signs, splat, water, houses, their collider, carve): the queue
-                    // runs more of them in the same frame while the streaming budget lasts, else next frame.
-                    return !steps.MoveNext();
-                };
-            results.Enqueue(overlay);
-            if (roadData == null && !ct.IsCancellationRequested)
             {
-                RallyLog.Info($"overlay: {key} has no road data, asking again in {CircuitBreaker.RetryMs / 1000} s");
-                await Task.Delay(TimeSpan.FromMilliseconds(CircuitBreaker.RetryMs), ct);
-                if (world != null && world.Tiles.ContainsKey(key)) await FetchFeatures(key, ct);
-            }
+                if (world == null || !world.Tiles.ContainsKey(key) || !overlays.TryGetValue(key, out var cur) || cur != d) { d.Queued = false; return true; }
+                if (!world.Scheduler.IsReady(key)) return false;    // the DTM result is still ahead in the queue
+                if (waitSince < 0f) waitSince = Time.realtimeSinceStartup;
+                if (steps == null)
+                {
+                    // The roads are graded on the ground they run over, also in the neighbours (the runs reach TilePad into them,
+                    // the ways further): wait for the neighbours' DTMs that are on their way, at most NeighbourWait seconds; and
+                    // once for NVDB's first surface answer (a later one grades them again).
+                    if ((d.Pending & OverlayData.Roads) != 0 && d.Roads != null)
+                    {
+                        float waited = Time.realtimeSinceStartup - waitSince;
+                        if (waited < NeighbourWait && NeighbourPending(key) || waited < SurfaceWait && !d.SurfacesTried) return false;
+                    }
+                    steps = OverlaySteps(key, d);
+                    overlay.Stepping = true;
+                }
+                // One step per call (roads, ribbon, bridges, signs, splat, water, houses, their collider, carve): the queue
+                // runs more of them in the same frame while the streaming budget lasts, else next frame.
+                if (steps.MoveNext()) return false;
+                d.Queued = false;
+                return true;
+            };
+            results.Enqueue(overlay);
         }
 
         /// <summary>The lights are asked for a little beyond the tile: a registered point just across the edge keeps a made-up post away.</summary>
@@ -408,87 +447,106 @@ namespace Rally.Gameplay
         /// <summary>
         /// A coarse tile's overlay in steps, so no frame does all of it (it was grading, re-carving up to nine tiles, ribbon,
         /// bridges and their collider, signs, splat, water, houses and their collider, all in one frame): the re-carves go to
-        /// TileWorld's queue, everything else is one step per MoveNext.
+        /// TileWorld's queue, everything else is one step per MoveNext. Applies what is pending, until nothing is: roads (again
+        /// when NVDB surfaces land after them), then signs and lights against them, then land cover, water and houses.
         /// </summary>
-        System.Collections.IEnumerator OverlaySteps(TileKey key, RoadGraphData roadData, Features features, CoverRaster cover, List<RoadSurfaceLine> surfaces, SignSet signSet, LightSet lightSet, System.Diagnostics.Stopwatch overlayWatch)
+        System.Collections.IEnumerator OverlaySteps(TileKey key, TileOverlay d)
         {
-            if (roadData != null)
+            var overlayWatch = System.Diagnostics.Stopwatch.StartNew();
+            while (d.Pending != OverlayData.None)
             {
-                // Water for the bridge rule: this tile's OSM lakes and rivers, the sea in the DTM, the water other tiles built.
-                long t0 = FrameProbe.Start();
-                var water = new WaterProbe(features, p => world.BaseHeightAt(p), p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)), world.InMappedWater);
-                var lines = new List<RoadPolyline>();
-                var grade = roads.SetTileSteps(lines, key, roadData, p => world.BaseHeightAt(p), surfaces, water.Wet, p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)));
-                for (;;)
+                var now = d.Pending;
+                d.Pending = OverlayData.None;
+                if ((now & (OverlayData.Roads | OverlayData.Surfaces)) != 0 && d.Roads != null)
                 {
-                    bool more = grade.MoveNext();
+                    // Water for the bridge rule: this tile's OSM lakes and rivers, the sea in the DTM, the water other tiles built.
+                    long t0 = FrameProbe.Start();
+                    var water = new WaterProbe(d.Features, p => world.BaseHeightAt(p), p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)), world.InMappedWater);
+                    var lines = new List<RoadPolyline>();
+                    var grade = roads.SetTileSteps(lines, key, d.Roads, p => world.BaseHeightAt(p), d.Surfaces, water.Wet, p => world.IsLoaded(FloatingOrigin.ToWorldXZ(p)));
+                    for (;;)
+                    {
+                        bool more = grade.MoveNext();
+                        FrameProbe.Stop(".ov.roads", t0);
+                        if (!more) break;
+                        yield return null;
+                        if (!world.Tiles.ContainsKey(key)) yield break;
+                        t0 = FrameProbe.Start();
+                    }
+                    t0 = FrameProbe.Start();
+                    RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
+                    var b = key.Bounds;
+                    world.QueueRecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
                     FrameProbe.Stop(".ov.roads", t0);
-                    if (!more) break;
                     yield return null;
                     if (!world.Tiles.ContainsKey(key)) yield break;
                     t0 = FrameProbe.Start();
-                }
-                t0 = FrameProbe.Start();
-                RallyLog.Info($"overlay: {key} {roads.SurfaceStatsFor(key)}");
-                var b = key.Bounds;
-                world.QueueRecarveWithin(new Bounds25833(b.MinE - RoadGraph.TilePad, b.MinN - RoadGraph.TilePad, b.MaxE + RoadGraph.TilePad, b.MaxN + RoadGraph.TilePad));
-                FrameProbe.Stop(".ov.roads", t0);
-                yield return null;
-                if (!world.Tiles.ContainsKey(key)) yield break;
-                t0 = FrameProbe.Start();
-                BuildRibbon(key, lines);
-                FrameProbe.Stop(".ov.ribbon", t0);
-                yield return null;
-                if (!world.Tiles.ContainsKey(key)) yield break;
-                t0 = FrameProbe.Start();
-                BuildBridges(key, lines);
-                FrameProbe.Stop(".ov.bridges", t0);
-                yield return null;
-                if (!world.Tiles.ContainsKey(key)) yield break;
-                t0 = FrameProbe.Start();
-                if (signSet != null) PlaceSigns(key, signSet);
-                FrameProbe.Stop(".ov.signs", t0);
-                yield return null;
-                if (!world.Tiles.ContainsKey(key)) yield break;
-                t0 = FrameProbe.Start();
-                if (lightSet != null) PlaceLights(key, lightSet);
-                FrameProbe.Stop(".ov.lights", t0);
-                yield return null;
-                // Neighbours cut from a grading this tile replaced (a way graded again now that its ground is in): set them
-                // again, redraw their ribbon and bridges, carve again — or two gradings of one road meet at the border.
-                // Setting one again can flag more (a way that took its height from a regraded one follows it): until settled.
-                var dirtyTiles = new Queue<TileKey>(roads.TakeDirtyTiles());
-                for (int guard = 0; dirtyTiles.Count > 0 && guard < 64; guard++)
-                {
-                    var d = dirtyTiles.Dequeue();
-                    if (world == null || !world.Tiles.ContainsKey(d)) continue;
-                    t0 = FrameProbe.Start();
-                    var again = roads.Rebuild(d);
-                    if (again != null)
-                    {
-                        BuildRibbon(d, again);
-                        BuildBridges(d, again);
-                        var db = d.Bounds;
-                        world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
-                        lights?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));   // masts stand on the new grading
-                        verges?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
-                        RallyLog.Info($"overlay: {d} roads set again (a way it shares with {key} was graded again)");
-                    }
-                    foreach (var m in roads.TakeDirtyTiles()) if (!dirtyTiles.Contains(m)) dirtyTiles.Enqueue(m);
-                    FrameProbe.Stop(".ov.rebuild", t0);
+                    BuildRibbon(key, lines);
+                    FrameProbe.Stop(".ov.ribbon", t0);
                     yield return null;
+                    if (!world.Tiles.ContainsKey(key)) yield break;
+                    t0 = FrameProbe.Start();
+                    BuildBridges(key, lines);
+                    FrameProbe.Stop(".ov.bridges", t0);
+                    d.RoadsIn = true;
+                    // Signs and lights stand against the roads: (again) now that these are in.
+                    if (d.Signs != null) now |= OverlayData.Signs;
+                    if (d.Lights != null) now |= OverlayData.Lights;
+                    yield return null;
+                    if (!world.Tiles.ContainsKey(key)) yield break;
+                    // Neighbours cut from a grading this tile replaced (a way graded again now that its ground is in): set them
+                    // again, redraw their ribbon and bridges, carve again — or two gradings of one road meet at the border.
+                    // Setting one again can flag more (a way that took its height from a regraded one follows it): until settled.
+                    var dirtyTiles = new Queue<TileKey>(roads.TakeDirtyTiles());
+                    for (int guard = 0; dirtyTiles.Count > 0 && guard < 64; guard++)
+                    {
+                        var dk = dirtyTiles.Dequeue();
+                        if (world == null || !world.Tiles.ContainsKey(dk)) continue;
+                        t0 = FrameProbe.Start();
+                        var again = roads.Rebuild(dk);
+                        if (again != null)
+                        {
+                            BuildRibbon(dk, again);
+                            BuildBridges(dk, again);
+                            var db = dk.Bounds;
+                            world.QueueRecarveWithin(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
+                            lights?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));   // masts stand on the new grading
+                            verges?.Invalidate(new Bounds25833(db.MinE - RoadGraph.TilePad, db.MinN - RoadGraph.TilePad, db.MaxE + RoadGraph.TilePad, db.MaxN + RoadGraph.TilePad));
+                            RallyLog.Info($"overlay: {dk} roads set again (a way it shares with {key} was graded again)");
+                        }
+                        foreach (var m in roads.TakeDirtyTiles()) if (!dirtyTiles.Contains(m)) dirtyTiles.Enqueue(m);
+                        FrameProbe.Stop(".ov.rebuild", t0);
+                        yield return null;
+                    }
                 }
+                if ((now & OverlayData.Signs) != 0 && d.RoadsIn && d.Signs != null)
+                {
+                    long t0 = FrameProbe.Start();
+                    PlaceSigns(key, d.Signs);
+                    FrameProbe.Stop(".ov.signs", t0);
+                    yield return null;
+                    if (!world.Tiles.ContainsKey(key)) yield break;
+                }
+                if ((now & OverlayData.Lights) != 0 && d.RoadsIn && d.Lights != null)
+                {
+                    long t0 = FrameProbe.Start();
+                    PlaceLights(key, d.Lights);
+                    FrameProbe.Stop(".ov.lights", t0);
+                    yield return null;
+                    if (!world.Tiles.ContainsKey(key)) yield break;
+                }
+                // Land cover, water and houses: whichever of the forest and the map features is in (both again when the other lands).
+                if ((now & (OverlayData.Features | OverlayData.Cover)) != 0)
+                {
+                    var fs = world.OnTileFeaturesSteps(key, d.Cover, d.Features);
+                    while (fs.MoveNext()) yield return null;
+                }
+                // The verge cells here (and the neighbours' along the border: their roads reach in) plant again on the new roads,
+                // land cover, houses, signs and lights.
+                var vb = key.Bounds;
+                verges?.Invalidate(new Bounds25833(vb.MinE - RoadGraph.TilePad, vb.MinN - RoadGraph.TilePad, vb.MaxE + RoadGraph.TilePad, vb.MaxN + RoadGraph.TilePad));
+                RallyLog.Info($"overlay: {key} applied {now}: roads {(d.RoadsIn ? "carved + ribbon" : "not in yet")}, forest {(d.Cover != null ? "tinted + trees" : "not in yet")}, houses and water {(d.Features != null ? "built" : "not in yet")}, after {overlayWatch.ElapsedMilliseconds} ms");
             }
-            if (features != null || cover != null)
-            {
-                var fs = world.OnTileFeaturesSteps(key, cover, features);
-                while (fs.MoveNext()) yield return null;
-            }
-            // The verge cells here (and the neighbours' along the border: their roads reach in) plant again on the new roads,
-            // land cover, houses, signs and lights.
-            var vb = key.Bounds;
-            verges?.Invalidate(new Bounds25833(vb.MinE - RoadGraph.TilePad, vb.MinN - RoadGraph.TilePad, vb.MaxE + RoadGraph.TilePad, vb.MaxN + RoadGraph.TilePad));
-            RallyLog.Info($"overlay: {key} applied: roads {(roadData != null ? "carved + ribbon" : "missing")}, forest {(cover != null ? "tinted + trees" : "missing")}, houses and water {(features != null ? "built" : "missing")}, after {overlayWatch.ElapsedMilliseconds} ms");
         }
 
         /// <summary>How long a coarse tile's roads wait for the neighbours' ground (<see cref="NeighbourPending"/>) before they are graded anyway.</summary>
@@ -550,6 +608,9 @@ namespace Rally.Gameplay
         {
             if (results.Count == 0) return;
             var r = results.Dequeue();
+            // One overlay steps at a time: a second one started in the same frame used to step on from the queue alongside the
+            // active one, and its roads could be set again (Rebuild) by the other halfway through its own grading.
+            if (r.Overlay && !r.Stepping && activeOverlay != null) { results.Enqueue(r); return; }
             if (r.Since == 0f) r.Since = Time.time;
             long t0 = FrameProbe.Start();
             bool done = r.Apply();
@@ -665,7 +726,7 @@ namespace Rally.Gameplay
         {
             if (ribbons.TryGetValue(tile.Key, out var go)) { Destroy(go); ribbons.Remove(tile.Key); }
             DropBridges(tile.Key);
-            if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); lights?.RemoveTile(tile.Key); }
+            if (tile.Key.Kind == TileKind.Coarse) { roads.RemoveTile(tile.Key); signs?.RemoveTile(tile.Key); lights?.RemoveTile(tile.Key); overlays.Remove(tile.Key); }
         }
 
         #endregion
@@ -946,7 +1007,7 @@ namespace Rally.Gameplay
             HandleKeys();
             frames.Record(Time.unscaledDeltaTime);
             if (bench) Bench();
-            if (logWindow != null && Time.unscaledTime >= nextProgress) { nextProgress = Time.unscaledTime + 0.25f; ShowProgress(); }
+            if (Time.unscaledTime >= nextProgress) { nextProgress = Time.unscaledTime + 0.25f; ShowProgress(); }
             if (Hud != null && Hud.DebugVisible && Time.unscaledTime >= nextDebug) { nextDebug = Time.unscaledTime + 0.25f; Hud.SetDebug(DebugText()); }
             fps = math.lerp(fps, 1f / math.max(1e-4f, Time.unscaledDeltaTime), 0.05f);
             if (world == null) return;
@@ -1130,6 +1191,8 @@ namespace Rally.Gameplay
                 statsTimer = 0.5f;
                 var st = world.GetStats();
                 statsText = $"tiles {st.CoarseLoaded}+{st.FineLoaded} (+{st.Pending}) {st.Bytes / 1048576} MB";
+                string paused = breakers?.Paused();
+                if (!string.IsNullOrEmpty(paused)) statsText += " · " + paused;
             }
             switch (flow.Phase)
             {
@@ -1182,14 +1245,51 @@ namespace Rally.Gameplay
 
         void ShowProgress()
         {
-            if (world == null || roads == null) { logWindow.SetProgress(0f, status); return; }
+            if (world == null || roads == null || fetch == null) { logWindow?.SetProgress(0f, status); return; }
             bool start = flow.Phase == Phase.Loading;
             var c = CountStreaming(world.Scheduler, roads.HasTile, anchor, start ? EndlessStartRadius : 0);
             float f = StreamFraction(c);
             int queued = results.Count + (activeOverlay != null ? 1 : 0);
-            string text = $"{(start ? "START AREA" : "WORLD")} {Mathf.FloorToInt(f * 100f)}% · terrain {c.TerrainReady}/{c.TerrainWanted} · roads {c.RoadsReady}/{c.RoadsWanted}"
-                + (c.Fetching > 0 ? $" · {c.Fetching} fetching" : "") + (queued > 0 ? $" · {queued} queued" : "");
-            logWindow.SetProgress(f, text);
+            // What it waits for, per data type (counted over every wanted tile, the start area while loading), the paused ones
+            // with their time left; on a narrow screen the first two.
+            var waiting = fetch.Outstanding(c.TerrainWanted - c.TerrainReady, OverlaysWanted(start));
+            bool narrow = Screen.width < 900;
+            string waits = OverlayFetch.WaitingText(waiting, narrow ? 2 : int.MaxValue);
+            string text = $"{(start ? "START AREA" : "WORLD")} {Mathf.FloorToInt(f * 100f)}%"
+                + (waits.Length > 0 ? " · " + waits : $" · terrain {c.TerrainReady}/{c.TerrainWanted} · roads {c.RoadsReady}/{c.RoadsWanted}")
+                + (!narrow && queued > 0 ? $" · {queued} queued" : "");
+            logWindow?.SetProgress(f, text);
+            LogWaiting(waiting);
+            if (start && waiting.Count > 0)
+            {
+                // The start loader names what it waits for: the roads of the start area once the ground is in.
+                var w = waiting[0];
+                string line = w.PausedMs > 0 ? $"Waiting for {w.Name} ({w.Service} busy, retry in {Math.Ceiling(w.PausedMs / 1000)} s)…" : $"Waiting for {w.Name}…";
+                if (line != loaderLine) { loaderLine = line; BrowserDom.LoaderText(line); }
+            }
+        }
+
+        string loaderLine;
+        readonly HashSet<string> waitedFor = new HashSet<string>();
+
+        /// <summary>The tiles whose overlay data count: every live one, or while loading the start area's.</summary>
+        IEnumerable<TileOverlay> OverlaysWanted(bool start)
+        {
+            foreach (var kv in overlays)
+                if (!start || kv.Key.RectDistance(anchor) <= EndlessStartRadius) yield return kv.Value;
+        }
+
+        /// <summary>One log line when a data type starts or stops being waited for (not one per tile).</summary>
+        void LogWaiting(List<OverlayFetch.Waiting> waiting)
+        {
+            foreach (var w in waiting)
+                if (waitedFor.Add(w.Name)) RallyLog.Info($"stream: waiting for {w.Name}: {w.Tiles} tiles{(w.PausedMs > 0 ? $", {w.Service} paused {Math.Ceiling(w.PausedMs / 1000)} s" : "")}");
+            waitedFor.RemoveWhere(n =>
+            {
+                foreach (var w in waiting) if (w.Name == n) return false;
+                RallyLog.Info($"stream: {n} all in");
+                return true;
+            });
         }
 
         #endregion
@@ -1661,7 +1761,7 @@ namespace Rally.Gameplay
             ribbons.Clear();
             foreach (var key in new List<TileKey>(bridgeObjects.Keys)) DropBridges(key);
             foreach (var key in new List<TileKey>(tunnelObjects.Keys)) DropBridges(key);
-            results.Clear(); activeOverlay = null;
+            results.Clear(); activeOverlay = null; overlays.Clear(); waitedFor.Clear(); loaderLine = null;
             foreach (var v in actorViews.Values) Destroy(v.gameObject);
             actorViews.Clear();
             actors = null;

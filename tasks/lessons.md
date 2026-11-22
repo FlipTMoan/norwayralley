@@ -266,3 +266,17 @@
   safe default at construction.
 - Procedural cut-out textures: strokes under ~2 final pixels lose most of their texels to the alpha cutoff (the first
   atlas read as sparse, separate tufts). Clamp stroke widths in final pixels, not in metres.
+
+## 2026-11-22 — road continuity: caps in mixed loops, cache keys, and measuring scripts
+- `OverpassSource.Parse` capped houses with `break` inside the loop over *all* elements: everything Overpass listed after
+  the 440th house (sorted by id, so the newest roads) was dropped, and roads stopped at tile borders in every town. A cap
+  on one kind inside a loop over many kinds must `continue`, not `break`; grep for `break` next to any count limit.
+- A cache key without the query in it (`overpass:bbox`) would have served answers without the new link roads forever.
+  When a query changes, version its key (`overpass2:`).
+- A survey of the drawn result (raycast the ribbon every 2 m along every fetched way) found four separate causes the
+  plan had not named; the leads in the plan (links) were one of five. Survey first, then fix.
+- Timing script: `printf '%.1f'` under a decimal-comma locale printed nothing usable ("invalid number"); set `LC_ALL=C`
+  in measuring scripts. The first "Overpass blocked" run ended before the block did (shots done at 63 s, unblock at
+  69 s): make the run outlast the event under test (`-previewDrive`).
+- Moving new `.cs` files out of the project for an "old code" test run made Unity delete their `.meta` files: move the
+  `.meta` files with them (or accept new GUIDs for files nothing references yet).

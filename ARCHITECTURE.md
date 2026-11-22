@@ -1,6 +1,6 @@
 # Architecture
 
-_Updated 2026-11-22 (Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
+_Updated 2026-11-22 (Unity continuous roads: link roads, survey `-previewContinuity`; Unity overlay data per type with one pause per service: OverlayFetch / ServiceBreakers; Unity road verges: Bioclimate grid, VergeRules / VergeBuilder / VergeMesh / VergeLayer, Rally/Verge; Unity street lights from NVDB: LightPlacement / LightMesh / LightLayer; 2026-11-20: Unity road arrow and finish gate, surface from the drawn road on stages; Unity road tunnels and avalanche galleries, overpass carve rule, ways meeting at one height; Unity solids: footprint push-out, placement check, swept spins; gravel max 120 km/h; Unity game renamed Grand Tour Norway, start screen / LOG bar / MENU; Unity tile seams and streaming frame budget; Unity route map place search; Unity bridges over water: Roads/Bridges + BridgeMesh, deck-aware TileWorld ground; Unity car chooser: eight cars from Art/Cars incl. two buggies, CarSpec per car; 2026-11-19: Unity road signs; JS road splines, junctions and bridges; 2026-11-16 evening: Unity rewrite layers added)._
 
 Retro Norway Rally is a static, browser-only Three.js game, kept in
 `legacy-js/` while the Unity/WebAssembly rewrite grows in `unity/`
@@ -223,7 +223,7 @@ web build has one C# thread, so pieces, not jobs):
 
 ```mermaid
 flowchart LR
-  F[fetch task<br/>DEM · Overpass · SR16 · NVDB] -->|decode, resample in 32-row bands| Q[results queue]
+  F[fetch task<br/>DEM, then OverlayFetch lanes:<br/>Overpass · SR16 · NVDB surfaces / signs / lights<br/>each with its own pause] -->|decode, resample in 32-row bands;<br/>each type as it lands| Q[results queue]
   Q -->|while budget lasts| D[OnTileData<br/>stitch · upload · carve]
   Q -->|one step per call| O[overlay steps<br/>grade ways · ribbon · bridges · signs · lights · splat · water · houses · collider]
   O --> RQ[re-carve queue<br/>nearest tile first]
@@ -232,8 +232,12 @@ flowchart LR
   S --> F
 ```
 
-`FrameProbe` (Core) times every frame and attributes slow ones; `PreviewShots -previewGlide -previewDrive` and
-`-previewSeams` are the measuring tools.
+A coarse tile's overlay data come in one lane per type (`Gameplay/OverlayFetch`, `TileOverlay`): each is applied as it
+lands (roads first where signs and lights stand against them) and a type without an answer pauses only its own service
+(`ServiceBreakers`: Overpass, NVDB, SR16, DTM) and is asked again alone.
+
+`FrameProbe` (Core) times every frame and attributes slow ones; `PreviewShots -previewGlide -previewDrive`,
+`-previewSeams` and `-previewContinuity` (roads drawn without gaps, steps or open tunnel / deck ends) are the measuring tools.
 
 ### Unity road verges (2026-11-22)
 

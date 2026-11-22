@@ -1,8 +1,32 @@
 # Changes
 
-_Updated 2026-11-22 (Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-22 (Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-22
+
+### Unity: roads continue where the map joins them
+- Roads no longer stop at tile borders in towns: the Overpass answer was cut off after the 440th house, and every road
+  listed after it (the newest ones) was lost in that tile. Only further houses are skipped now.
+- Ramps and slip roads (`motorway_link`, `trunk_link`, `primary_link`, `secondary_link`, `tertiary_link`) are fetched
+  and drawn: one lane unless tagged wider, the class of their road; motorway and trunk ramps stay out of stages like
+  their roads. Overpass answers cached before this are asked for again (new cache key `overpass2:`).
+- Short connectors (under ~6 m) between roads and at tunnel mouths are drawn, so tunnels no longer open onto bare
+  ground; a way going on from another's end, a connector between two roads and a way back on its own node (a
+  cul-de-sac loop) have no hole or step at the joint; a tunnel or bridge mapped with nodes kilometres apart is drawn in
+  every tile it crosses.
+- One overlay steps at a time again (a second one could step alongside it and have its roads set again halfway).
+- Survey: `PreviewShots -previewContinuity` walks every fetched road every 2 m against the drawn ribbon (gaps, steps,
+  joints, open tunnel / bridge ends) and shoots the worst places. Tests: `RoadContinuityTests`.
+
+### Unity: a pause per map service, not for all downloads
+- A tile's OSM roads and features, SR16 forest and NVDB surfaces, signs and lights are fetched and applied each on its
+  own (`OverlayFetch`): the forest, signs and lights no longer wait for a slow or paused Overpass, and a type without an
+  answer is asked again alone. Overpass, NVDB, SR16 and the elevation service each have their own 60 s pause; the status
+  line shows which one is paused ("NVDB paused 42 s"). Before, a tile without an Overpass answer kept no roads for good,
+  and failed NVDB signs, lights and surfaces were never asked again. The LOG bar says what the world waits for, per
+  type with counts and pauses ("waiting: terrain 24 · OSM roads 13 (paused 40 s) · forest 2"); the log notes when a type
+  starts or stops being waited for, and the start loader names it ("Waiting for OSM roads (Overpass busy, retry in 40 s)").
+  Tests: `OverlayFetchTests`.
 
 ### Unity: road verges with grass, wildflowers and bushes, by region
 - Beside every drawn road: a mown strip of short grass, then tall grass with wildflowers in drifts, then bushes in

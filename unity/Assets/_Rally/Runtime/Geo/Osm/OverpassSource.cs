@@ -60,11 +60,13 @@ namespace Rally.Geo
             return chunk;
         }
 
+        /// <summary>The chunk's roads; null when no mirror answered (the caller asks again: a tile kept "no roads" for good before).</summary>
         public async Task<RoadGraphData> FetchRoads(Bounds25833 bounds, CancellationToken ct)
-            => (await FetchChunk(bounds, ct))?.Roads ?? new RoadGraphData();
+            => (await FetchChunk(bounds, ct))?.Roads;
 
+        /// <summary>The chunk's buildings, land cover, water and power lines; null when no mirror answered.</summary>
         public async Task<Features> FetchFeatures(Bounds25833 bounds, CancellationToken ct)
-            => (await FetchChunk(bounds, ct))?.Features ?? new Features();
+            => (await FetchChunk(bounds, ct))?.Features;
 
         /// <summary>buildings.js <c>parseElements</c>.</summary>
         public static OsmChunk Parse(List<object> elements)
@@ -85,13 +87,15 @@ namespace Rally.Geo
                 }
                 if (tags.ContainsKey("building"))
                 {
+                    // Past the cap only further footprints are skipped. A `break` here dropped everything the answer listed after
+                    // the 440th house (sorted by id): in town tiles whole roads, rivers and fields went missing (2026-11-22).
+                    if (chunk.Features.Buildings.Count >= MaxBuildings) continue;
                     var rings = RingsOf(el, type);
                     if (rings.Count == 0) continue;
                     // The outer ring with the most vertices is the footprint; holes and courtyards do not change where the walls go.
                     var polygon = rings[0];
                     foreach (var r in rings) if (r.Count > polygon.Count) polygon = r;
                     chunk.Features.Buildings.Add(new Building { Id = el.Long("id"), Polygon = polygon, Tags = tags });
-                    if (chunk.Features.Buildings.Count >= MaxBuildings) break;
                     continue;
                 }
                 if (tags.ContainsKey("waterway") && type == "way" && geometry != null && geometry.Count >= 2)
