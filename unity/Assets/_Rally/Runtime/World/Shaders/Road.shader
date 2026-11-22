@@ -2,6 +2,9 @@
 // UV0: u = 0..1 across the carriageway (−1 / 2 at the skirts, the shoulders between), v = metres along / 4.
 // UV1.x: the carriageway half width in metres (markings only on two-lane asphalt). UV1.y: how far inside a road tunnel
 // (0 outside … 0.9 from 40 m past a portal, as Rally/Tunnel's vertex alpha): there the tunnel lamps light the road, not the sun.
+// UV2: a junction mouth on the u < 0.5 (x) and u > 0.5 (y) side, as (metres along − its centre) / its half length: where
+// |UV2| < 1 the edge line is broken, and past the carriageway edge the shoulder and skirt are left out where
+// |UV2| < RibbonMesh.MouthKeep (the side road's flared ribbon is the surface there, RibbonMesh.Mouths). The centre dash is centred on every 12 m of v·4 (RibbonMesh.DashShift).
 // Detail: _Detail / _DetailNormals, a 2-slice Texture2DArray from Editor/RoadTextures (0 asphalt aggregate, 1 gravel),
 // alpha = height; sampled in world XZ (no stretch along bends or seams between runs), twice at two scales and angles
 // so the tile does not repeat, normal detail fading out with distance (no shimmer). Everything at road scale is
@@ -29,15 +32,15 @@ Shader "Rally/Road"
     float4 _Tint;
     float _Gravel;
     CBUFFER_END
-    struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; float2 uv1 : TEXCOORD1; };
-    struct Varyings { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float2 uv : TEXCOORD2; float halfW : TEXCOORD3; float inside : TEXCOORD4; };
+    struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; float2 uv1 : TEXCOORD1; float2 uv2 : TEXCOORD2; };
+    struct Varyings { float4 positionCS : SV_POSITION; float3 positionWS : TEXCOORD0; float3 normalWS : TEXCOORD1; float2 uv : TEXCOORD2; float halfW : TEXCOORD3; float inside : TEXCOORD4; float2 mouth : TEXCOORD5; };
     Varyings Vert(Attributes v)
     {
         Varyings o;
         o.positionWS = TransformObjectToWorld(v.positionOS.xyz);
         o.positionCS = TransformWorldToHClip(o.positionWS);
         o.normalWS = TransformObjectToWorldNormal(v.normalOS);
-        o.uv = v.uv; o.halfW = max(v.uv1.x, 1); o.inside = saturate(v.uv1.y / 0.9);
+        o.uv = v.uv; o.halfW = max(v.uv1.x, 1); o.inside = saturate(v.uv1.y / 0.9); o.mouth = v.uv2;
         return o;
     }
     float Hash12(float2 p) { float3 p3 = frac(p.xyx * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return frac((p3.x + p3.y) * p3.z); }
@@ -47,10 +50,16 @@ Shader "Rally/Road"
         return lerp(lerp(Hash12(c), Hash12(c + float2(1, 0)), u.x), lerp(Hash12(c + float2(0, 1)), Hash12(c + 1), u.x), u.y);
     }
     #define RALLY_SHOULDER 1.5
-    // The ragged outer edge of the shoulder: 1 = keep. Skirts (|across| past the shoulder) are kept.
+    // In a junction mouth on this side (the side road's ribbon is the surface past the carriageway edge): 1, else 0. Past the
+    // edge (e metres) the mouth narrows like the side road's kerb fillet (RibbonMesh.MouthKeep), so the shoulder left out
+    // is always under the side road's flare.
+    float InMouth(Varyings i, float e) { return step(abs(i.uv.x < 0.5 ? i.mouth.x : i.mouth.y), 1 - 0.36 * sqrt(clamp(e, 0, 1.6))); }
+    // The ragged outer edge of the shoulder: 1 = keep. Skirts (|across| past the shoulder) are kept; in a mouth nothing past
+    // the carriageway edge is.
     float EdgeKeep(Varyings i)
     {
         float across = abs((i.uv.x - 0.5) * 2 * i.halfW), outer = i.halfW + RALLY_SHOULDER;
+        if (across > i.halfW && InMouth(i, across - i.halfW) > 0.5) return -1;
         if (across > outer + 0.01) return 1;
         float ragged = VNoise(i.positionWS.xz * 2.3) * 0.65 + VNoise(i.positionWS.xz * 7.1) * 0.35;
         return ragged - saturate((across - (outer - 0.45)) / 0.45) + 0.02;
@@ -181,9 +190,9 @@ Shader "Rally/Road"
                     {
                         float wear = saturate(0.35 + 0.9 * VNoise(wxz * 4.1)) * lerp(1, 0.55, track);   // traffic wears the paint
                         float fade = (1 - saturate(dist / 250)) * wear;
-                        float dash = step(frac(along / 12), 0.25);       // 3 m line, 9 m gap
+                        float dash = step(frac((along + 1.5) / 12), 0.25);   // 3 m line centred on every 12 m (a way end), 9 m gap
                         float centre = Band(across, 0.08) * dash;
-                        float edgeLine = Band(side - (i.halfW - 0.35), 0.08);
+                        float edgeLine = Band(side - (i.halfW - 0.35), 0.08) * (1 - InMouth(i, 0));   // broken across a junction mouth
                         albedo = lerp(albedo, float3(0.80, 0.62, 0.12), centre * fade);
                         albedo = lerp(albedo, float3(0.78, 0.78, 0.76), edgeLine * fade);
                     }

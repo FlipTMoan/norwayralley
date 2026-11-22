@@ -58,7 +58,7 @@ namespace Rally.Editor
         static void LoadingTick(double now)
         {
             if (!UnityEditor.EditorApplication.isPlaying) return;
-            if (loadT0 == 0) { loadT0 = now; nextSnap = now + 5; nextShot = now + 10; loadingLog.Append($"# {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  {(live ? "live " + query : "fake")}  cache {Rally.Geo.FileBackend.RootOverride ?? "usual"}\n# t  coarse-ready  roads-shown  loose  edge  floating  carRoads  graded-but-hidden  ends-at-a-hidden-bed\n"); }
+            if (loadT0 == 0) { loadT0 = now; FrameProbe.Begin(); nextSnap = now + 5; nextShot = now + 10; loadingLog.Append($"# {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  {(live ? "live " + query : "fake")}  cache {Rally.Geo.FileBackend.RootOverride ?? "usual"}\n# t  coarse-ready  roads-shown  loose  edge  floating  carRoads  graded-but-hidden  ends-at-a-hidden-bed\n"); }
             if (game == null) game = UnityEngine.Object.FindAnyObjectByType<GameController>();
             if (game == null) return;
             var gt = typeof(GameController);
@@ -92,6 +92,38 @@ namespace Rally.Editor
                     Save($"loading_{t:000}s");
                 }
             }
+            spikeMarks.Add((t, FrameProbe.Spikes.Count));
+            // Per tile: when its roads landed, were graded and were shown (the car's tile waits for its 8 neighbours).
+            {
+                var ovs = (IDictionary)gt.GetField("overlays", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(game);
+                foreach (DictionaryEntry e in ovs)
+                {
+                    var k = (TileKey)e.Key; var d = (TileOverlay)e.Value;
+                    if (!tileTimes.TryGetValue(k, out var tt)) tileTimes[k] = tt = new double[] { -1, -1, -1, -1 };
+                    if (tt[0] < 0 && d.Roads != null) tt[0] = t;
+                    if (tt[3] < 0 && d.SurfacesTried) tt[3] = t;
+                    if (tt[1] < 0 && roads.HasTile(k)) tt[1] = t;
+                    if (tt[2] < 0 && ribbonGos.TryGetValue(k, out var rg) && rg != null && rg.activeSelf) tt[2] = t;
+                }
+            }
+            // The queue state of the car's tile and its neighbours whenever it changes (why a tile with its roads in waits).
+            {
+                var res = (IEnumerable)gt.GetField("results", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(game);
+                var active = gt.GetField("activeOverlay", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(game);
+                var ovs = (IDictionary)gt.GetField("overlays", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(game);
+                string activeKey = active != null ? active.GetType().GetField("Key").GetValue(active).ToString() : "-";
+                var sbq = new StringBuilder();
+                foreach (DictionaryEntry e in ovs)
+                {
+                    var k = (TileKey)e.Key; var d = (TileOverlay)e.Value;
+                    if (math.max(math.abs(k.I - carTile.I), math.abs(k.J - carTile.J)) > 1 || roads.HasTile(k)) continue;
+                    int inQ = 0; bool stepping = false;
+                    foreach (var r in res) if (r.GetType().GetField("Key").GetValue(r).Equals(k)) { inQ++; stepping |= (bool)r.GetType().GetField("Stepping").GetValue(r); }
+                    sbq.Append($" {k.I}_{k.J}[{d.Pending} q{inQ}{(stepping ? " step" : "")}{(d.Queued ? " queued" : "")}{(world.Scheduler.IsReady(k) ? "" : " notready")}]");
+                }
+                string line = $"active {activeKey} queue {((ICollection)res).Count}:{sbq}";
+                if (line != lastQueueLine) { queueLog.Append(string.Format(CultureInfo.InvariantCulture, "{0,6:0.0} {1}\n", t, line)); lastQueueLine = line; }
+            }
             if (now < nextSnap) return;
             nextSnap += 5;
             Snapshot(t, roads, inputs, carTile);
@@ -104,11 +136,40 @@ namespace Rally.Editor
             File.WriteAllText(Path.Combine(outDir, "loading.txt"), loadingLog.ToString());
             File.WriteAllText(Path.Combine(outDir, "loading_loose.csv"), looseCsv.ToString());
             File.WriteAllText(Path.Combine(outDir, "loading_floating.csv"), floatCsv.ToString());
+            // Where the main thread went while loading (FrameProbe sections, '.' = nested in another).
+            var prof = new StringBuilder("# section  total_ms  calls\n");
+            var tot = new List<KeyValuePair<string, (double ms, int calls)>>(FrameProbe.Totals);
+            tot.Sort((a, b) => b.Value.ms.CompareTo(a.Value.ms));
+            foreach (var kv in tot) prof.Append(string.Format(inv, "{0,-24} {1,9:0} {2,8}\n", kv.Key, kv.Value.ms, kv.Value.calls));
+            File.WriteAllText(Path.Combine(outDir, "loading_profile.txt"), prof.ToString());
+            var tl = new StringBuilder("tile,ring,landed,graded,shown,surfaces\n");
+            var keys = new List<TileKey>(tileTimes.Keys);
+            keys.Sort((a, b) => tileTimes[a][1].CompareTo(tileTimes[b][1]));
+            foreach (var k in keys)
+            {
+                int ring = math.max(math.abs(k.I - carTile.I), math.abs(k.J - carTile.J));
+                var tt = tileTimes[k];
+                tl.Append(string.Format(inv, "{0}_{1},{2},{3:0.0},{4:0.0},{5:0.0},{6:0.0}\n", k.I, k.J, ring, tt[0], tt[1], tt[2], tt[3]));
+            }
+            File.WriteAllText(Path.Combine(outDir, "loading_tiles.csv"), tl.ToString());
+            var sp = new StringBuilder();
+            for (int i = 0, m = 0; i < FrameProbe.Spikes.Count; i++)
+            {
+                while (m < spikeMarks.Count && spikeMarks[m].count <= i) m++;
+                sp.Append(string.Format(inv, "{0,6:0.0} s {1}\n", m < spikeMarks.Count ? spikeMarks[m].t : t, FrameProbe.Spikes[i]));
+            }
+            File.WriteAllText(Path.Combine(outDir, "loading_spikes.txt"), sp.ToString());
+            File.WriteAllText(Path.Combine(outDir, "loading_queue.txt"), queueLog.ToString());
+            FrameProbe.End();
             Debug.Log("PreviewShots loading:\n" + loadingLog);
             Finish(0);
         }
 
         static Dictionary<TileKey, GameObject> ribbonGos;
+        static readonly Dictionary<TileKey, double[]> tileTimes = new Dictionary<TileKey, double[]>();
+        static readonly List<(double t, int count)> spikeMarks = new List<(double, int)>();
+        static readonly StringBuilder queueLog = new StringBuilder();
+        static string lastQueueLine;
 
         /// <summary>The tile's roads are on screen: its ribbon is shown (a tile with roads and no ribbon has nothing to draw).</summary>
         static bool Drawn(RoadGraph roads, TileKey k)

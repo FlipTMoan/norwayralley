@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-22 (OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-22 (roads joined: mitred joins, junction mouths, dashes across joins, loading view; OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -272,6 +272,34 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   and tunnels stay hidden until every neighbour the scheduler wants has its roads drawn (at most 45 s), then show and
   stay. The start screen waits (≤ 15 s) for the start tile's roads to show. Survey: `PreviewShots -previewLoading
   [-previewFreshCache]` (snapshots every 5 s while loading: roads ending at a tile edge, floating ribbon, the car's roads).
+
+## Joins, junction mouths and the loading view (2026-11-22)
+- **Joins** (`RibbonMesh.Mitres`): where exactly two runs end at one point (two ways end to end, a change of surface) both
+  end stations are cut along the bisector of the two directions and widened by 1/cos of the half turn: one surface, edge
+  lines meeting. `RoadGraph.SmoothPlan` smooths a way together with up to `ChainContextM` (50 m) of the way that goes on
+  from an end where two ways of one road (same class and width, turning < `ChainMaxTurnDeg` 60°) meet and nothing else
+  passes; an edge longer than 40 m at the joint gets a node 20 m from it so long straight edges stay straight. Both ways
+  see the same nodes around the joint, so both pass through it the same way in any tile.
+- **Centre dashes**: `v·4` is the along coordinate, `RibbonMesh.AlongScale(WayLength)` stretches it to a whole number of
+  12 m periods per way and `Rally/Road` centres a dash on every multiple of 12 (`DashShift`): every way end is a dash centre,
+  so the dashes run on across joins and tile borders whichever way the ways run.
+- **Mouths** (`RibbonMesh.Mouths`): where a run goes from drawn to `Covered` (a side road reaching a road that outranks it)
+  its ribbon ends where its centre line crosses the main road's drawn carriageway edge; the end station's rows lie on that
+  edge (the main road's height there), flared over `MouthRadius(kind)` (track 3, minor 5, secondary/tertiary 8,
+  primary/trunk 10 m) with flare stations at 1, 0.6, 0.3, 0.12 × the radius; a flared row past the edge (an oblique road's
+  acute side) slides back onto it. The main road's vertices get UV2 = (S − mouth centre) / half length per side;
+  `Rally/Road` breaks the edge line and clips the shoulder and skirt where |UV2| < 1. Worked out per tile from the runs
+  alone, so the two tiles at a border build the same mouths.
+- **Loading view** (`GameController.ParkCamera`): until the car is placed the camera looks at the start pin from 110 m
+  south and 45 m over the higher ground of the two (3 km up before the pin's ground is in). It used to sit 6 m over sea
+  level, under the ground, where the terrain is not drawn from below.
+- **Grading cost** (FrameProbe totals in `-previewLoading`, `loading_profile.txt`): `RoadGraph.Dependents` uses an index
+  (`easedBy`) instead of scanning every graded way; `Nearest` / `UnderAnother` scan only the buckets a segment within reach
+  can be in (`SegReach`); a tile's signs and lights wait while other tiles' roads wait (`GameController.AfterOtherRoads`).
+- Known limits: a way graded in a tile that does not hold the way going on from its end (the joint outside the padded
+  tile) is smoothed without it (the mitre still joins the ribbons); two mouths on one side of a road within ~5 m share
+  the per-vertex UV2 badly; a side road that is not `Covered` at the main road (graded before the main road arrived, or
+  more than 0.3 m off its height) still runs into it.
 
 ## Deviations from the JS worth knowing
 

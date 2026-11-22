@@ -152,7 +152,10 @@ namespace Rally.Roads
         /// over <paramref name="fadeM"/> metres on both sides, so roads still meet exactly where OSM says they meet.
         /// The ends stay where they are (Chaikin keeps them).
         /// </summary>
-        public static List<double2> SmoothThrough(IReadOnlyList<double2> points, HashSet<int> pinned, int rounds, double fadeM = 40)
+        public static List<double2> SmoothThrough(IReadOnlyList<double2> points, HashSet<int> pinned, int rounds, double fadeM = 40) => SmoothThrough(points, pinned, rounds, fadeM, null);
+
+        /// <summary><see cref="SmoothThrough(IReadOnlyList{double2}, HashSet{int}, int, double)"/>, telling in <paramref name="at"/> where each pinned vertex ended up.</summary>
+        public static List<double2> SmoothThrough(IReadOnlyList<double2> points, HashSet<int> pinned, int rounds, double fadeM, Dictionary<int, int> at)
         {
             var p = Chaikin(points, null, rounds);
             if (pinned == null || pinned.Count == 0 || p.Count < 3) return p;
@@ -171,6 +174,7 @@ namespace Rally.Roads
                     if (w > 0 && i > 0 && i < p.Count - 1) p[i] += offset * w;
                 }
                 p[best] = points[k];
+                if (at != null) at[k] = best;
                 from = best;
             }
             return p;

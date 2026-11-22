@@ -270,6 +270,7 @@ namespace Rally.Editor
             File.WriteAllText(Path.Combine(outDir, "continuity.txt"), sb.ToString());
             Debug.Log("PreviewShots continuity:\n" + sb);
             foreach (var go in ribbonGos.Values) { UnityEngine.Object.Destroy(go.GetComponent<MeshCollider>()); go.layer = 0; }
+            JoinReport(roads, raw, Surveyed, Seam);
             ContinuityShots(contSpotsFile != null && File.Exists(contSpotsFile) ? File.ReadAllText(contSpotsFile) : spotText.ToString());
         }
 

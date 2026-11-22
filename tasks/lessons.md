@@ -347,3 +347,24 @@
   shell whose own command line holds that text matches the shell. Wait for the editor with
   `pgrep -f "^/home/pc/Unity/Hub/Editor/[^ ]*/Editor/Unity "` from a script file, and retry when Unity reports
   "another Unity instance is running".
+
+## 2026-11-22 — road joins: relative output paths, a metric that counted shared edges, and one cell of a grid
+- The copied bench/survey scripts `cd` into the repo and Unity resolves `-previewOut` against the project: a relative
+  OUT wrote the before bench into `unity/bench_before` (in the working tree). Make OUT absolute (`realpath -m`) in every
+  measuring script and check `git status` after the first run.
+- The first join survey counted "two surfaces" at 900 of 956 straight joints: a sample point exactly on a row line lies on
+  an edge two triangles of one strip share. A hit test over a mesh must count a point on a shared edge once (same y, u, v),
+  and a metric that flags nearly everything is a bug in the metric until a dump of the hits says otherwise.
+- The mouth search looked up the main road only in the grid cell of the side road's sample (16 m cells): a main road 5 m
+  away in the next cell was never found, and only the crossing's south half failed. A grid lookup with a reach must scan
+  every cell the reach touches.
+- Rows of the mouth's end station were laid out along the normal of the direction *out of* the main road, the run's own
+  stations along the normal of the run's direction: on a run going into the main road every row came out mirrored and the
+  last quad twisted. Build added stations in the run's own frame.
+- Smoothing two ways together through their joint pulled 800 m straight OSM edges metres sideways (Chaikin cuts a quarter
+  of each edge): put a node 20 m from the joint on long edges first, and only join ways of one road turning < 60°.
+- The survey's mouth heights used the main road's height 20 m up a steep side road (false gaps): sample the way's own
+  graded height at each point.
+- "Grading is slow" was 57 % one O(N²) scan (`Dependents`, found by FrameProbe totals); after that the critical path was
+  signs placement and frames of 0.3–0.9 s, found only with a per-frame log of the queue (active overlay, what each
+  neighbour waits for). Profile totals, then a timeline, before choosing jobs or Burst.

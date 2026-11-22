@@ -524,9 +524,16 @@ namespace Rally.Gameplay
                     FrameProbe.Stop(".ov.bridges", t0);
                     d.RoadsIn = true;
                     ShowRoads();
-                    // Signs and lights stand against the roads: (again) now that these are in.
-                    if (d.Signs != null) now |= OverlayData.Signs;
-                    if (d.Lights != null) now |= OverlayData.Lights;
+                    // Signs and lights stand against the roads: (again) now that these are in — after the other tiles' roads
+                    // while those wait (AfterOtherRoads).
+                    var against = (d.Signs != null ? OverlayData.Signs : OverlayData.None) | (d.Lights != null ? OverlayData.Lights : OverlayData.None);
+                    if (roadsFirst || OtherRoadsWaiting(key))
+                    {
+                        var later = AfterOtherRoads(now, against);
+                        d.Pending |= later; now &= ~later;
+                        roadsFirst = true;
+                    }
+                    else now |= against;
                     yield return null;
                     if (!world.Tiles.ContainsKey(key)) yield break;
                     // Neighbours cut from a grading this tile replaced (a way graded again now that its ground is in): set them
@@ -585,6 +592,14 @@ namespace Rally.Gameplay
                 RallyLog.Info($"overlay: {key} applied {now}: roads {(d.RoadsIn ? "carved + ribbon" : "not in yet")}, forest {(d.Cover != null ? "tinted + trees" : "not in yet")}, houses and water {(d.Features != null ? "built" : "not in yet")}, after {overlayWatch.ElapsedMilliseconds} ms");
             }
         }
+
+        /// <summary>
+        /// What of a tile's overlay waits, once its roads are drawn, while other tiles' roads are still to be drawn: its houses,
+        /// fields and forest, and its signs and lights (<paramref name="against"/>: those that have landed). None of it is needed
+        /// to show the roads, and placing a town tile's signs took 0.1–0.7 s of the start area's critical path (2026-11-22).
+        /// </summary>
+        public static OverlayData AfterOtherRoads(OverlayData now, OverlayData against)
+            => (now & (OverlayData.Features | OverlayData.Cover | OverlayData.Signs | OverlayData.Lights)) | (against & (OverlayData.Signs | OverlayData.Lights));
 
         /// <summary>How long a coarse tile's roads wait for the neighbours' ground (<see cref="NeighbourPending"/>) before they are graded anyway.</summary>
         const float NeighbourWait = 10f;
@@ -1137,6 +1152,33 @@ namespace Rally.Gameplay
 
         void Say(string text, float seconds) { transient = text; transientUntil = Time.time + seconds; }
 
+        /// <summary>
+        /// Before the car is placed (loading, behind the start screen) the camera looks over the start pin from above its ground.
+        /// It used to stay where the scene put it, 6 m over sea level: under the ground of any start above the sea, where the
+        /// terrain seen from below is not drawn, and the verges and ribbons along the roads graded meanwhile hung in the sky over
+        /// the start screen (2026-11-22). Before the pin's ground is in it waits high over it (nothing near is drawn yet).
+        /// </summary>
+        void ParkCamera()
+        {
+            if (MainCamera == null || Rig != null && Rig.Target != null) return;
+            var from = LoadingViewFrom;
+            float ground = world.IsLoaded(float2.zero) ? math.max(world.HeightAt(float2.zero), world.IsLoaded(from.xz) ? world.HeightAt(from.xz) : 0f) : float.NaN;
+            var (pos, rot) = LoadingView(ground);
+            MainCamera.transform.SetPositionAndRotation(pos, rot);
+        }
+
+        /// <summary>The loading view: from <see cref="LoadingViewFrom"/> (metres from the pin; its height over the higher ground of the two), down at the pin.</summary>
+        public static readonly float3 LoadingViewFrom = new float3(0f, 45f, -110f);
+
+        /// <summary>The camera pose while loading for the ground height at the pin (NaN: not in yet, 3 km up).</summary>
+        public static (Vector3 pos, Quaternion rot) LoadingView(float ground)
+        {
+            float y = float.IsNaN(ground) ? 3000f : ground + LoadingViewFrom.y;
+            var pos = new Vector3(LoadingViewFrom.x, y, LoadingViewFrom.z);
+            var at = new Vector3(0f, float.IsNaN(ground) ? 0f : ground, 40f);
+            return (pos, Quaternion.LookRotation(float.IsNaN(ground) ? Vector3.forward : at - pos, Vector3.up));
+        }
+
         #endregion
 
         #region Frame
@@ -1177,7 +1219,7 @@ namespace Rally.Gameplay
             long tVerges = FrameProbe.Start();
             verges?.Update(FloatingOrigin.ToUtm(MainCamera != null ? (float3)MainCamera.transform.position : carPos));   // what the camera sees
             FrameProbe.Stop("verges.update", tVerges);
-            if (car == null) { ShowHud(RouteQuery.None(float2.zero)); return; }
+            if (car == null) { ParkCamera(); ShowHud(RouteQuery.None(float2.zero)); return; }
 
             if (flow.Phase == Phase.Intro && Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame && (Hud == null || !Hud.IsTyping)) StartEngine();
             flow.Update(dt);

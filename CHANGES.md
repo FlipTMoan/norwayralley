@@ -1,8 +1,34 @@
 # Changes
 
-_Updated 2026-11-22 (Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-22 (Unity: roads and their lines joined — one surface across every join, junction mouths with kerb radii and a broken edge line, no strips in the sky while loading, the car's roads sooner in town; Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-22
+
+### Unity: roads and their lines joined properly; no strips in the sky; the car's roads sooner in town
+- **Joins.** Two runs that end at one point (two OSM ways end to end, a change of surface) share their end cross-section,
+  cut along the bisector of their directions (a mitre): no wedge open on the outside of a bend, no two ribbons over each
+  other on the inside, edge lines meeting. Ways of one road (same class and width, turning < 60°) are smoothed together
+  through their joint (`RoadGraph.SmoothPlan`), so a road split into OSM ways bends like one way and a roundabout made of
+  six ways is round, not a hexagon. The centre dashes are centred on every way end (a whole number of 12 m periods per
+  way), so they run on across joins and tile borders.
+- **Junction mouths.** A side road's ribbon now ends on the main road's carriageway edge, flared to a kerb radius by the
+  side road's class (3–10 m), instead of running 0–5 m into the main road (two coplanar surfaces: flicker, the side road's
+  lines over the main road's). The main road's edge line is broken across the mouth and its shoulder left out there
+  (`Rally/Road`, UV2).
+- **Sky strips.** Before the car was placed the camera stayed 6 m over sea level, under the ground of any start above
+  the sea; seen from below the terrain is not drawn, so the verges and ribbons graded meanwhile hung in the sky over the
+  start screen. While loading the camera now looks over the start pin from 45 m above its ground.
+- **The car's roads sooner.** Grading looked up the ways that took a way's height by scanning every graded way for every
+  way (2.8 of 5.0 s of grading 38 Lillehammer tiles): now an index. Signs and lights of a tile wait while other tiles'
+  roads are still to be drawn (placing a town tile's signs took 0.1–0.7 s). `RoadGraph.Nearest` looks only in the
+  buckets a road within the limit can be in. Empty cache, time to the car's roads: Lillehammer 21.9 → 13.8 s, Drammen
+  27.1 → 17.8 s (13.0 / 23.7 s before the road regions).
+- Join survey in `PreviewShots -previewContinuity` (`joins.txt`: ribbon gaps and overlaps, edge-line offsets, centre
+  dashes, steps at every joint and tile border; mouths: gaps, z-fight, the side road inside the main road's edge line,
+  the edge line across the mouth); `-previewLoading` also writes a FrameProbe profile, a per-tile timeline and the queue
+  state of the car's tile and its neighbours.
+- Tests: `RoadJoinTests` (bend joint: one surface, smoothed through; dashes centred on way ends both ways round; T-junction:
+  no overlap, no gap, flare, edge line broken; crossing; follower index; signs wait), `LoadingViewTests` (PlayMode).
 
 ### Unity: road signs show the right face, one post per side, in NVDB's order
 - Posts no longer carry the plates of both sides of the road: NVDB gives them one point, and the game had stacked up to

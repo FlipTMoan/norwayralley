@@ -33,7 +33,10 @@ namespace Rally.Core
         /// <summary>One line per frame over <see cref="SpikeMs"/>: its time and its sections.</summary>
         public static readonly List<string> Spikes = new List<string>();
 
-        public static void Begin() { Enabled = true; Frames.Clear(); Work.Clear(); Spikes.Clear(); sections = 0; gcCount = GC.CollectionCount(0); }
+        /// <summary>Milliseconds and calls per section since <see cref="Begin"/> (where a long job such as the start area's grading goes).</summary>
+        public static readonly Dictionary<string, (double ms, int calls)> Totals = new Dictionary<string, (double, int)>();
+
+        public static void Begin() { Enabled = true; Frames.Clear(); Work.Clear(); Spikes.Clear(); Totals.Clear(); sections = 0; gcCount = GC.CollectionCount(0); }
         public static void End() => Enabled = false;
 
         public static long Start() => Enabled ? Stopwatch.GetTimestamp() : 0;
@@ -43,6 +46,7 @@ namespace Rally.Core
         {
             if (!Enabled || t0 == 0) return;
             double ms = (Stopwatch.GetTimestamp() - t0) * tickMs;
+            Totals.TryGetValue(name, out var tot); Totals[name] = (tot.ms + ms, tot.calls + 1);
             for (int i = 0; i < sections; i++)
                 if ((object)names[i] == name) { sectionMs[i] += ms; calls[i]++; return; }
             if (sections == MaxSections) return;

@@ -80,6 +80,7 @@ namespace Rally.Editor
             continuity = Array.IndexOf(args, "-previewContinuity") >= 0;
             signSurvey = Array.IndexOf(args, "-previewSigns") >= 0;
             contSpotsFile = Arg(args, "-previewContSpots");
+            joinSpotsFile = Arg(args, "-previewJoinSpots");
             LoadingArgs(args);
             // -previewBlockOverpass SECONDS: every Overpass mirror is a black hole (connections hang) for the first SECONDS of play.
             if (float.TryParse(Arg(args, "-previewBlockOverpass"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blockS))
