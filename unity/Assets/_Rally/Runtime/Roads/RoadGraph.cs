@@ -32,6 +32,9 @@ namespace Rally.Roads
         public float Length;
         /// <summary>Length of the whole OSM way (a run is the piece inside one tile; RoadSample.S counts from the way's start).</summary>
         public float WayLength;
+        /// <summary>The OSM nodes on the run that another way of the tile's data shares (or this one again): node key
+        /// (<see cref="RoadGraph.NodeKey"/>) and S of the node on the graded line. The ribbon's junction table (<see cref="RoadJunctions"/>).</summary>
+        public List<(long Key, float S)> Nodes;
     }
 
     /// <summary>
@@ -459,6 +462,7 @@ namespace Rally.Roads
                 FrameProbe.Stop(".grade.links", tr); tr = FrameProbe.Start();
                 float wayLength = 0;
                 for (int i = 1; i < g.Points.Count; i++) wayLength += (float)math.distance(g.Points[i], g.Points[i - 1]);
+                var shared = SharedNodes(way, g, nodeCount);
                 // Split into runs inside the padded tile and at material changes. A run of two samples is drawn too: ways under ~6 m
                 // (connectors at tunnel mouths and junctions) were dropped as "noise" and left holes where the map joins roads.
                 var run = new List<RoadSample>();
@@ -468,7 +472,11 @@ namespace Rally.Roads
                 {
                     if (run.Count >= 2)
                     {
-                        var line = new RoadPolyline { Id = way.Id, Name = name, Kind = kind, Lanes = spec.Value, Paved = runPaved, Samples = run, Length = run[run.Count - 1].S - run[0].S, WayLength = wayLength };
+                        List<(long, float)> runNodes = null;
+                        if (shared != null)
+                            foreach (var (nk, ns) in shared)
+                                if (ns >= run[0].S - 0.01f && ns <= run[run.Count - 1].S + 0.01f) (runNodes ??= new List<(long, float)>(2)).Add((nk, ns));
+                        var line = new RoadPolyline { Id = way.Id, Name = name, Kind = kind, Lanes = spec.Value, Paved = runPaved, Samples = run, Length = run[run.Count - 1].S - run[0].S, WayLength = wayLength, Nodes = runNodes };
                         lines.Add(line);
                         for (int k = 0; k + 1 < run.Count; k++)
                         {
@@ -522,6 +530,35 @@ namespace Rally.Roads
                 if (!WorkBudget.Left) yield return null;
             }
             if (byTile.TryGetValue(key, out var mine) && mine == owned) complete.Add(key);
+        }
+
+        /// <summary>
+        /// The way's nodes that another way of the tile's data shares (<paramref name="nodeCount"/> &gt; 1), at their S along the graded
+        /// line: the node projected onto the segments next to its nearest sample (an interior node is generally not a sample). S counts
+        /// as the runs do (float sums of the sample distances), so it matches <see cref="RoadSample.S"/>.
+        /// </summary>
+        static List<(long, float)> SharedNodes(RoadWay way, GradedWay g, Dictionary<long, int> nodeCount)
+        {
+            if (g.Nodes == null) return null;
+            List<(long, float)> list = null;
+            var pts = g.Points; float[] sAt = null;
+            for (int i = 0; i < g.Nodes.Count && i < way.Nodes.Count; i++)
+            {
+                var (key, k) = g.Nodes[i];
+                if (!nodeCount.TryGetValue(key, out var c) || c < 2 || NodeKey(way.Nodes[i]) != key) continue;
+                if (sAt == null) { sAt = new float[pts.Count]; for (int j = 1; j < pts.Count; j++) sAt[j] = sAt[j - 1] + (float)math.distance(pts[j], pts[j - 1]); }
+                var p = new double2(way.Nodes[i].E, way.Nodes[i].N);
+                float best = sAt[k]; double bd = math.distancesq(pts[k], p);
+                for (int j = math.max(0, k - 1); j <= k && j + 1 < pts.Count; j++)
+                {
+                    double2 ab = pts[j + 1] - pts[j]; double l2 = math.lengthsq(ab);
+                    if (l2 < 1e-12) continue;
+                    double t = math.saturate(math.dot(p - pts[j], ab) / l2), d = math.distancesq(p, pts[j] + ab * t);
+                    if (d < bd) { bd = d; best = math.lerp(sAt[j], sAt[j + 1], (float)t); }
+                }
+                (list ??= new List<(long, float)>()).Add((key, best));
+            }
+            return list;
         }
 
         /// <summary>Metres of the way that goes on from an end (<see cref="SmoothPlan"/>): beyond the reach of the pinned nodes' fade (40 m).</summary>

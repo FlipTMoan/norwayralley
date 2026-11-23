@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-23 (road joins 2: pinned nodes stay on OSM, side road ends on the main road, round curves; 2026-11-22: roads joined: mitred joins, junction mouths, dashes across joins, loading view; OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-23 (junctions from the map's shared nodes: the main road through, side roads cut on its edge, its shoulder left out exactly; road joins 2: pinned nodes stay on OSM, side road ends on the main road, round curves; 2026-11-22: roads joined: mitred joins, junction mouths, dashes across joins, loading view; OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -309,8 +309,43 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   can be in (`SegReach`); a tile's signs and lights wait while other tiles' roads wait (`GameController.AfterOtherRoads`).
 - Known limits: a way graded in a tile that does not hold the way going on from its end (the joint outside the padded
   tile) is smoothed without it (the mitre still joins the ribbons); two mouths on one side of a road within ~5 m share
-  the per-vertex UV2 badly; a side road that is not `Covered` at the main road (graded before the main road arrived, or
-  more than 0.3 m off its height) still runs into it.
+  the per-vertex UV2 badly. Since the junction table (next section) the `Covered`-driven mouths above are the fallback.
+
+## Junctions from shared OSM nodes (2026-11-23, plan_20261122_smooth_crossings P1)
+- **Table** (`RoadJunctions.Find`): `RoadGraph` marks on every run the OSM nodes another way of the tile's data shares
+  (`RoadPolyline.Nodes`: node key and S on the graded line, the node projected onto it). Every node with three or more
+  arms (a way through it gives two, a way ending there one) within `Reach` (25 m) of the tile becomes a `RoadJunction`:
+  arms with way, direction 3 m out, half width, class, height at the node. Data within `ArmReach` (30 m) only, keys
+  sorted: the tiles at a border build the same junction (a tile's runs reach 60 m beyond it).
+- **Kinds**: `Priority` when a through pair exists — two arms of one width turning < 60°, drawable unbroken (one way
+  through the node, or two ways ending there: mitred), the pair whose better way ranks highest (class, longer way, lower
+  id) — and no other arm has a better class or sits more than 0.3 m off its height. Otherwise `Fallback` with a reason
+  (more than 6 arms, a bridge/tunnel/gallery/portal within 30 m, no through pair, a side arm outranks it, height step, a
+  merge under 32°, a side arm too short or ending (joined to its next way) inside its cut, a row that cannot land on the main
+  road's edge, the tile edge): drawn as before
+  (mouths from `Covered`, `EndsOnOtherRoads`, the shader's `MouthKeep` taper), exactly (a test compares the meshes).
+- **Cuts** (`RibbonMesh.PlanJunctions`): every other arm walks out from the node to where its centre crosses the main
+  road's carriageway edge and then its shoulder line (on the main road's pieces: the through arms' runs, and a run that
+  continues one through a joint within reach). Two stations, both with their rows slid along the side road onto those
+  lines (`SlideStation`): the end station on the edge at the main road's height, the band station on the shoulder line
+  (its shoulder rows at the main road's shoulder height; no skirts in between). The kerb flare (`MouthRadius`, shrunk for
+  oblique entries) starts past the band station's furthest row (`Cut.Shift`: square flare stations used to cross the
+  slanted end station, the side road folding over itself), and its acute side is capped so its rows stay outside the
+  shoulder line (`Station.CapSide` / `FlareCap`). A radius that does not fit the main road's pieces is halved, then
+  dropped; two side roads whose mouths would overlap on one side of a main road (driveways a few metres apart) get
+  smaller radii too.
+- **Main road**: its stations at the side road's two corners (`Inserts`, rows interpolated on the lines its quads are
+  drawn along) take the side road's corner points as their edge and shoulder rows, and between them its shoulder and skirt
+  on that side are not drawn (`Strip.Gaps`). The two surfaces share that boundary exactly; UV2 is the same stretch, so the
+  edge line breaks exactly between the corners. The main road's grading `Covered` marks near the node are cleared (a main
+  piece that a longer side road outranked in grading had a hole), and so are the side arm's up to its flare.
+- Survey: `-previewContinuity` writes `joins_junctions.csv` (per node: ways, arms, kind and reason, overlap and gap area
+  within 12 m) and the mouths' first overlap distance; the hook `RibbonMesh.JunctionsBuilt` gives the editor each build's
+  table and runs.
+- Known limits (P2–P6 of the plan): no junction polygon yet (the corner is today's flare, square-ish where the band meets
+  the fillet; no kerb line around it); Crossing nodes (no through pair) and shallow merges stay Fallback; the side road's
+  end is a straight chord across a curved main edge (a few cm in or out); clusters of short ways (dual carriageways,
+  junctions a few metres apart) still overlap; dual-carriageway trunk ways drawn 10.5 m wide each overlap each other.
 
 ## Deviations from the JS worth knowing
 

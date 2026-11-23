@@ -384,3 +384,18 @@
   between the 5 m samples) as a gap or overlap where it leaves the chord: subdividing the curve raised "border gaps"
   (mid-segment probes) although the shots got rounder. Say which shape a metric measures against.
 - `pkill -f` from a shell whose own command line holds the pattern killed the shell again (exit 144): kill by pid only.
+
+## 2026-11-23 — smooth crossings P1: a metric that counted the neighbours, and a loop that changed its result
+- The first topological mouths moved the "mouths z-fight" count only 5758 → 5387, and the T-junctions not at all. Dumping
+  the hits at each overlap (u, v, half width) together with the junction's arms showed two things a count could not: the
+  side road folded over *itself* just past the main road's shoulder line (its end station is slanted along the main road,
+  the flare stations after it are square to the side road: they crossed), and many "z-fights" were other roads within the
+  20 m probe (dual-carriageway trunk ways 4.5 m apart drawn 10.5 m wide each, the next junction). Rule: before tuning against
+  a survey count, dump the raw hits of a sample of cases with enough context (which arm, through or side) and split the
+  metric by where the defect starts; report the split next to the old number.
+- A 5-minute live survey per hypothesis is too slow a loop: the survey now writes the owning tile's runs around a few bad
+  nodes (`joins_runs.txt`), and a throwaway EditMode test rebuilt them in 2 minutes. Keep such a repro path in the tool.
+- Mesh probe grids in tests must stay off the row lines two strips share (a point exactly on a shared boundary is on
+  both: 135 false "two surfaces" on the edge line y = 5.25 and the mitre line x = 0); offset the grid by an odd fraction.
+- `for (...; attempt++, r *= f)` scaled the radius once more after the attempt that succeeded. Write retry loops with the
+  result set and `break` inside the body.

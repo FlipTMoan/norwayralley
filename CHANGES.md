@@ -1,8 +1,43 @@
 # Changes
 
-_Updated 2026-11-23 (Unity: road joins 2 — no gaps after joints next to a junction, side roads end on the main road even when graded before it, round roundabouts; Unity: roads and their lines joined — one surface across every join, junction mouths with kerb radii and a broken edge line, no strips in the sky while loading, the car's roads sooner in town; Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-23 (Unity: junctions from the map's shared nodes — side roads end on the main road's edge wherever they join it, the main road drawn through; Unity: road joins 2 — no gaps after joints next to a junction, side roads end on the main road even when graded before it, round roundabouts; Unity: roads and their lines joined — one surface across every join, junction mouths with kerb radii and a broken edge line, no strips in the sky while loading, the car's roads sooner in town; Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
 
 ## 2026-11-23
+
+### Unity: junctions from the map's shared nodes (smooth crossings P1)
+- **What was wrong.** A side road's mouth was found only where grading had marked its samples `Covered` by a road that
+  outranks it, which depends on the grading order and on heights: a side road graded before its main road (another tile),
+  a main road split into two OSM ways at the node, or a split side street crossing a main road ran on into the main road —
+  two coplanar surfaces (z-fight), its lines over the main road's, the main road's edge line across the mouth. And past the
+  slanted end of a side road meeting the main road obliquely, its square flare stations folded it over itself.
+- **Junction table** (`RoadJunctions`, new): `RoadGraph` now marks on every run the OSM nodes other ways share
+  (`RoadPolyline.Nodes`, key and S). Every node with three or more arms gets its arms (way, direction 3 m out, width, class,
+  height) from data within 30 m, in a fixed order, so the tiles on both sides of a border agree. A node with a through pair
+  (one width, turning < 60°, the best-ranked, no side arm of a better class, ≤ 0.3 m height step) is **Priority**; others
+  stay **Fallback** with a reason (no through pair, merges under 32°, bridges/tunnels within 30 m, more than 6 arms, …)
+  and are drawn exactly as before.
+- **Cuts** (`RibbonMesh.PlanJunctions`): at a Priority node the through pair is drawn unbroken (mitred when it is two ways)
+  and every other arm ends where its centre crosses the main road's carriageway edge — found on the main road's own pieces,
+  a split main road included — with a second station on the main road's shoulder line and the kerb flare beyond it. The
+  main road's shoulder and skirt are left out exactly between the side road's two corners, which the two surfaces share
+  (corner stations on the main road), instead of the shader's approximate taper; its edge line breaks exactly there.
+  Driveways a few metres apart get smaller kerb radii so their mouths do not overlap.
+- **Survey** (`PreviewShots -previewContinuity`, joins): per-junction rows (`joins_junctions.csv`: kind, reason, overlap and
+  gap area within 12 m), mouths split by ways at the node and by where the overlap starts, the arms and hits of bad cases,
+  and the tile's runs around a few of them (`joins_runs.txt`) for an EditMode repro.
+- **Numbers** (same spots and code paths, 4b83ffd → now): two-surface mouths Lillehammer 5758 → 3875, Drammen 6913 → 4856,
+  Sauda 800 → 551, Vinje 356 → 248 (about −31 %); main edge line painted across a mouth 286 → 123, 481 → 142, 36 → 19,
+  23 → 12. Joints not joined 202 → 200, 526 → 503, 33 → 33, 9 → 9; centre dashes broken 0/5/0/0 unchanged; joint gaps
+  65 → 71, 144 → 140, 21 → 21, 6 → 6 (Lillehammer: 18 new, 12 fixed, all at the carriageway edge within ~10 m of a junction).
+  Of 7613 junction nodes in Lillehammer 6387 are Priority (84 %).
+- Cost: frame-time medians within +4 % at Lillehammer and Toten, chase and drive (averages unusable this session: external GPU waits hit HEAD too); building a town tile's ribbon
+  takes 25–40 % longer (editor: ~85 → ~110 ms), over the plan's budget — open.
+- Not yet (plan P2–P6): no junction polygon or kerb line around the corner, Crossing nodes and shallow merges, clusters of
+  short ways and dual carriageways (two 10.5 m ribbons 4.5 m apart) still overlap; jagged acute corners on curved main roads.
+- Tests: `RoadJunctionTests` (13: T on a through and a split main road at 90° and 65°, edge line broken only between the
+  corners, a split street crossing a main road, a crossing of split streets, a T 3 m from a tile border built by both
+  tiles, fallbacks built exactly as without the table ×3, a short side way joined inside its cut, node marks on runs);
+  EditMode 359 → 372, PlayMode 30.
 
 ### Unity: road joins 2 — joint gaps, side road ends, round curves
 - **Gaps across the road after a joint** (the "joint ribbon gaps" that rose in 33517c5). `ProfileGrader.SmoothThrough` pulled

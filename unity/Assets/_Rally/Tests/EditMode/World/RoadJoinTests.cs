@@ -34,13 +34,13 @@ namespace Rally.Tests.World
 
         static RoadGraphData Data(params RoadWay[] ways) { var d = new RoadGraphData(); d.Ways.AddRange(ways); return d; }
 
-        struct Surface { public float Y, U, V, MouthNeg, MouthPos; }
+        internal struct Surface { public float Y, U, V, MouthNeg, MouthPos; }
 
         /// <summary>
         /// Every ribbon surface drawn over the point (a point on an edge two triangles share counts once). Rally/Road leaves out
         /// a road's shoulder and skirt in a junction mouth on that side (|UV2| &lt; RibbonMesh.MouthKeep): not drawn.
         /// </summary>
-        static List<Surface> At(Mesh m, Utm33 origin, double2 p)
+        internal static List<Surface> At(Mesh m, Utm33 origin, double2 p)
         {
             var v = m.vertices; var t = m.triangles; var uv = m.uv;
             var uv2 = new List<Vector2>(); m.GetUVs(2, uv2);

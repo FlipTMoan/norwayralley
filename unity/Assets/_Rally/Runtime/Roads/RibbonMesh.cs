@@ -29,6 +29,11 @@ namespace Rally.Roads
     /// radius (<see cref="MouthRadius"/>); the main road's edge line is broken and its shoulder left out across the mouth
     /// (UV2, Rally/Road), so the two surfaces never overlap. It used to run on 0–5 m into the main road, both ribbons
     /// coplanar (z-fight), the side road's lines over the main road's and the main road's edge line across the mouth.</para>
+    /// <para><b>Junctions</b> (2026-11-23, plan_20261122_smooth_crossings P1): side roads are found from the OSM nodes the runs share
+    /// (<see cref="RoadJunctions"/>), not from Covered and the grading order: at a Priority node the through pair is drawn unbroken
+    /// and every other arm ends on its carriageway edge with a second station on its shoulder line; the main road's shoulder and
+    /// skirt are left out exactly between the side road's corners (<see cref="PlanJunctions"/>). Fallback nodes keep the mouths
+    /// from Covered and the shader's <see cref="MouthKeep"/> taper.</para>
     /// </summary>
     public static class RibbonMesh
     {
@@ -80,6 +85,9 @@ namespace Rally.Roads
             /// <summary>Near a mouth: no row past the main road's edge (the line through <see cref="EdgeP"/>, <see cref="EdgeIn"/> pointing into
             /// the main road); a row that would be is slid back along <see cref="Into"/> (the run's way into the main road) onto it.</summary>
             public bool Clip; public double2 EdgeP, EdgeIn, Into;
+            /// <summary>At a junction cut (<see cref="Cut.HasBand"/>): the flare on side <see cref="CapSide"/> (the acute corner of an oblique
+            /// entry) is at most <see cref="FlareCap"/>, so its rows stay outside the main road's shoulder line instead of folding back onto it.</summary>
+            public int CapSide; public float FlareCap;
         }
 
         /// <summary>One run's stations, its drawn stretches (along S) and the mouths other runs open in its edges.</summary>
@@ -89,24 +97,51 @@ namespace Rally.Roads
             /// <summary>Covered: <see cref="RoadSample.Covered"/>, or a way end on a road that outranks it (<see cref="EndsOnOtherRoads"/>).</summary>
             public bool[] Cov;
             public List<(float a, float b)> Drawn = new List<(float, float)>();
-            public List<(float s, Station x, float r, bool coveredAfter, double2 edgeIn, double2 into)> Cuts;
+            public List<Cut> Cuts;
             public List<(float c, float h, int side)> Mouths;
+            /// <summary>On a main road at a junction (<see cref="JunctionKind.Priority"/>): the stations at the side roads' corners, and
+            /// the stretches (along S) where its shoulder and skirt on that side are left out (the side road's surface is there).</summary>
+            public List<Station> Inserts;
+            public List<(float a, float b, int side)> Gaps;
         }
+
+        /// <summary>Where a side road's ribbon ends on a main road: its end station on the main road's carriageway edge (S), from
+        /// a junction also a station on the main road's shoulder line (<see cref="SB"/>, <see cref="Band"/>), and the kerb radius flared
+        /// from there outwards.</summary>
+        sealed class Cut
+        {
+            public float S, R; public Station End; public bool CoveredAfter; public double2 EdgeIn, Into;
+            public bool HasBand; public Station Band; public float SB;
+            /// <summary>How far the band station's rows reach out past its centre (slid along the side road onto the shoulder line of a
+            /// main road it meets obliquely): the flare starts beyond them, or its square stations cross the slanted one (a fold).</summary>
+            public float Shift;
+            /// <summary>Where the flare starts (past the shoulder line from a junction, else the edge).</summary>
+            public float Base => HasBand ? SB + (CoveredAfter ? -Shift : Shift) : S;
+        }
+
+        /// <summary>Diagnostics (the editor's join survey): every Build's junction table, with the tile it was built for and its runs.</summary>
+        public static System.Action<Bounds25833?, List<RoadJunction>, List<RoadPolyline>> JunctionsBuilt;
 
         /// <summary>
         /// Build one mesh for a tile's runs, in metres relative to <paramref name="origin"/>. A tile's runs reach TilePad into
         /// its neighbours (grading and carving need that context), so with <paramref name="own"/> only the segments whose
         /// middle lies inside the tile itself (half-open) are drawn: every stretch of road by exactly one tile. Two tiles used to
         /// draw the same 120 m at every border, from different meshes with V restarting at each run: z-fighting dashes.
-        /// The joins and mouths are worked out from the runs alone, so the two tiles at a border build the same ones.
+        /// The joins and mouths are worked out from the runs alone, so the two tiles at a border build the same ones: mouths at the
+        /// junctions of <see cref="RoadJunctions"/> first (<see cref="PlanJunctions"/>), the old <see cref="Mouths"/> from
+        /// <see cref="RoadSample.Covered"/> for the rest.
         /// </summary>
         public static Mesh Build(List<RoadPolyline> lines, Utm33 origin, Bounds25833? own = null)
         {
             var strips = new List<Strip>(lines.Count);
-            foreach (var line in lines)
+            var stripOf = new int[lines.Count];
+            for (int li = 0; li < lines.Count; li++)
             {
+                var line = lines[li];
                 var s = line.Samples;
+                stripOf[li] = -1;
                 if (s == null || s.Count < 2) continue;
+                stripOf[li] = strips.Count;
                 var st = new Strip { Line = line, Smp = s, N = new double2[s.Count], Scale = new float[s.Count], Cov = new bool[s.Count] };
                 for (int i = 0; i < s.Count; i++)
                 {
@@ -117,12 +152,20 @@ namespace Rally.Roads
                 strips.Add(st);
             }
             var grid = Grid(strips);
-            EndsOnOtherRoads(strips, grid);
+            // Junctions from the shared OSM nodes (RoadJunctions): the through pair is mitred, every other arm ends on its edge.
+            var junctions = RoadJunctions.Find(lines, own);
+            var ends = JunctionEnds(strips, stripOf, junctions, out var pairs);
+            Mitres(strips, pairs, ends);
+            var plans = PlanJunctions(strips, stripOf, junctions);
+            ends.Clear();
+            foreach (var (j, _) in plans) EndsAt(strips, stripOf, j, ends, null);
+            EndsOnOtherRoads(strips, grid, ends);
             foreach (var st in strips)
                 for (int i = 0; i + 1 < st.Smp.Count; i++)
                     if (!(st.Cov[i] && st.Cov[i + 1])) AddDrawn(st.Drawn, st.Smp[i].S, st.Smp[i + 1].S);   // inside a junction the major road's ribbon is the surface
-            Mitres(strips);
+            ApplyJunctions(strips, plans);
             Mouths(strips, grid);
+            JunctionsBuilt?.Invoke(own, junctions, lines);
 
             var verts = new List<Vertex>(4096);
             var tarmac = new List<uint>(8192); var gravel = new List<uint>(8192);
@@ -157,7 +200,8 @@ namespace Rally.Roads
                         if (q.RowP != null) { p = q.RowP[k]; y = q.RowY[k]; }
                         else
                         {
-                            float o = offset * q.Scale + math.sign(offset) * (q.Flare + (skirt ? SkirtOut : 0));
+                            float flare = q.CapSide != 0 && math.sign(offset) == q.CapSide ? math.min(q.Flare, q.FlareCap) : q.Flare;
+                            float o = offset * q.Scale + math.sign(offset) * (flare + (skirt ? SkirtOut : 0));
                             p = q.P + q.N * o;
                             if (q.Clip)
                             {
@@ -178,8 +222,10 @@ namespace Rally.Roads
                     if (i < stations.Count - 1 && IsDrawn(st.Drawn, (q.S + stations[i + 1].S) * 0.5f) && Owns(own, (q.P + stations[i + 1].P) * 0.5))
                     {
                         uint a = (uint)(baseV + i * Rows), b = (uint)(baseV + (i + 1) * Rows);
+                        int gap = GapSides(st, (q.S + stations[i + 1].S) * 0.5f);
                         for (uint k = 0; k < Rows - 1; k++)
                         {
+                            if ((gap & 1) != 0 && k <= 1 || (gap & 2) != 0 && k >= 3) continue;   // a side road's surface is there
                             // Clockwise seen from above (Unity front face) — mirrored from the three.js winding.
                             idx.Add(a + k); idx.Add(a + k + 1); idx.Add(b + k);
                             idx.Add(a + k + 1); idx.Add(b + k + 1); idx.Add(b + k);
@@ -242,14 +288,15 @@ namespace Rally.Roads
         /// that run on most nearly straight): both end stations are cut along the bisector of the two directions, widened by
         /// 1/cos of the half turn (a mitre).
         /// </summary>
-        static void Mitres(List<Strip> strips)
+        static void Mitres(List<Strip> strips, List<(int a, bool sa, int b, bool sb)> pairs, HashSet<(int, bool)> skip)
         {
+            foreach (var (a, sa, b, sb) in pairs) Mitre(strips, a, sa, b, sb);
             var ends = new Dictionary<long, List<(int strip, bool start)>>();
             for (int i = 0; i < strips.Count; i++)
             {
                 var s = strips[i].Smp;
-                Add(ends, s[0].P, (i, true));
-                Add(ends, s[s.Count - 1].P, (i, false));
+                if (!skip.Contains((i, true))) Add(ends, s[0].P, (i, true));
+                if (!skip.Contains((i, false))) Add(ends, s[s.Count - 1].P, (i, false));
             }
             foreach (var kv in ends)
             {
@@ -271,22 +318,29 @@ namespace Rally.Roads
                     if (pa < 0) continue;
                 }
                 var (ia, sa) = l[pa]; var (ib, sb) = l[pb];
-                if (ia == ib) continue;   // a loop back to its own start
-                double2 inA = Into(strips[ia].Smp, sa), inB = Into(strips[ib].Smp, sb);
-                if (math.lengthsq(inA) < 1e-8 || math.lengthsq(inB) < 1e-8) continue;
-                var t = inA - inB;     // the way through: in along A, out against B's way in
-                if (math.lengthsq(t) < 1e-6) continue;   // a hairpin back onto itself
-                t = math.normalize(t);
-                Set(strips[ia], sa, inA, t); Set(strips[ib], sb, inB, t);
+                Mitre(strips, ia, sa, ib, sb);
             }
+        }
+
+        static void Mitre(List<Strip> strips, int ia, bool sa, int ib, bool sb)
+        {
+            if (ia == ib) return;   // a loop back to its own start
+            double2 inA = Into(strips[ia].Smp, sa), inB = Into(strips[ib].Smp, sb);
+            if (math.lengthsq(inA) < 1e-8 || math.lengthsq(inB) < 1e-8) return;
+            var t = inA - inB;     // the way through: in along A, out against B's way in
+            if (math.lengthsq(t) < 1e-6) return;   // a hairpin back onto itself
+            t = math.normalize(t);
+            Set(strips[ia], sa, inA, t); Set(strips[ib], sb, inB, t);
         }
 
         static void Add(Dictionary<long, List<(int, bool)>> d, double2 p, (int, bool) e)
         {
-            long k = ((long)math.round(p.x * 100) << 32) ^ (uint)(long)math.round(p.y * 100);
+            long k = EndKey(p);
             if (!d.TryGetValue(k, out var l)) d[k] = l = new List<(int, bool)>(2);
             l.Add(e);
         }
+
+        static long EndKey(double2 p) => ((long)math.round(p.x * 100) << 32) ^ (uint)(long)math.round(p.y * 100);
 
         /// <summary>The unit direction of the run's end segment, pointing into its end point.</summary>
         static double2 Into(List<RoadSample> s, bool start)
@@ -345,7 +399,7 @@ namespace Rally.Roads
         /// over the main road's (z-fight; 5 800 of 8 100 mouths in Lillehammer, 2026-11-22). Decided from the runs alone, so
         /// both tiles at a border decide the same.
         /// </summary>
-        static void EndsOnOtherRoads(List<Strip> strips, Dictionary<long, List<(int strip, int seg)>> grid)
+        static void EndsOnOtherRoads(List<Strip> strips, Dictionary<long, List<(int strip, int seg)>> grid, HashSet<(int, bool)> skip)
         {
             const double cell = GridCell;
             for (int si = 0; si < strips.Count; si++)
@@ -355,7 +409,7 @@ namespace Rally.Roads
                 {
                     int i = e == 0 ? 0 : n - 1;
                     bool wayEnd = e == 0 ? s[0].S < 0.01f : math.abs(s[n - 1].S - st.Line.WayLength) < 0.05f;
-                    if (!wayEnd || st.Cov[i] || s[i].Bridge || s[i].Tunnel) continue;
+                    if (!wayEnd || st.Cov[i] || s[i].Bridge || s[i].Tunnel || skip.Contains((si, e == 0))) continue;   // at a junction: decided there
                     var p = s[i].P;
                     var into = math.normalizesafe(e == 0 ? s[0].P - s[1].P : s[n - 1].P - s[n - 2].P);
                     if (GoesOn(strips, grid, si, p, into)) continue;   // a road split into ways at a junction is the through road
@@ -403,12 +457,7 @@ namespace Rally.Roads
             return false;
         }
 
-        /// <summary>The rank grading uses (RoadGraph: major class first, then the longer way, then the lower id).</summary>
-        static bool Outranks(RoadPolyline a, RoadPolyline b)
-        {
-            byte ca = RoadGraph.ClassOf(a.Kind), cb = RoadGraph.ClassOf(b.Kind);
-            return ca != cb ? ca < cb : a.WayLength != b.WayLength ? a.WayLength > b.WayLength : a.Id < b.Id;
-        }
+        static bool Outranks(RoadPolyline a, RoadPolyline b) => RoadJunctions.Outranks(a, b);
 
         static void Mouths(List<Strip> strips, Dictionary<long, List<(int strip, int seg)>> grid)
         {
@@ -512,11 +561,453 @@ namespace Rally.Roads
                     if (mHi <= mLo) continue;
                     var edgeIn = new double2(-edgeDir.y, edgeDir.x);
                     if (math.dot(edgeIn, m.Smp[ex].P - x) < 0) edgeIn = -edgeIn;
-                    (st.Cuts ??= new List<(float, Station, float, bool, double2, double2)>()).Add((sx, end, r, coveredAfter, edgeIn, coveredAfter ? ts : -ts));
+                    (st.Cuts ??= new List<Cut>()).Add(new Cut { S = sx, End = end, R = r, CoveredAfter = coveredAfter, EdgeIn = edgeIn, Into = coveredAfter ? ts : -ts });
                     if (coveredAfter) Undraw(st.Drawn, sx, s[c].S); else Undraw(st.Drawn, s[c].S, sx);
                     (m.Mouths ??= new List<(float, float, int)>()).Add(((mLo + mHi) * 0.5f, (mHi - mLo) * 0.5f + 0.05f, side));
                 }
             }
+        }
+
+        // ---- Junctions (RoadJunctions, 2026-11-23): mouths from the shared OSM nodes, not from Covered and the grading order --------
+
+        /// <summary>A main road's piece at a junction: a through arm's strip, its samples within <see cref="RoadJunctions.ArmReach"/> of
+        /// the node (J0..J1), and the side of it (along ∓N) a side road leaves on.</summary>
+        struct Piece { public int Strip, J0, J1, Side; }
+
+        /// <summary>One side arm's cut and what it does to the main road's pieces (corner stations, shoulder gaps).</summary>
+        sealed class CutPlan
+        {
+            public int Strip; public bool Forward; public float SN; public Cut Cut;
+            public readonly List<(int strip, Station t)> Tangents = new List<(int, Station)>(2);
+            public readonly List<(int strip, float lo, float hi, int side)> Gaps = new List<(int, float, float, int)>(2);
+        }
+
+        /// <summary>The run end of an arm at its node (strip, at its start), or null where the way goes on through the node.</summary>
+        static (int, bool)? RunEnd(List<Strip> strips, int[] stripOf, JunctionArm a)
+        {
+            int si = stripOf[a.Line];
+            if (si < 0) return null;
+            var s = strips[si].Smp;
+            if (a.Forward && math.abs(s[0].S - a.S) < 0.01f) return (si, true);
+            if (!a.Forward && math.abs(s[s.Count - 1].S - a.S) < 0.01f) return (si, false);
+            return null;
+        }
+
+        /// <summary>The run ends at Priority nodes (decided there: no position-matched mitre, no <see cref="EndsOnOtherRoads"/>), and the
+        /// through pairs of two run ends, which are mitred.</summary>
+        static HashSet<(int, bool)> JunctionEnds(List<Strip> strips, int[] stripOf, List<RoadJunction> junctions, out List<(int, bool, int, bool)> pairs)
+        {
+            var ends = new HashSet<(int, bool)>();
+            pairs = new List<(int, bool, int, bool)>();
+            foreach (var j in junctions) if (j.Kind == JunctionKind.Priority) EndsAt(strips, stripOf, j, ends, pairs);
+            return ends;
+        }
+
+        static void EndsAt(List<Strip> strips, int[] stripOf, RoadJunction j, HashSet<(int, bool)> ends, List<(int, bool, int, bool)> pairs)
+        {
+            (int, bool)? ta = null, tb = null;
+            int through = 0;
+            foreach (var a in j.Arms)
+            {
+                var e = RunEnd(strips, stripOf, a);
+                if (e.HasValue) ends.Add(e.Value);
+                if (a.Through) { if (through++ == 0) ta = e; else tb = e; }
+            }
+            if (pairs != null && ta.HasValue && tb.HasValue) pairs.Add((ta.Value.Item1, ta.Value.Item2, tb.Value.Item1, tb.Value.Item2));
+        }
+
+        /// <summary>
+        /// Every side arm of each Priority junction: where it ends on the main road (the through pair's pieces, a road split at the
+        /// node included), the main road's corner stations and shoulder gaps. A node where an arm cannot be cut cleanly (it does not
+        /// reach the edge, merges at under 32°, a row would not land on the edge) becomes Fallback, untouched. Grading's covered
+        /// marks near a junction that is cut here are cleared: the side arm is drawn to its cut, the main road unbroken.
+        /// </summary>
+        static List<(RoadJunction j, List<CutPlan> cuts)> PlanJunctions(List<Strip> strips, int[] stripOf, List<RoadJunction> junctions)
+        {
+            // Run ends by position: a main road's piece goes on through a joint into the run that continues it.
+            var ends = new Dictionary<long, List<(int, bool)>>();
+            for (int i = 0; i < strips.Count; i++)
+            {
+                var s = strips[i].Smp;
+                Add(ends, s[0].P, (i, true));
+                Add(ends, s[s.Count - 1].P, (i, false));
+            }
+            var nodes = new List<(RoadJunction j, Piece[] pieces, float halfM, List<CutPlan> cuts, string fail)>();
+            foreach (var j in junctions)
+            {
+                if (j.Kind != JunctionKind.Priority) continue;
+                var pieces = Pieces(strips, stripOf, ends, j, out float halfM);
+                var cuts = PlanNode(strips, stripOf, j, pieces, halfM, 1f, out var fail);
+                nodes.Add((j, pieces, halfM, cuts, fail));
+            }
+            // Side roads a few metres apart on one side of a main road (driveways): their mouths would overlap. Smaller kerb radii there.
+            foreach (var rf in new[] { 0.5f, 0f })
+            {
+                var spans = new List<(int strip, int side, float lo, float hi, int node)>();
+                for (int n = 0; n < nodes.Count; n++)
+                    if (nodes[n].fail == null)
+                        foreach (var c in nodes[n].cuts) foreach (var (si, lo, hi, side) in c.Gaps) spans.Add((si, side, lo, hi, n));
+                spans.Sort((a, b) => a.strip != b.strip ? a.strip.CompareTo(b.strip) : a.side != b.side ? a.side.CompareTo(b.side) : a.lo.CompareTo(b.lo));
+                var again = new HashSet<int>();
+                for (int k = 0; k + 1 < spans.Count; k++)
+                    for (int m = k + 1; m < spans.Count && spans[m].strip == spans[k].strip && spans[m].side == spans[k].side && spans[m].lo < spans[k].hi - 0.05f; m++)
+                    { again.Add(spans[k].node); again.Add(spans[m].node); }
+                if (again.Count == 0) break;
+                foreach (var n in again)
+                {
+                    var (j, pieces, halfM, _, _) = nodes[n];
+                    var cuts = PlanNode(strips, stripOf, j, pieces, halfM, rf, out var fail);
+                    nodes[n] = (j, pieces, halfM, cuts, fail);
+                }
+            }
+            var list = new List<(RoadJunction, List<CutPlan>)>();
+            foreach (var (j, _, _, cuts, fail) in nodes)
+            {
+                if (fail != null) { RoadJunctions.Fall(j, fail); continue; }
+                ClearCovered(strips, stripOf, j, cuts);
+                list.Add((j, cuts));
+            }
+            return list;
+        }
+
+        /// <summary>The main road's pieces at a node: each through arm's strip (its samples within reach of the node), and where an arm's run
+        /// ends within reach at a joint (one other run ends there, of the same width), the run that continues it.</summary>
+        static Piece[] Pieces(List<Strip> strips, int[] stripOf, Dictionary<long, List<(int, bool)>> ends, RoadJunction j, out float halfM)
+        {
+            var pieces = new List<Piece>(3);
+            halfM = 0;
+            void AddPiece(int si, float sAt, float reach)
+            {
+                foreach (var pc in pieces) if (pc.Strip == si) return;
+                var s = strips[si].Smp;
+                int j0 = s.Count - 1, j1 = 0;
+                for (int i = 0; i < s.Count; i++) if (math.abs(s[i].S - sAt) <= reach) { j0 = math.min(j0, i); j1 = math.max(j1, i); }
+                // Also the segment the node lies in when no sample is within reach of it.
+                for (int i = 0; i + 1 < s.Count; i++) if (s[i].S <= sAt && s[i + 1].S >= sAt) { j0 = math.min(j0, i); j1 = math.max(j1, i + 1); }
+                if (j1 > j0) pieces.Add(new Piece { Strip = si, J0 = j0, J1 = j1 });
+            }
+            foreach (var a in j.Arms)
+            {
+                if (!a.Through) continue;
+                int si = stripOf[a.Line];
+                halfM = a.Half;
+                AddPiece(si, a.S, (float)RoadJunctions.ArmReach);
+                var s = strips[si].Smp;
+                var end = a.Forward ? s[s.Count - 1] : s[0];
+                float left = (float)RoadJunctions.ArmReach - math.abs(end.S - a.S);
+                if (left <= 0 || !ends.TryGetValue(EndKey(end.P), out var at) || at.Count != 2) continue;
+                foreach (var (oi, ostart) in at)
+                {
+                    if (oi == si || strips[oi].Line.Lanes.Half != a.Half) continue;
+                    var os = strips[oi].Smp;
+                    AddPiece(oi, ostart ? os[0].S : os[os.Count - 1].S, left);
+                }
+            }
+            return pieces.ToArray();
+        }
+
+        /// <summary>The cuts of every side arm of a Priority node with kerb radii at most <paramref name="rf"/> of the full one; null and a
+        /// reason when one cannot be cut cleanly.</summary>
+        static List<CutPlan> PlanNode(List<Strip> strips, int[] stripOf, RoadJunction j, Piece[] pieces, float halfM, float rf, out string fail)
+        {
+            fail = pieces.Length == 0 ? "no main road piece" : null;
+            var cuts = new List<CutPlan>();
+            foreach (var a in j.Arms)
+            {
+                if (a.Through || fail != null) continue;
+                var c = PlanCut(strips, stripOf[a.Line], a, pieces, halfM, rf, out fail);
+                if (c != null) cuts.Add(c);
+            }
+            return fail != null ? null : cuts;
+        }
+
+        static CutPlan PlanCut(List<Strip> strips, int si, JunctionArm a, Piece[] shared, float halfM, float rf, out string fail)
+        {
+            fail = null;
+            var st = strips[si]; var s = st.Smp;
+            // The side of each main piece the side road leaves on (3 m out along it).
+            var q3 = a.At + a.Dir * 3;
+            var pieces = new Piece[shared.Length];
+            for (int k = 0; k < pieces.Length; k++)
+            {
+                var pc = shared[k]; var m = strips[pc.Strip].Smp;
+                double best = double.MaxValue; int side = 1;
+                for (int i = pc.J0; i < pc.J1; i++)
+                {
+                    double2 a0 = m[i].P, ab = m[i + 1].P - a0; double l2 = math.lengthsq(ab);
+                    if (l2 < 1e-9) continue;
+                    double d = math.distancesq(q3, a0 + ab * math.saturate(math.dot(q3 - a0, ab) / l2));
+                    if (d < best) { best = d; side = math.dot(q3 - a0, new double2(-ab.y, ab.x)) >= 0 ? 1 : -1; }
+                }
+                pc.Side = side; pieces[k] = pc;
+            }
+            // The main road's carriageway edge and shoulder line on that side, per piece (index i - J0).
+            float flat = halfM + RoadConstants.RoadShoulder;
+            var edgeLine = new double2[pieces.Length][]; var flatLine = new double2[pieces.Length][];
+            for (int k = 0; k < pieces.Length; k++)
+            {
+                int n = pieces[k].J1 - pieces[k].J0 + 1;
+                edgeLine[k] = new double2[n]; flatLine[k] = new double2[n];
+                for (int i = 0; i < n; i++) { edgeLine[k][i] = OnLine(strips, pieces[k], pieces[k].J0 + i, halfM); flatLine[k][i] = OnLine(strips, pieces[k], pieces[k].J0 + i, flat); }
+            }
+            // The side road's centre from the node outwards.
+            var walk = new List<(double2 p, float s)> { (a.At, a.S) };
+            if (a.Forward) { for (int i = 0; i < s.Count; i++) if (s[i].S > a.S + 1e-3f) { walk.Add((s[i].P, s[i].S)); if (s[i].S - a.S > RoadJunctions.ArmReach) break; } }
+            else { for (int i = s.Count - 1; i >= 0; i--) if (s[i].S < a.S - 1e-3f) { walk.Add((s[i].P, s[i].S)); if (a.S - s[i].S > RoadJunctions.ArmReach) break; } }
+            // Where it first crosses the line `off` from the main road's centre on its side (the edge, then the shoulder line).
+            bool Find(double2[][] line, float after, out double2 x, out float sx, out double2 ts, out double2 lineDir)
+            {
+                x = default; sx = 0; ts = default; lineDir = default;
+                for (int w = 0; w + 1 < walk.Count; w++)
+                {
+                    double2 p0 = walk[w].p, p1 = walk[w + 1].p, lo = math.min(p0, p1), hi = math.max(p0, p1);
+                    double bestT = double.MaxValue; int bp = -1, bs = -1;
+                    for (int k = 0; k < pieces.Length; k++)
+                        for (int i = 0; i + 1 < line[k].Length; i++)
+                        {
+                            double2 q0 = line[k][i], q1 = line[k][i + 1];
+                            if (math.any(math.min(q0, q1) > hi + 0.01) || math.any(math.max(q0, q1) < lo - 0.01)) continue;
+                            if (!Cross(p0, p1, q0, q1, out double t)) continue;
+                            float at = math.lerp(walk[w].s, walk[w + 1].s, (float)t);
+                            if (math.abs(at - a.S) < after + 1e-3f || t >= bestT) continue;
+                            bestT = t; bp = k; bs = i; x = math.lerp(p0, p1, t); sx = at;
+                        }
+                    if (bp < 0) continue;
+                    var d = math.normalizesafe(p1 - p0);
+                    ts = a.Forward ? d : -d;   // the run's own direction
+                    lineDir = math.normalizesafe(line[bp][bs + 1] - line[bp][bs]);
+                    return true;
+                }
+                return false;
+            }
+            if (!Find(edgeLine, 0, out var xe, out var se, out var tse, out var edgeDir)) { fail = "side arm does not reach the edge"; return null; }
+            if (!Find(flatLine, math.abs(se - a.S), out var xb, out var sb, out var tsb, out var bandDir)) { fail = "side arm does not reach the shoulder line"; return null; }
+            // A road merging at a shallow angle runs along the edge for metres: left to the old mouths (and to P4's taper wedge).
+            double cosA = math.abs(math.dot(tse, edgeDir));
+            if (cosA > MergeCos) { fail = "merge under 32°"; return null; }
+            float halfS = st.Line.Lanes.Half;
+            float r = MouthRadius(st.Line.Kind) * (float)math.saturate((math.sqrt(1 - cosA * cosA) - 0.5) / 0.4);
+            // Where the main road's pieces end too soon for the full kerb radius (its way ends at the next node), a smaller one.
+            Station end = default, band = default; (int piece, int seg, double mu)[] atEdge = null;
+            bool ok = false;
+            string why = null;
+            foreach (var f in new[] { 1f, 0.5f, 0f })
+            {
+                if (f > rf) continue;
+                ok = SlideStation(strips, pieces, edgeLine, xe, tse, se, LerpY(s, se), halfS, halfM, r * f, false, out end, out atEdge, ref why)
+                    && SlideStation(strips, pieces, flatLine, xb, tsb, sb, LerpY(s, sb), halfS, halfM, r * f, true, out band, out _, ref why);
+                if (ok) { r *= f; break; }
+            }
+            if (!ok) { fail = why; return null; }
+            var edgeIn = new double2(-bandDir.y, bandDir.x);
+            if (math.dot(edgeIn, a.At - xb) < 0) edgeIn = -edgeIn;
+            float shift = 0;
+            var outward = a.Forward ? tsb : -tsb;
+            for (int k = 1; k < Rows - 1; k++) shift = math.max(shift, (float)math.dot(band.RowP[k] - band.P, outward));
+            // A run that ends before the flare starts (a short way joined to the next one there) would lose its end sample, mitred
+            // with the next way's start, between the stations: a gap across the road at the joint. Left to the old mouths.
+            float flareAt = a.Forward ? sb + shift : sb - shift;
+            if (a.Forward ? s[s.Count - 1].S < flareAt + 0.5f : s[0].S > flareAt - 0.5f) { fail = "side arm ends within its cut"; return null; }
+            var plan = new CutPlan
+            {
+                Strip = si, Forward = a.Forward, SN = a.S,
+                Cut = new Cut { S = se, End = end, R = r, CoveredAfter = !a.Forward, EdgeIn = edgeIn, Into = a.Forward ? -tsb : tsb, HasBand = true, Band = band, SB = sb, Shift = shift },
+            };
+            // The main road's stations at the two corners (rows 1 and 4 of the side road's ends): its edge row on the side road's end, its
+            // shoulder row on the side road's shoulder-line station, so the two surfaces share that boundary exactly.
+            var tanAt = new (int piece, float s)[2];
+            for (int ci = 0; ci < 2; ci++)
+            {
+                int c = ci == 0 ? 1 : 4;
+                var (pi, seg, mu) = atEdge[c];
+                var pc = pieces[pi]; var m = strips[pc.Strip];
+                var t = RowsAt(m, seg, (float)mu);
+                int e = pc.Side < 0 ? 2 : 3, sh = pc.Side < 0 ? 1 : 4, sk = pc.Side < 0 ? 0 : 5;
+                t.RowP[e] = end.RowP[c]; t.RowY[e] = end.RowY[c];
+                t.RowP[sh] = band.RowP[c]; t.RowY[sh] = band.RowY[c];
+                t.RowP[sk] = band.RowP[c] + math.normalizesafe(band.RowP[c] - end.RowP[c]) * SkirtOut; t.RowY[sk] = band.RowY[c] - SkirtDrop;
+                plan.Tangents.Add((pc.Strip, t));
+                tanAt[ci] = (pi, t.S);
+            }
+            // Each piece's stretch between the corners (a piece that ends at the node between them: to its end).
+            for (int k = 0; k < pieces.Length; k++)
+            {
+                float s1 = tanAt[0].piece == k ? tanAt[0].s : ProjectS(strips, pieces[k], end.RowP[1]);
+                float s4 = tanAt[1].piece == k ? tanAt[1].s : ProjectS(strips, pieces[k], end.RowP[4]);
+                float lo = math.min(s1, s4), hi = math.max(s1, s4);
+                if (hi - lo > 0.05f) plan.Gaps.Add((pieces[k].Strip, lo, hi, pieces[k].Side));
+            }
+            return plan;
+        }
+
+        /// <summary>The point <paramref name="off"/> from the piece's centre on its side at sample i (as its rows are laid out).</summary>
+        static double2 OnLine(List<Strip> strips, Piece pc, int i, float off)
+        {
+            var m = strips[pc.Strip];
+            return m.Smp[i].P + m.N[i] * (pc.Side * off * m.Scale[i]);
+        }
+
+        /// <summary>
+        /// A side road's end cross-section on a line along the main road (<paramref name="line"/> per piece: its carriageway edge, or its
+        /// shoulder line when <paramref name="band"/>): each row slid along the side road onto that line, at the main
+        /// road's surface height there (the shoulder rows of the band station at the main road's shoulder height). No skirts (the skirt rows
+        /// are the shoulder rows): between the edge and the shoulder line a skirt would hang under the main road's shoulder. False when a row
+        /// does not land on the line within 1.5 times its offset (3 times without a kerb radius).
+        /// </summary>
+        static bool SlideStation(List<Strip> strips, Piece[] pieces, double2[][] line, double2 x, double2 ts, float sx, float y, float halfS, float halfM, float r, bool band,
+            out Station q, out (int piece, int seg, double mu)[] at, ref string why)
+        {
+            double2 ns = new double2(-ts.y, ts.x);
+            q = new Station { P = x, N = ns, Scale = 1, S = sx, Y = y, RowP = new double2[Rows], RowY = new float[Rows] };
+            at = new (int, int, double)[Rows];
+            for (int k = 1; k < Rows - 1; k++)
+            {
+                float offset = k <= 2 ? -(k == 2 ? halfS : halfS + RoadConstants.RoadShoulder) : (k == 3 ? halfS : halfS + RoadConstants.RoadShoulder);
+                float o = offset + math.sign(offset) * r;
+                double2 a0 = ns * o;
+                double lambda = double.NaN;
+                for (int pi = 0; pi < pieces.Length; pi++)
+                    for (int jj = 0; jj + 1 < line[pi].Length; jj++)
+                    {
+                        int j = pieces[pi].J0 + jj;
+                        double2 e0 = line[pi][jj], ed = line[pi][jj + 1] - e0;
+                        double den = ts.x * -ed.y + ed.x * ts.y;
+                        if (math.abs(den) < 1e-9) continue;
+                        double2 w = e0 - (x + a0);
+                        double l = (w.x * -ed.y + ed.x * w.y) / den, mu = (ts.x * w.y - ts.y * w.x) / den;
+                        if (mu < -1e-6 || mu > 1 + 1e-6) continue;
+                        if (double.IsNaN(lambda) || math.abs(l) < math.abs(lambda)) { lambda = l; at[k] = (pi, j, math.saturate(mu)); }
+                    }
+                // A row slid far along the main road (an oblique entry, a tight bend) is a long sliver: allowed a little further without a radius.
+                if (double.IsNaN(lambda) || math.abs(lambda) > (r > 0 ? 1.5 : 3) * math.abs(o)) { why = double.IsNaN(lambda) ? "a row past the main road's piece" : "a row slid too far along the main road"; return false; }
+                var p = x + a0 + ts * lambda;
+                q.RowP[k] = p;
+                float lift = band && k != 2 && k != 3 ? RoadConstants.SurfaceLift(halfM + RoadConstants.RoadShoulder, halfM) : RoadConstants.SurfaceLift(0, halfM);
+                q.RowY[k] = PiecesY(strips, pieces, p) + RoadConstants.RoadLift + lift;
+            }
+            q.RowP[0] = q.RowP[1]; q.RowY[0] = q.RowY[1]; at[0] = at[1];
+            q.RowP[5] = q.RowP[4]; q.RowY[5] = q.RowY[4]; at[5] = at[4];
+            return true;
+        }
+
+        /// <summary>The main road's graded height at the point (projected on the nearest piece's centre line).</summary>
+        static float PiecesY(List<Strip> strips, Piece[] pieces, double2 p)
+        {
+            double best = double.MaxValue; float y = 0;
+            foreach (var pc in pieces)
+            {
+                var m = strips[pc.Strip].Smp;
+                for (int j = pc.J0; j < pc.J1; j++)
+                {
+                    double2 a = m[j].P, ab = m[j + 1].P - a; double l2 = math.lengthsq(ab);
+                    if (l2 < 1e-9) continue;
+                    double t = math.saturate(math.dot(p - a, ab) / l2), d = math.distancesq(p, a + ab * t);
+                    if (d < best) { best = d; y = math.lerp(m[j].RoadY, m[j + 1].RoadY, (float)t); }
+                }
+            }
+            return y;
+        }
+
+        /// <summary>S of the point projected on the piece's centre line (clamped to its samples near the node).</summary>
+        static float ProjectS(List<Strip> strips, Piece pc, double2 p)
+        {
+            var m = strips[pc.Strip].Smp;
+            double best = double.MaxValue; float s = m[pc.J0].S;
+            for (int j = pc.J0; j < pc.J1; j++)
+            {
+                double2 a = m[j].P, ab = m[j + 1].P - a; double l2 = math.lengthsq(ab);
+                if (l2 < 1e-9) continue;
+                double t = math.saturate(math.dot(p - a, ab) / l2), d = math.distancesq(p, a + ab * t);
+                if (d < best) { best = d; s = math.lerp(m[j].S, m[j + 1].S, (float)t); }
+            }
+            return s;
+        }
+
+        /// <summary>A station on the main road at fraction <paramref name="mu"/> of segment j: every row interpolated between the rows of
+        /// samples j and j + 1, so it lies exactly on the lines its quads are drawn along.</summary>
+        static Station RowsAt(Strip m, int j, float mu)
+        {
+            var s = m.Smp; float half = m.Line.Lanes.Half;
+            var q = new Station
+            {
+                P = math.lerp(s[j].P, s[j + 1].P, mu), N = math.normalizesafe(math.lerp(m.N[j], m.N[j + 1], mu)), Scale = 1,
+                Y = math.lerp(s[j].RoadY, s[j + 1].RoadY, mu), S = math.lerp(s[j].S, s[j + 1].S, mu),
+                Inside = math.lerp(Tunnels.InsideWeight(s[j], m.Line.WayLength), Tunnels.InsideWeight(s[j + 1], m.Line.WayLength), mu),
+                RowP = new double2[Rows], RowY = new float[Rows],
+            };
+            for (int k = 0; k < Rows; k++)
+            {
+                float offset = k <= 2 ? -(k == 2 ? half : half + RoadConstants.RoadShoulder) : (k == 3 ? half : half + RoadConstants.RoadShoulder);
+                bool skirt = k == 0 || k == 5;
+                float extra = math.sign(offset) * (skirt ? SkirtOut : 0);
+                q.RowP[k] = math.lerp(s[j].P + m.N[j] * (offset * m.Scale[j] + extra), s[j + 1].P + m.N[j + 1] * (offset * m.Scale[j + 1] + extra), mu);
+                q.RowY[k] = q.Y + RoadConstants.RoadLift + RoadConstants.SurfaceLift(math.abs(offset), half) - (skirt ? SkirtDrop : 0);
+            }
+            return q;
+        }
+
+        /// <summary>
+        /// Grading's covered marks near a junction cut here belong to that junction: cleared on the side arms to past their cut (and the
+        /// rest of a covered stretch from the node), on the through arms over the side roads' width (else a main piece that a longer
+        /// side road outranks in grading had a hole there).
+        /// </summary>
+        static void ClearCovered(List<Strip> strips, int[] stripOf, RoadJunction j, List<CutPlan> cuts)
+        {
+            float throughLim = 0;
+            foreach (var a in j.Arms)
+            {
+                if (a.Through) continue;
+                foreach (var t in j.Arms)
+                    if (t.Through)
+                    {
+                        double sin = math.abs(a.Dir.x * t.Dir.y - a.Dir.y * t.Dir.x);
+                        throughLim = math.max(throughLim, (float)((RoadConstants.FlatHalf(a.Half) + 1) / math.max(0.5, sin)));
+                    }
+            }
+            foreach (var a in j.Arms)
+            {
+                var st = strips[stripOf[a.Line]]; var s = st.Smp;
+                float lim = throughLim;
+                if (!a.Through) foreach (var c in cuts) if (c.Strip == stripOf[a.Line] && c.Forward == a.Forward && c.SN == a.S) lim = math.abs(c.Cut.Base - a.S) + 1;
+                int n = s.Count;
+                for (int k = 0; k < n; k++)
+                {
+                    int i = a.Forward ? k : n - 1 - k;
+                    float d = a.Forward ? s[i].S - a.S : a.S - s[i].S;
+                    if (d < -0.01f) continue;
+                    if (d > RoadJunctions.ArmReach) break;
+                    if (d <= lim) { st.Cov[i] = false; continue; }
+                    if (a.Through || !st.Cov[i]) break;
+                    st.Cov[i] = false;
+                }
+            }
+        }
+
+        static void ApplyJunctions(List<Strip> strips, List<(RoadJunction j, List<CutPlan> cuts)> plans)
+        {
+            foreach (var (_, cuts) in plans)
+                foreach (var c in cuts)
+                {
+                    var st = strips[c.Strip];
+                    if (c.Forward) Undraw(st.Drawn, c.SN - 0.01f, c.Cut.S); else Undraw(st.Drawn, c.Cut.S, c.SN + 0.01f);
+                    (st.Cuts ??= new List<Cut>()).Add(c.Cut);
+                    foreach (var (si, t) in c.Tangents) (strips[si].Inserts ??= new List<Station>()).Add(t);
+                    foreach (var (si, lo, hi, side) in c.Gaps)
+                    {
+                        var m = strips[si];
+                        (m.Gaps ??= new List<(float, float, int)>()).Add((lo, hi, side));
+                        (m.Mouths ??= new List<(float, float, int)>()).Add(((lo + hi) * 0.5f, (hi - lo) * 0.5f, side));
+                    }
+                }
+        }
+
+        /// <summary>Bit 1: the −N side's shoulder and skirt are left out at <paramref name="s"/> (a junction mouth), bit 2: the +N side's.</summary>
+        static int GapSides(Strip st, float s)
+        {
+            if (st.Gaps == null) return 0;
+            int m = 0;
+            foreach (var (a, b, side) in st.Gaps) if (s > a && s < b) m |= side < 0 ? 1 : 2;
+            return m;
         }
 
         /// <summary>Segment p0→p1 crosses q0→q1: the parameter along p0→p1.</summary>
@@ -570,19 +1061,24 @@ namespace Rally.Roads
             output.Clear();
             var s = st.Smp;
             var extra = new List<Station>();
+            if (st.Inserts != null) extra.AddRange(st.Inserts);
             if (st.Cuts != null)
-                foreach (var (sx, end, r, coveredAfter, edgeIn, into) in st.Cuts)
+                foreach (var c in st.Cuts)
                 {
-                    extra.Add(end);
+                    extra.Add(c.End);
+                    if (c.HasBand) extra.Add(c.Band);
+                    var edge = c.HasBand ? c.Band : c.End;
+                    float r = c.R, sx = c.Base;
                     // Flare stations back from the edge (S decreasing when the road runs into the main road).
                     if (r >= 0.5f) foreach (var f in FlareAt)
                     {
-                        float at = coveredAfter ? sx - r * f : sx + r * f;
-                        if (!IsDrawn(st.Drawn, coveredAfter ? at + 0.01f : at - 0.01f)) continue;
+                        float at = c.CoveredAfter ? sx - r * f : sx + r * f;
+                        if (!IsDrawn(st.Drawn, c.CoveredAfter ? at + 0.01f : at - 0.01f)) continue;
                         var q = Interp(st, at);
                         float d = r * f;
                         q.Flare = r - math.sqrt(math.max(0f, d * (2 * r - d)));
-                        q.Clip = true; q.EdgeP = end.P; q.EdgeIn = edgeIn; q.Into = into;
+                        q.Clip = true; q.EdgeP = edge.P; q.EdgeIn = c.EdgeIn; q.Into = c.Into;
+                        if (c.HasBand) Cap(ref q, st.Line.Lanes.Half);
                         extra.Add(q);
                     }
                 }
@@ -595,16 +1091,33 @@ namespace Rally.Roads
                 if (ascending) while (e < extra.Count && extra[e].S < s[i].S - 1e-4f) output.Add(extra[e++]);
                 // A sample inside a flare (between a flare station and the end) keeps its place but takes the flare there.
                 var q = new Station { P = s[i].P, N = st.N[i], Scale = st.Scale[i], Y = s[i].RoadY, S = s[i].S, Inside = Tunnels.InsideWeight(s[i], st.Line.WayLength) };
+                bool inBand = false;
                 if (st.Cuts != null)
-                    foreach (var (sx, end, r, coveredAfter, edgeIn, into) in st.Cuts)
+                    foreach (var c in st.Cuts)
                     {
-                        float d = coveredAfter ? sx - q.S : q.S - sx;
-                        if (d > 0 && d < r) { q.Flare = math.max(q.Flare, r - math.sqrt(math.max(0f, d * (2 * r - d)))); q.Clip = true; q.EdgeP = end.P; q.EdgeIn = edgeIn; q.Into = into; }
+                        float r = c.R, d = c.CoveredAfter ? c.Base - q.S : q.S - c.Base;
+                        // Between the main road's edge and its shoulder line the side road is the two stations there, nothing else.
+                        if (c.HasBand && d <= 0 && (c.CoveredAfter ? c.S - q.S : q.S - c.S) > 0) inBand = true;
+                        if (d > 0 && d < r)
+                        {
+                            q.Flare = math.max(q.Flare, r - math.sqrt(math.max(0f, d * (2 * r - d)))); q.Clip = true; q.EdgeP = (c.HasBand ? c.Band : c.End).P; q.EdgeIn = c.EdgeIn; q.Into = c.Into;
+                            if (c.HasBand) Cap(ref q, st.Line.Lanes.Half);
+                        }
                     }
-                output.Add(q);
+                if (!inBand) output.Add(q);
             }
             while (e < extra.Count) output.Add(extra[e++]);
             if (!ascending) output.Sort((a, b) => a.S.CompareTo(b.S));
+        }
+
+        /// <summary>The flare on the side whose rows lean into the main road (the acute corner): capped where its shoulder row meets the
+        /// line through <see cref="Station.EdgeP"/> (the main road's shoulder line).</summary>
+        static void Cap(ref Station q, float half)
+        {
+            double k = math.dot(q.N, q.EdgeIn);
+            if (math.abs(k) < 1e-3) return;
+            q.CapSide = k > 0 ? 1 : -1;
+            q.FlareCap = (float)math.max(0, -math.dot(q.P - q.EdgeP, q.EdgeIn) / math.abs(k) - (half + RoadConstants.RoadShoulder));
         }
 
         /// <summary>A segment turning at least <see cref="CurveMinDeg"/> at either end (a radius under ~30 m) gets a station per
@@ -637,7 +1150,15 @@ namespace Rally.Roads
                 if (st.Cuts != null)
                 {
                     bool near = false;
-                    foreach (var c in st.Cuts) if (math.min(math.abs(s[i].S - c.s), math.abs(s[i + 1].S - c.s)) < c.r + 6) near = true;
+                    foreach (var c in st.Cuts) if (math.min(math.abs(s[i].S - c.Base), math.abs(s[i + 1].S - c.Base)) < c.R + 6) near = true;
+                    if (near) continue;
+                }
+                if (st.Gaps != null)
+                {
+                    // Not across a junction mouth: the side road's rows sit on the edge between the samples.
+                    bool near = false;
+                    float lo = math.min(s[i].S, s[i + 1].S) - 1, hi = math.max(s[i].S, s[i + 1].S) + 1;
+                    foreach (var (a, b, _) in st.Gaps) if (b > lo && a < hi) near = true;
                     if (near) continue;
                 }
                 double2 p1 = s[i].P, p2 = s[i + 1].P;

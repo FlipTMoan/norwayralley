@@ -28,7 +28,11 @@ namespace Rally.Editor
     /// the side road's own surface (and lines) inside the main road's edge line, and whether the main road's edge line is
     /// painted across the mouth.</item>
     /// </list>
-    /// Writes DIR/joins.txt, DIR/joins.csv and DIR/joins_spots.txt (a town junction, a T-junction on a main road, a joint in
+    /// <item><b>junction</b> (2026-11-23): every node of two or more ways that is not two ways end to end. On a 0.5 m grid within
+    /// <see cref="JunctionProbeR"/> of the node: <b>overlap area</b> (two surfaces within 0.15 m of each other) and <b>gap area</b>
+    /// (no surface within the carriageway of a way at the node); its kind (Priority / Fallback and why) from the junction table the
+    /// ribbon built (<c>RibbonMesh.JunctionsBuilt</c>, read by reflection, so an older build is surveyed too: kind "n/a").</item>
+    /// Writes DIR/joins.txt, DIR/joins.csv, DIR/joins_junctions.csv and DIR/joins_spots.txt (a town junction, a T-junction on a main road, a joint in
     /// a bend, a tile border: the worst of each, shot as join_*); <c>-previewJoinSpots FILE</c> shoots those places instead.
     /// </summary>
     public static partial class PreviewShots
@@ -41,6 +45,49 @@ namespace Rally.Editor
         static List<RMesh> jMeshes;
         static Dictionary<long, List<(int m, int t)>> jGrid;
         static float dashShift;
+        /// <summary>The junction tables the ribbon built, per tile (latest build wins): its own bounds and the list (RoadJunction objects).</summary>
+        static readonly Dictionary<string, (Bounds25833? own, IList list)> jTables = new Dictionary<string, (Bounds25833?, IList)>();
+        static readonly Dictionary<string, List<RoadPolyline>> jLines = new Dictionary<string, List<RoadPolyline>>();
+        const double JunctionProbeR = 12;
+
+        static void OnJunctions(Bounds25833? own, object list, object lines)
+        {
+            string k = own.HasValue ? FormattableString.Invariant($"{own.Value.MinE:0},{own.Value.MinN:0}") : "-";
+            if (list is IList l) jTables[k] = (own, l);
+            if (lines is List<RoadPolyline> rl) jLines[k] = rl;
+        }
+
+        /// <summary>The owning tile's runs within 45 m of a node, as text (a repro for an EditMode test).</summary>
+        static void DumpRuns(StringBuilder sb, double2 p)
+        {
+            foreach (var kv in jTables)
+            {
+                if (!RibbonMesh.Owns(kv.Value.own, p) || !jLines.TryGetValue(kv.Key, out var lines)) continue;
+                sb.Append(FormattableString.Invariant($"NODE {p.x:0.000} {p.y:0.000}\n"));
+                foreach (var l in lines)
+                {
+                    bool near = false;
+                    foreach (var q in l.Samples) if (math.distance(q.P, p) < 45) { near = true; break; }
+                    if (!near) continue;
+                    sb.Append(FormattableString.Invariant($"RUN {l.Id} {l.Kind} {l.Lanes.Half} {l.Lanes.Cut} {(l.Paved ? 1 : 0)} {l.WayLength:R}"));
+                    // RoadPolyline.Nodes by reflection: the survey also runs on builds from before the junction table.
+                    if (typeof(RoadPolyline).GetField("Nodes")?.GetValue(l) is IEnumerable nodes)
+                        foreach (var t in nodes) sb.Append(FormattableString.Invariant($" N{Field(t, "Item1")}:{(float)Field(t, "Item2"):R}"));
+                    sb.Append('\n');
+                    foreach (var q in l.Samples)
+                        sb.Append(FormattableString.Invariant($"S {q.P.x:R} {q.P.y:R} {q.RoadY:R} {q.S:R} {(q.Covered ? 1 : 0)}{(q.Bridge ? 1 : 0)}{(q.Tunnel ? 1 : 0)}{(q.Gallery ? 1 : 0)}{(q.Portal ? 1 : 0)}\n"));
+                }
+                return;
+            }
+        }
+
+        /// <summary>Listen to RibbonMesh.JunctionsBuilt when the build has it (a delegate taking the bounds and the list).</summary>
+        static void HookJunctions()
+        {
+            var f = typeof(RibbonMesh).GetField("JunctionsBuilt", BindingFlags.Public | BindingFlags.Static);
+            if (f == null) return;
+            f.SetValue(null, Delegate.CreateDelegate(f.FieldType, typeof(PreviewShots).GetMethod(nameof(OnJunctions), BindingFlags.NonPublic | BindingFlags.Static)));
+        }
 
         static long JKey(double2 p) => ((long)math.floor(p.x / JCell) << 32) ^ (uint)(long)math.floor(p.y / JCell);
 
@@ -150,7 +197,7 @@ namespace Rally.Editor
             public string Kind; public long A, B; public double2 P, Dir; public float Y;
             public float Gap, Over, EdgeOff = -1, DashErr = -1, Step; public bool TypeChange, MapChange, Bend, Seam; public float Turn;
             // mouths
-            public float MouthGap, MouthOver, SideInside; public bool EdgeAcross, MainMarked; public byte MainClass; public int Arms;
+            public float MouthGap, MouthOver, SideInside; public bool EdgeAcross, MainMarked; public byte MainClass; public int Arms; public float MainTurn, OverAt = -1;
             public float Score; public string Why, GapWhy;
         }
 
@@ -357,6 +404,12 @@ namespace Rally.Editor
                         return best;
                     }
                     var j = new Join { Kind = "mouth", A = ws, B = main, P = p, Y = y, Seam = seam(p), MainClass = mc, Arms = arms.Count, MainMarked = false };
+                    {
+                        // How much the main road turns within 8 m either side of the node (a roundabout ring, a bend).
+                        int k0 = math.clamp(smi, 0, pm.Count - 1), kb = math.max(0, k0 - 2), kf = math.min(pm.Count - 1, k0 + 2);
+                        if (kf - k0 >= 1 && k0 - kb >= 1)
+                            j.MainTurn = math.degrees((float)math.acos(math.clamp(math.dot(math.normalizesafe(pm[k0] - pm[kb]), math.normalizesafe(pm[kf] - pm[k0])), -1, 1)));
+                    }
                     At(ps, ss == 0, 2, out var outDir); j.Dir = -outDir;
                     double2 nS = new double2(-outDir.y, outDir.x);
                     float edge = halfM - 0.35f;
@@ -372,7 +425,19 @@ namespace Rally.Editor
                             if (lat > 30) break;
                             HitsAt(q, hits);
                             bool any = Top(hits, y, out var top);
-                            if (Overlap(hits, y)) { o += 0.05f; overRun = math.max(overRun, o); } else o = 0;
+                            if (Overlap(hits, y))
+                            {
+                                o += 0.05f; overRun = math.max(overRun, o);
+                                if (o > 0.3f && j.Why == null)
+                                {
+                                    // Where the z-fight starts (metres out along the side road, at which offset) and what is there.
+                                    j.OverAt = (float)d;
+                                    var w = new StringBuilder(FormattableString.Invariant($"d {d:0.00} off {off:0.00} lat {lat:0.00}:"));
+                                    foreach (var h in hits) w.Append(FormattableString.Invariant($" [m{h.M} y{h.Y:0.000} u{h.U:0.000} v{h.V:0.00} half{h.Half:0.00}{(h.Skirt ? " skirt" : "")}]"));
+                                    j.Why = w.ToString();
+                                }
+                            }
+                            else o = 0;
                             if (lat > halfM && !any) { g += 0.05f; gapRun = math.max(gapRun, g); } else g = 0;
                             if (off == 0 && any && lat < edge - 0.1)
                             {
@@ -395,14 +460,100 @@ namespace Rally.Editor
                 }
             }
 
+            // ---- Junctions: every node of two or more ways that is not two ways end to end.
+            var kinds = new Dictionary<long, (string kind, string reason, int arms)>();
+            var armText = new Dictionary<long, string>();
+            // Every tile's verdict on a node (a node near a border is built by up to four tiles: they must agree).
+            var verdicts = new Dictionary<long, HashSet<string>>();
+            foreach (var (own, tl) in jTables.Values)
+                foreach (var o in tl)
+                {
+                    long k = (long)Field(o, "Key");
+                    if (!verdicts.TryGetValue(k, out var vs)) verdicts[k] = vs = new HashSet<string>();
+                    vs.Add(Field(o, "Kind") + " " + (string)Field(o, "Reason"));
+                }
+            int disagree = 0; foreach (var vs in verdicts.Values) if (vs.Count > 1) disagree++;
+            foreach (var (own, tl) in jTables.Values)
+                foreach (var o in tl)
+                {
+                    var jp = (double2)Field(o, "P");
+                    if (!RibbonMesh.Owns(own, jp)) continue;
+                    kinds[(long)Field(o, "Key")] = (Field(o, "Kind").ToString(), (string)Field(o, "Reason"), ((ICollection)Field(o, "Arms")).Count);
+                    var at = new StringBuilder();
+                    foreach (var a in (IEnumerable)Field(o, "Arms"))
+                        at.Append(FormattableString.Invariant($" {Field(a, "Way")}{((bool)Field(a, "Forward") ? "+" : "-")}{((bool)Field(a, "Through") ? "T" : "")}@{(float)Field(a, "S"):0.0}/h{(float)Field(a, "Half"):0.00}"));
+                    armText[(long)Field(o, "Key")] = at.ToString();
+                }
+            var jrows = new List<(long key, double2 p, int ways, string kind, string reason, int arms, float over, float gap, byte cls)>();
+            // What overlaps at junctions: the two top surfaces' parts (carriageway / shoulder) and whether they are one road's width.
+            var pairKinds = new SortedDictionary<string, float>(StringComparer.Ordinal);
+            string Part(RHit h) => h.U >= 0 && h.U <= 1 ? "carriageway" : "shoulder";
+            var segs = new List<(double2 a, double2 b, float half)>();
+            foreach (var kv in nodeWays)
+            {
+                if (kv.Value.Count < 2) continue;
+                var ids = new List<long>(); int ends = 0; bool ok = true;
+                foreach (var (w, smp) in kv.Value)
+                {
+                    if (!graded.Contains(w) || !raw.ContainsKey(w)) { ok = false; break; }
+                    if (!ids.Contains(w)) ids.Add(w);
+                    if (smp == 0 || smp == Pts(w).Count - 1) ends++;
+                }
+                if (!ok || ids.Count < 2 || kv.Value.Count == 2 && ends == 2) continue;   // a joint (two ways end to end)
+                var p = new double2((kv.Key >> 32) / 100.0, (uint)(kv.Key & 0xffffffffL) / 100.0);
+                if (!surveyed(p)) continue;
+                long top = ids[0];
+                foreach (var w in ids) if (Cls(w) < Cls(top) || Cls(w) == Cls(top) && Pts(w).Count > Pts(top).Count) top = w;
+                int ts = 0; foreach (var (w, smp) in kv.Value) if (w == top) ts = smp;
+                float y = (float)Hs(top)[ts] + Lift(top);
+                segs.Clear();
+                foreach (var w in ids)
+                {
+                    var pts = Pts(w); float h = HalfOf(w);
+                    for (int i = 0; i + 1 < pts.Count; i++)
+                        if (math.distance(pts[i], p) < JunctionProbeR + 8 || math.distance(pts[i + 1], p) < JunctionProbeR + 8) segs.Add((pts[i], pts[i + 1], h));
+                }
+                float over = 0, gap = 0;
+                for (double dx = -JunctionProbeR; dx <= JunctionProbeR + 1e-9; dx += 0.5)
+                    for (double dy = -JunctionProbeR; dy <= JunctionProbeR + 1e-9; dy += 0.5)
+                    {
+                        if (dx * dx + dy * dy > JunctionProbeR * JunctionProbeR) continue;
+                        var q = p + new double2(dx, dy);
+                        HitsAt(q, hits);
+                        if (Overlap(hits, y))
+                        {
+                            over += 0.25f;
+                            for (int a1 = 0; a1 < hits.Count; a1++)
+                                for (int b1 = a1 + 1; b1 < hits.Count; b1++)
+                                {
+                                    RHit ha = hits[a1], hb = hits[b1];
+                                    if (ha.Skirt || hb.Skirt || math.abs(ha.Y - y) >= 1.5f || math.abs(ha.Y - hb.Y) >= 0.15f) continue;
+                                    string pa = Part(ha), pb = Part(hb);
+                                    string k = (string.CompareOrdinal(pa, pb) <= 0 ? pa + "/" + pb : pb + "/" + pa) + (ha.Half == hb.Half ? ", same width" : ", widths differ") + (ha.M == hb.M ? "" : ", two tiles");
+                                    pairKinds.TryGetValue(k, out var v); pairKinds[k] = v + 0.25f;
+                                    a1 = hits.Count; break;
+                                }
+                        }
+                        bool inside = false;
+                        foreach (var (a, b, h) in segs)
+                        {
+                            double2 ab = b - a; double l2 = math.lengthsq(ab); if (l2 < 1e-9) continue;
+                            if (math.distance(q, a + ab * math.saturate(math.dot(q - a, ab) / l2)) < h - 0.15) { inside = true; break; }
+                        }
+                        if (inside && !Top(hits, y, out _)) gap += 0.25f;
+                    }
+                var (kind, reason, armsN) = kinds.TryGetValue(kv.Key, out var kk) ? kk : ("n/a", null, 0);
+                jrows.Add((kv.Key, p, ids.Count, kind, reason, armsN, over, gap, Cls(top)));
+            }
+
             // ---- Report.
             var inv = CultureInfo.InvariantCulture;
-            var csv = new StringBuilder("kind,a,b,E,N,lat,lon,gap,overlap,edge_off,dash_err,step,type_change,map_change,turn,seam,mouth_gap,mouth_over,side_inside,edge_across,main_marked,main_class,arms\n");
+            var csv = new StringBuilder("kind,a,b,E,N,lat,lon,gap,overlap,edge_off,dash_err,step,type_change,map_change,turn,seam,mouth_gap,mouth_over,side_inside,edge_across,main_marked,main_class,arms,main_turn,over_at\n");
             foreach (var j in list)
             {
                 var ll = Proj.ToLatLon(new Utm33(j.P.x, j.P.y));
-                csv.Append(string.Format(inv, "{0},{1},{2},{3:0.0},{4:0.0},{5:0.000000},{6:0.000000},{7:0.00},{8:0.00},{9:0.00},{10:0.00},{11:0.00},{12},{13},{14:0},{15},{16:0.00},{17:0.00},{18:0.00},{19},{20},{21},{22}\n",
-                    j.Kind, j.A, j.B, j.P.x, j.P.y, ll.Lat, ll.Lon, j.Gap, j.Over, j.EdgeOff, j.DashErr, j.Step, j.TypeChange ? 1 : 0, j.MapChange ? 1 : 0, j.Turn, j.Seam ? 1 : 0, j.MouthGap, j.MouthOver, j.SideInside, j.EdgeAcross ? 1 : 0, j.MainMarked ? 1 : 0, j.MainClass, j.Arms));
+                csv.Append(string.Format(inv, "{0},{1},{2},{3:0.0},{4:0.0},{5:0.000000},{6:0.000000},{7:0.00},{8:0.00},{9:0.00},{10:0.00},{11:0.00},{12},{13},{14:0},{15},{16:0.00},{17:0.00},{18:0.00},{19},{20},{21},{22},{23:0},{24:0.0}\n",
+                    j.Kind, j.A, j.B, j.P.x, j.P.y, ll.Lat, ll.Lon, j.Gap, j.Over, j.EdgeOff, j.DashErr, j.Step, j.TypeChange ? 1 : 0, j.MapChange ? 1 : 0, j.Turn, j.Seam ? 1 : 0, j.MouthGap, j.MouthOver, j.SideInside, j.EdgeAcross ? 1 : 0, j.MainMarked ? 1 : 0, j.MainClass, j.Arms, j.MainTurn, j.OverAt));
             }
             File.WriteAllText(Path.Combine(outDir, "joins.csv"), csv.ToString());
             var why = new StringBuilder();
@@ -410,7 +561,22 @@ namespace Rally.Editor
             foreach (var j in list) if (j.Why != null && j.Turn < 3 && nw++ < 30) why.Append(FormattableString.Invariant($"{j.Kind} {j.A} {j.B} at {j.P.x:0.0} {j.P.y:0.0} turn {j.Turn:0} over {j.Over:0.00}: {j.Why}\n"));
             nw = 0;
             foreach (var j in list) if (j.GapWhy != null && j.Kind == "joint" && nw++ < 30) why.Append(FormattableString.Invariant($"GAP {j.Kind} {j.A} {j.B} at {j.P.x:0.0} {j.P.y:0.0} turn {j.Turn:0} gap {j.Gap:0.00}: {j.GapWhy}\n"));
+            // Mouths with two surfaces, by the kind of their junction: where the overlap starts and what is there.
+            var shown = new Dictionary<string, int>();
+            var dump = new StringBuilder();
+            foreach (var j in list)
+            {
+                if (j.Why == null || j.Kind != "mouth") continue;
+                string jk = kinds.TryGetValue(RoadGraph.NodeKey(new Utm33(j.P.x, j.P.y)), out var kk) ? kk.kind : "none";
+                string g = jk + (j.OverAt < 3 ? " near" : " out");
+                shown.TryGetValue(g, out var c); if (c >= 400) continue; shown[g] = c + 1;
+                why.Append(FormattableString.Invariant($"MOUTH {g} {j.A} on {j.B} at {j.P.x:0.0} {j.P.y:0.0} ways {j.Arms} over {j.MouthOver:0.00}: {j.Why}\n"));
+                if (armText.TryGetValue(RoadGraph.NodeKey(new Utm33(j.P.x, j.P.y)), out var arms)) why.Append("   arms:").Append(arms).Append('\n');
+                if (verdicts.TryGetValue(RoadGraph.NodeKey(new Utm33(j.P.x, j.P.y)), out var vv) && vv.Count > 1) why.Append("   tiles: ").Append(string.Join(" | ", vv)).Append('\n');
+                if (jk == "Priority" && j.Arms == 2 && c < 6) DumpRuns(dump, j.P);
+            }
             File.WriteAllText(Path.Combine(outDir, "joins_why.txt"), why.ToString());
+            File.WriteAllText(Path.Combine(outDir, "joins_runs.txt"), dump.ToString());
             var rep = new StringBuilder($"# {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC  {(live ? "live " + query : "fake")}  joins (dash shift {dashShift})\n");
             foreach (var kind in new[] { "joint", "border" })
             {
@@ -432,6 +598,44 @@ namespace Rally.Editor
                 int bad = l.FindAll(x => x.MouthGap > 0.1f || x.MouthOver > 0.3f || x.SideInside > 0.3f || x.EdgeAcross).Count;
                 rep.Append(FormattableString.Invariant($"mouths: {l.Count} (on a marked main road {marked.Count}); not joined: {bad}; gap past the main edge > 0.1 m: {gap}; two surfaces (z-fight) > 0.3 m: {over}; side road's surface inside the main road's edge line > 0.3 m: {inside}; main edge line painted across the mouth: {across} of {marked.Count}\n"));
                 rep.Append(FormattableString.Invariant($"  mean overlap {Mean(l, x => x.MouthOver):0.00} m, mean side surface inside {Mean(l, x => x.SideInside):0.00} m\n"));
+                // The z-fight above counts two surfaces anywhere 20 m out along the side road (another junction, a dual carriageway); this
+                // only where it starts within the junction (12 m of the node).
+                rep.Append(FormattableString.Invariant($"  z-fight starting within 12 m of the node: {l.FindAll(x => x.MouthOver > 0.3f && x.OverAt >= 0 && x.OverAt < 12).Count}\n"));
+                foreach (var (name, lo, hi) in new[] { ("2 (side road onto a through way)", 2, 2), ("3 (main road split at the node)", 3, 3), ("4-5", 4, 5), ("6+", 6, 99) })
+                {
+                    var g = l.FindAll(x => x.Arms >= lo && x.Arms <= hi);
+                    rep.Append(FormattableString.Invariant($"  ways at the node {name}: {g.Count} mouths, z-fight > 0.3 m {g.FindAll(x => x.MouthOver > 0.3f).Count}, gap {g.FindAll(x => x.MouthGap > 0.1f).Count}, side inside {g.FindAll(x => x.SideInside > 0.3f).Count}\n"));
+                }
+            }
+            {
+                // Junctions: clean = under 0.5 m² of two surfaces and under 0.5 m² of carriageway without a surface within 12 m.
+                var jcsv = new StringBuilder("key,E,N,lat,lon,ways,arms,kind,reason,overlap_area,gap_area,top_class\n");
+                foreach (var r in jrows)
+                {
+                    var ll = Proj.ToLatLon(new Utm33(r.p.x, r.p.y));
+                    jcsv.Append(string.Format(inv, "{0},{1:0.0},{2:0.0},{3:0.000000},{4:0.000000},{5},{6},{7},{8},{9:0.00},{10:0.00},{11}\n", r.key, r.p.x, r.p.y, ll.Lat, ll.Lon, r.ways, r.arms, r.kind, r.reason?.Replace(',', ';') ?? "", r.over, r.gap, r.cls));
+                }
+                File.WriteAllText(Path.Combine(outDir, "joins_junctions.csv"), jcsv.ToString());
+                bool Clean((long key, double2 p, int ways, string kind, string reason, int arms, float over, float gap, byte cls) r) => r.over < 0.5f && r.gap < 0.5f;
+                int clean = jrows.FindAll(r => Clean(r)).Count;
+                float so = 0, sg = 0; foreach (var r in jrows) { so += r.over; sg += r.gap; }
+                rep.Append(FormattableString.Invariant($"junction tables: {verdicts.Count} nodes, tiles disagreeing on {disagree}\n"));
+                rep.Append(FormattableString.Invariant($"junctions: {jrows.Count}; clean (overlap and gap under 0.5 m² within {JunctionProbeR:0} m): {clean}; mean overlap area {(jrows.Count > 0 ? so / jrows.Count : 0):0.00} m², mean gap area {(jrows.Count > 0 ? sg / jrows.Count : 0):0.00} m²\n"));
+                var byKind = new SortedDictionary<string, (int n, int clean, float over, float gap)>(StringComparer.Ordinal);
+                foreach (var r in jrows)
+                {
+                    string k = r.kind + (r.reason != null ? " (" + r.reason + ")" : "");
+                    byKind.TryGetValue(k, out var v); byKind[k] = (v.n + 1, v.clean + (Clean(r) ? 1 : 0), v.over + r.over, v.gap + r.gap);
+                }
+                foreach (var kv in byKind) rep.Append(FormattableString.Invariant($"  {kv.Key}: {kv.Value.n}, clean {kv.Value.clean}, mean overlap {kv.Value.over / kv.Value.n:0.00} m², mean gap {kv.Value.gap / kv.Value.n:0.00} m²\n"));
+                foreach (var kv in pairKinds) rep.Append(FormattableString.Invariant($"  overlap {kv.Key}: {kv.Value:0} m²\n"));
+                foreach (var (name, lo, hi) in new[] { ("2", 2, 2), ("3", 3, 3), ("4-5", 4, 5), ("6+", 6, 99) })
+                {
+                    var g = jrows.FindAll(r => r.ways >= lo && r.ways <= hi);
+                    if (g.Count == 0) continue;
+                    float go = 0; foreach (var r in g) go += r.over;
+                    rep.Append(FormattableString.Invariant($"  ways at the node {name}: {g.Count}, clean {g.FindAll(r => Clean(r)).Count}, Priority {g.FindAll(r => r.kind == "Priority").Count}, mean overlap {go / g.Count:0.00} m²\n"));
+                }
             }
             // The four kinds for the before/after sheet: a town junction (most arms, residential), a T-junction on a main road
             // (class ≤ 3), a joint in a bend, a tile border — the worst of each.
@@ -447,6 +651,13 @@ namespace Rally.Editor
                 ("t_junction_main", Worst(j => j.Kind == "mouth" && j.MainClass <= 3 && j.MainMarked, j => j.MouthOver + j.SideInside + j.MouthGap + (j.EdgeAcross ? 2 : 0))),
                 ("bend_joint", Worst(j => j.Kind == "joint" && j.Bend, j => j.Gap + j.Over + math.max(0, j.EdgeOff) + math.max(0, j.DashErr))),
                 ("tile_edge", Worst(j => j.Kind == "border", j => j.Gap + j.Over + math.max(0, j.EdgeOff) + math.max(0, j.DashErr) + j.Step * 5)),
+                // Junction kinds (2026-11-23): a T on a through way, a T on a main road split at the node, a crossing of four ways,
+                // five or more, a side road onto a ring or tight bend (main turning > 25° within 8 m) — the worst of each.
+                ("t_through", Worst(j => j.Kind == "mouth" && j.Arms == 2 && j.MainTurn < 15, j => j.MouthOver + j.SideInside + j.MouthGap + (j.EdgeAcross ? 2 : 0))),
+                ("t_split_main", Worst(j => j.Kind == "mouth" && j.Arms == 3 && j.MainTurn < 15, j => j.MouthOver + j.SideInside + j.MouthGap + (j.EdgeAcross ? 2 : 0))),
+                ("x_four", Worst(j => j.Kind == "mouth" && j.Arms == 4, j => j.MouthOver + j.SideInside + j.MouthGap + (j.EdgeAcross ? 2 : 0))),
+                ("five_way", Worst(j => j.Kind == "mouth" && j.Arms >= 5, j => j.MouthOver + j.SideInside + j.MouthGap + (j.EdgeAcross ? 2 : 0))),
+                ("ring_entry", Worst(j => j.Kind == "mouth" && j.MainTurn > 25, j => j.MouthOver + j.SideInside + j.MouthGap + (j.EdgeAcross ? 2 : 0))),
             };
             var spots = new StringBuilder();
             foreach (var (name, j) in picks)
@@ -456,7 +667,7 @@ namespace Rally.Editor
             File.WriteAllText(Path.Combine(outDir, "joins.txt"), rep.ToString());
             Debug.Log("PreviewShots joins:\n" + rep);
             JoinShots(joinSpotsFile != null && File.Exists(joinSpotsFile) ? File.ReadAllText(joinSpotsFile) : spots.ToString());
-            jMeshes = null; jGrid = null;
+            jMeshes = null; jGrid = null; jTables.Clear(); jLines.Clear();
         }
 
         static float Mean(List<Join> l, Func<Join, float> f) { if (l.Count == 0) return 0; float s = 0; foreach (var j in l) s += f(j); return s / l.Count; }

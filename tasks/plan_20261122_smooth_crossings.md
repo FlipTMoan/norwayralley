@@ -396,7 +396,9 @@ per tile from `-previewLoading`.
 
 ## 5. Phases and effort (agent-days, including tests, survey, docs)
 
-- [ ] **P1, junction table and topological detection (1.5 d).**
+- [x] **P1, junction table and topological detection (1.5 d).** Done 2026-11-23 (see Review): z-fight mouths −31 %, not "most".
+  Deviations: a band station on the main road's shoulder line and an exact shoulder gap replace `MouthKeep` at Priority
+  nodes (the plan's "tangent stations" are the side road's corner rows); no `Crossing`/`Ring` kinds yet (Fallback).
   - `RoadJunction` from `RoadGraph`; `RibbonMesh.Build(lines, junctions, …)`.
   - Priority nodes use **today's** mouth geometry, but driven by topology instead of `Covered`. This fixes the side
     roads that are not Covered and the split main roads.
@@ -438,4 +440,70 @@ ship on its own.
 - **Performance**: `.ov.ribbon` is already a single-frame spike. Measure, and split it with `WorkBudget` if needed.
 
 ## Review
-(to be filled in during implementation)
+
+### P1 (2026-11-23)
+**Built.** `RoadPolyline.Nodes` (key, S of every shared OSM node on the run, `RoadGraph.SharedNodes`); `RoadJunctions.Find`
+(arms per node from data within 30 m, sorted keys, nodes within 25 m of the tile; kinds Priority / Fallback + reason);
+`RibbonMesh`: through pairs mitred from the table, side run ends left out of the position-matched mitres and of
+`EndsOnOtherRoads`; `PlanJunctions` / `PlanCut`: walk each side arm to the main road's carriageway edge and shoulder line
+(on the through arms' runs, extended through a joint), end and band stations slid onto them (`SlideStation`), flare from
+past the band station's furthest row (`Cut.Shift`) with the acute side capped (`FlareCap`), radius halved/dropped when it
+does not fit or when neighbouring mouths on one side overlap; main road: corner stations (`Inserts`) sharing the side
+road's corner points, shoulder and skirt not drawn between them (`Gaps`), UV2 = the same stretch; grading's covered marks
+near the node cleared. Fallback nodes build exactly as before (test compares the meshes). Survey: junction rows, mouths by
+ways at the node and by where the overlap starts, arms/hit dumps, runs dump for repro; hook `RibbonMesh.JunctionsBuilt`.
+
+**How it went.** The first version (topology only, today's flare) moved z-fight 5758 → 5387 and left the T-junctions
+unchanged. Hit dumps with the junction's arms showed (1) the side road folding over itself past its slanted end station
+(square flare stations crossed it) — fixed by `Shift`; (2) driveways a few metres apart whose flares overlap — smaller
+radii; (3) "a row off the main road's edge" fallbacks where the main way ends at the next node — radius retries and pieces
+through joints; (4) z-fights that are not the mouth at all: dual-carriageway trunk ways (two 10.5 m ribbons 4.5 m apart),
+other junctions within the 20 m probe, main roads folding on themselves in tight bends. A fix for a gap at joints inside a
+cut (a short side way's end sample dropped) made such nodes Fallback.
+
+**Survey, 4b83ffd → P1** (same spots; before run twice, identical):
+
+| area | z-fight mouths | z-fight starting ≤ 12 m | edge line across | joints not joined | joint gap | dashes broken | edge line offset | junctions clean (of) |
+|---|---|---|---|---|---|---|---|---|
+| Lillehammer | 5758 → 3875 | 5540 → 3584 | 286 → 123 | 202 → 200 | 65 → 71 | 0 → 0 | 1 → 1 | 123 → 1259 (7613) |
+| Drammen | 6913 → 4856 | 6639 → 4486 | 481 → 142 | 526 → 503 | 144 → 140 | 5 → 5 | 10 → 9 | 144 → 1818 (9029) |
+| Sauda | 800 → 551 | 763 → 509 | 36 → 19 | 33 → 33 | 21 → 21 | 0 → 0 | 1 → 0 | 14 → 244 (1188) |
+| Vinje | 356 → 248 | 349 → 236 | 23 → 12 | 9 → 9 | 6 → 6 | 0 → 0 | 0 → 0 | 3 → 77 (450) |
+
+Mean overlap area within 12 m of a junction 19.0 → 11.4 m² (Lillehammer), 22.1 → 12.1 (Drammen). Junction kinds:
+Lillehammer 6387 Priority of 7613 (84 %; plan target for the fallback rate < 10 % not met: 16 %), Drammen 7879 of 9029;
+Lillehammer Fallback: merge < 32° 521, a row past the main road's piece 213, a side arm ending (joined to its next way)
+inside its cut 195, a row slid too far 71, no through pair 59, side arm short of the shoulder line 58 / edge 33,
+outranked 40, height step 29, bridge/tunnel 6. Tiles disagree on 2 of 7635 nodes. Joint gaps:
+Lillehammer 18 new / 12 fixed, Drammen 41 / 45 — all at the carriageway-edge probe (± half width) within ~10 m of a
+Priority node; not explained (believed chord vs curve near cuts, where curve stations are skipped; not proven).
+
+**Bench** (1920×1080 live, median / p95 ms; HEAD 4b83ffd vs P1, run A/B and again B/A/B): Lillehammer chase 6.87 / 8.02 →
+6.85–7.03 / 7.8–8.4, drive 60 s 8.22 / 9.73 → 8.17–8.53 / 10.9–60.7 (HEAD rerun 8.14 / 12.46); Toten chase 6.64 / 7.33 → 6.69–6.77,
+drive 7.87 / 10.24 → 7.67–8.19 / 11.0–48.5 (HEAD rerun 7.85 / 11.01). Medians within +4 % (third P1 run the highest). The averages are not usable in this
+session: from the second run on, HEAD and P1 alike got 0.1–2.6 s `.gpu.veg.cull` waits (GPU contention from outside Unity; the
+first HEAD run had none), e.g. HEAD's own rerun drive average 8.68 → 11.28 ms. The persistent `vocab_probe.py` job held one core
+throughout.
+**Ribbon build** (`.ov.ribbon` per frame = one tile, `-previewLoading -previewFreshCache`, editor Mono): town tiles (top 8 of
+38/41) Lillehammer 80–89 → 110–115 ms, Drammen 79–86 → 98–116 ms; totals 1166–1229 → 1417–1555 ms and 1400–1447 → 1794–1985 ms
+(+25–40 %). Over the plan's +10 ms budget, also after precomputing the main road's lines per side arm. **Car's roads**
+(empty cache): Lillehammer 13.4 / 12.2 s (HEAD) vs 17.6 / 12.1 s, Drammen 15.5 / 20.9 s vs 20.7 / 22.1 s — network-dominated
+(Lillehammer's 17.6 s run landed its data 3.2 s later); not clearly worse, not proven equal.
+
+**Shots** (`scratchpad/crossings-p1/before_after_*.jpg`, `above_*.jpg`; same spots before/after): clearly better — the
+split-main T in Lillehammer's centre and Drammen, the X in Drammen (main road continuous with its centre dash, arms end on
+its edge), the roundabout entry on a primary (Lillehammer: the grass wedge cut into the ring is gone). New or remaining
+artefacts: a bare acute wedge with a jagged shoulder edge where a side road meets a curved main road obliquely (the capped
+acute flare; no fillet until P2), a sawtooth along the mouth on an S-bend, a small grass sliver in Drammen's five-way
+cluster, clusters and dual carriageways as before.
+
+**WebDev** rebuilt with the final code (`Build/WebDev`, exit 0). Chrome (port 8091, `?drive=61.1153,10.4663`, hidden tab):
+loading view shows the town from above, start area 100 %, ribbons applied, no console errors; START ENGINE did not register in
+the hidden tab, so the start road was not seen there (the junction views are the editor shots).
+**Tests.** `RoadJunctionTests` 13 (fail on the old ribbon except the fallback-equality and node-mark ones; the joint-gap
+one fails before its fix). EditMode 359 → 372, PlayMode 30, all green.
+
+**Open points.** Most remaining z-fights: Fallback nodes (95 % of their mouths; merges and oblique entries on curves),
+dual carriageways and clusters (P6), self-folding main roads in tight bends; the side road's end is a chord across a curved
+main edge (cm); acute corners need the P2 fillet; the 6 extra joint gaps in Lillehammer; ribbon build +25–40 % per town tile
+(split `Build` over frames with `WorkBudget`, §3.9, or profile `PlanJunctions`); benches to repeat on a quiet GPU.
