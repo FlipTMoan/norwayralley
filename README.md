@@ -6,18 +6,15 @@ anywhere in Norway straight from the national height model. Low-poly
 PS1-style visuals, drift-heavy arcade physics, generated rally stages, and
 real-road routing through OSRM from a map you open by clicking the minimap.
 
+**Grand Tour Norway (Unity):** [install Unity and run the game on Linux](unity/README.md#install-unity-and-run-the-game-on-linux)
+
 ## Repository layout
 
 - `legacy-js/` — the live Three.js game (this README describes it). All
   `npm` commands below run inside that folder.
 - `unity/` — **Grand Tour Norway**, the Unity 6 / WebAssembly rewrite in progress (GPU clipmap
   terrain, compute carving, URP, WebGPU-first, PhysX collisions, damage,
-  animals and pedestrians, endless stages). It builds and runs; it is not on
-  GitHub Pages yet (the CI build needs a Unity licence secret). To install Unity
-  6000.6.9f1 and run the game on Linux, follow
-  [unity/README.md → Install Unity and run the game on Linux](unity/README.md#install-unity-and-run-the-game-on-linux)
-  (in short: install Unity Hub from Unity's apt repository, install the editor with Web
-  Build Support, build `unity/Build/WebDev` and serve it with `python3 -m http.server`).
+  animals and pedestrians, endless stages). See [unity/README.md](unity/README.md).
   Plan: `tasks/plan_20261116_unity.md`. Car models: `unity/docs/car-models.md`.
 
 ## Run it
