@@ -126,6 +126,74 @@ namespace Rally.Tests.World
             Assert.Greater(around, 3f, $"the turn is spread over the curve on both sides ({atJoint:0.0}° at the joint, {around:0.0}° next to it)");
         }
 
+        /// <summary>
+        /// Two ways of one road end to end in a 20° bend, a side road joining the second way 20 m after the joint (a junction
+        /// node: pinned too). Pulling the junction node back onto OSM moved the joint off its node (each pinned node's offset
+        /// fades over 40 m), and only the way graded with that junction in its context ended off it: the next way started
+        /// 0.1–2.5 m away, a gap across the road (the "joint ribbon gaps" of 33517c5, 2026-11-22).
+        /// </summary>
+        [Test]
+        public void JointNextToAJunction_BothWaysEndOnTheNode_NoGapAcrossTheRoad()
+        {
+            var joint = new double2(500, 500);
+            var din = new double2(1, 0);
+            var dout = new double2(math.cos(math.radians(20)), math.sin(math.radians(20)));
+            var a = new List<double>(); var b = new List<double>();
+            for (int i = 10; i >= 0; i--) { var p = joint - din * (i * 10); a.Add(p.x); a.Add(p.y); }
+            for (int i = 0; i <= 10; i++) { var p = joint + dout * (i * 10); b.Add(p.x); b.Add(p.y); }
+            var side = joint + dout * 20;
+            var data = Data(Way(1, "secondary", a.ToArray()), Way(2, "secondary", b.ToArray()), Way(3, "residential", side.x, side.y, side.x + 20, side.y - 60));
+            var lines = new RoadGraph().SetTile(Key, data, Flat);
+            var sa = lines.Find(l => l.Id == 1).Samples; var sb = lines.Find(l => l.Id == 2).Samples;
+            Assert.Less(math.distance(sa[sa.Count - 1].P, joint), 1e-6, "the first way ends on the joint node");
+            Assert.Less(math.distance(sb[0].P, joint), 1e-6, "the second way starts on it");
+            var mesh = RibbonMesh.Build(lines, Key.Origin);
+            try
+            {
+                var t = math.normalize(din + dout); var n = new double2(-t.y, t.x);
+                float outer = RoadConstants.TwoLaneHalf + RoadConstants.RoadShoulder - 0.15f;
+                int miss = 0;
+                for (double x = -1.5; x <= 1.5; x += 0.05)
+                    for (double o = -outer; o <= outer; o += 0.25)
+                        if (At(mesh, Key.Origin, joint + t * x + n * o).Count == 0) miss++;
+                Assert.AreEqual(0, miss, "no ribbon gap across the joint");
+            }
+            finally { Object.DestroyImmediate(mesh); }
+        }
+
+        /// <summary>
+        /// A roundabout of 12 m radius sampled every 5 m (24° per sample): its ribbon was a polygon, the carriageway edge cut
+        /// straight across between samples (0.3 m inside the circle at mid-chord) and the edge lines bent at every sample.
+        /// The carriageway follows the circle within 0.15 m now.
+        /// </summary>
+        [Test]
+        public void TightCurve_CarriagewayFollowsTheCircle_NotAPolygon()
+        {
+            const double R = 12; var c = new double2(500, 500);
+            var samples = new List<RoadSample>();
+            int n = (int)(1.5 * math.PI * R / 5);
+            for (int i = 0; i <= n; i++)
+            {
+                double a = i * 5 / R;
+                samples.Add(new RoadSample { P = c + R * new double2(math.cos(a), math.sin(a)), RoadY = 100, S = i * 5f });
+            }
+            float half = RoadConstants.OneLaneHalf;
+            var line = new RoadPolyline { Id = 1, Kind = "residential", Lanes = new LaneSpec(half, 6), Paved = true, Samples = samples, Length = n * 5f, WayLength = n * 5f };
+            var mesh = RibbonMesh.Build(new List<RoadPolyline> { line }, Key.Origin);
+            try
+            {
+                int off = 0;
+                for (double a = 10 / R; a <= (n - 2) * 5 / R; a += 0.01)
+                    foreach (var r in new[] { R + half - 0.15, R - half + 0.15 })
+                    {
+                        var hits = At(mesh, Key.Origin, c + r * new double2(math.cos(a), math.sin(a)));
+                        if (hits.Count != 1 || hits[0].U < 0 || hits[0].U > 1) off++;
+                    }
+                Assert.AreEqual(0, off, "points 0.15 m inside the circle's carriageway edges are on the carriageway");
+            }
+            finally { Object.DestroyImmediate(mesh); }
+        }
+
         // ---- Centre dashes across a join -----------------------------------------------------------------------
 
         [TestCase(false)]
@@ -222,6 +290,62 @@ namespace Rally.Tests.World
                 for (double y = 500 + halfM + 0.02; y <= 500 + halfM + 12; y += 0.1)
                     for (double x = 500 - halfS + 0.1; x <= 500 + halfS - 0.1; x += 0.5)
                         Assert.AreEqual(1, At(mesh, Key.Origin, new double2(x, y)).Count, $"the side road at {x:0.00}, {y:0.00}");
+            }
+            finally { Object.DestroyImmediate(mesh); }
+        }
+
+        /// <summary>
+        /// The side road graded before the main road came in (another tile), or off its height: grading never marked it covered
+        /// on the main road, and its ribbon ran on into it, two surfaces over the main road's carriageway (z-fight; 5 800 of 8 100
+        /// mouths in Lillehammer, 2026-11-22). Its way end on the main road's band ends it on the main road's edge all the same.
+        /// </summary>
+        [TestCase(0f)]
+        [TestCase(0.8f)]
+        public void SideRoadNotMarkedCovered_StillEndsOnTheMainRoadsEdge(float offHeight)
+        {
+            var lines = Tee(out _);
+            var side = lines.Find(l => l.Id == 2).Samples;
+            for (int i = 0; i < side.Count; i++) { var q = side[i]; q.Covered = false; q.RoadY += offHeight; side[i] = q; }
+            var mesh = RibbonMesh.Build(lines, Key.Origin);
+            try
+            {
+                float halfM = RoadConstants.TwoLaneHalf, halfS = RoadConstants.OneLaneHalf;
+                for (double y = 500 - halfM + 0.1; y <= 500 + halfM - 0.05; y += 0.1)
+                    for (double x = 500 - halfS; x <= 500 + halfS; x += 0.25)
+                        Assert.AreEqual(1, At(mesh, Key.Origin, new double2(x, y)).Count, $"one surface at {x:0.00}, {y:0.00}");
+                for (double y = 500 + halfM + 0.02; y <= 500 + halfM + 12; y += 0.1)
+                    for (double x = 500 - halfS + 0.1; x <= 500 + halfS - 0.1; x += 0.5)
+                        Assert.AreEqual(1, At(mesh, Key.Origin, new double2(x, y)).Count, $"the side road at {x:0.00}, {y:0.00}");
+            }
+            finally { Object.DestroyImmediate(mesh); }
+        }
+
+        /// <summary>
+        /// A crossing of two streets, each split into two ways at the node (four way ends, four lengths), none marked covered by
+        /// grading. A guard for <c>RibbonMesh.EndsOnOtherRoads</c>: in Drammen it took every arm's end for a side road of another
+        /// arm and cut them all back, leaving the middle of the crossing bare (2026-11-23); a way that goes on through the node
+        /// in another way is now left as it is. (This layout did not show the hole without the fix: which arm Mouths picks as
+        /// the main road depends on the order of the runs.)
+        /// </summary>
+        [Test]
+        public void CrossingOfSplitStreets_NoHoleInTheMiddle()
+        {
+            var data = Data(Way(1, "residential", 300, 500, 400, 500, 500, 500), Way(2, "residential", 500, 500, 600, 500, 650, 500),
+                Way(3, "residential", 500, 200, 400 + 100, 350, 500, 500), Way(4, "residential", 500, 500, 500, 620, 500, 750));
+            var lines = new RoadGraph().SetTile(Key, data, Flat);
+            foreach (var l in lines) { var sm = l.Samples; for (int i = 0; i < sm.Count; i++) { var q = sm[i]; q.Covered = false; sm[i] = q; } }
+            var mesh = RibbonMesh.Build(lines, Key.Origin);
+            try
+            {
+                float h = RoadConstants.OneLaneHalf - 0.1f;
+                int miss = 0;
+                for (double a = -10; a <= 10; a += 0.25)
+                    for (double b = -h; b <= h; b += 0.25)
+                    {
+                        if (At(mesh, Key.Origin, new double2(500 + a, 500 + b)).Count == 0) miss++;
+                        if (At(mesh, Key.Origin, new double2(500 + b, 500 + a)).Count == 0) miss++;
+                    }
+                Assert.AreEqual(0, miss, "both streets drawn through the crossing");
             }
             finally { Object.DestroyImmediate(mesh); }
         }

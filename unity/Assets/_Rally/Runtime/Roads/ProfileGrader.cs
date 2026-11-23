@@ -162,21 +162,31 @@ namespace Rally.Roads
             var along = new double[p.Count];
             for (int i = 1; i < p.Count; i++) along[i] = along[i - 1] + math.distance(p[i], p[i - 1]);
             int from = 0;
+            var pins = new List<(int k, int best)>();
             for (int k = 1; k < points.Count - 1; k++)
             {
                 if (!pinned.Contains(k)) continue;
                 int best = from; double bestD = double.PositiveInfinity;
                 for (int i = from; i < p.Count; i++) { double d = math.distancesq(p[i], points[k]); if (d < bestD) { bestD = d; best = i; } }
-                var offset = points[k] - p[best];
-                for (int i = 0; i < p.Count; i++)
-                {
-                    double w = 1 - math.abs(along[i] - along[best]) / fadeM;
-                    if (w > 0 && i > 0 && i < p.Count - 1) p[i] += offset * w;
-                }
-                p[best] = points[k];
+                pins.Add((k, best));
                 if (at != null) at[k] = best;
                 from = best;
             }
+            // Each pinned vertex's offset fades out over fadeM, so pulling one onto its node also moved any other pinned vertex
+            // within fadeM of it off its node again (a joint next to a junction ended up to 2.5 m off the node, and the way on
+            // from it started there: a gap across the road, 2026-11-22). Pull them all a few rounds, then set each exactly.
+            for (int round = 0; round < 4; round++)
+                foreach (var (k, best) in pins)
+                {
+                    var offset = points[k] - p[best];
+                    if (math.lengthsq(offset) < 1e-8) continue;
+                    for (int i = 0; i < p.Count; i++)
+                    {
+                        double w = 1 - math.abs(along[i] - along[best]) / fadeM;
+                        if (w > 0 && i > 0 && i < p.Count - 1) p[i] += offset * w;
+                    }
+                }
+            foreach (var (k, best) in pins) p[best] = points[k];
             return p;
         }
 

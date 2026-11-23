@@ -1,6 +1,6 @@
 # World / Roads layers — editor setup
 
-Updated 2026-11-22 (roads joined: mitred joins, junction mouths, dashes across joins, loading view; OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
+Updated 2026-11-23 (road joins 2: pinned nodes stay on OSM, side road ends on the main road, round curves; 2026-11-22: roads joined: mitred joins, junction mouths, dashes across joins, loading view; OSM roads per road region, shown as a joined network; street lights from NVDB; 2026-11-20: road tunnels and avalanche galleries, overpass carve rule, ways meeting at a node; house footprint rings for the car, nearest-first sign colliders; tile seams and the streaming frame budget; fuller birch crowns; road signs; road edge fit, earthworks, road surface detail; WebGL 2 path 2026-11-16). Code: `Assets/_Rally/Runtime/World` (Rally.World) and `Assets/_Rally/Runtime/Roads` (Rally.Roads).
 Tests: `Assets/_Rally/Tests/EditMode/World` (Rally.Tests.Edit).
 
 ## What has to be assigned in the editor
@@ -290,6 +290,17 @@ Port of `legacy-js/src/bridges.js` (`Roads/Bridges.cs`, `Roads/BridgeMesh.cs`).
   acute side) slides back onto it. The main road's vertices get UV2 = (S − mouth centre) / half length per side;
   `Rally/Road` breaks the edge line and clips the shoulder and skirt where |UV2| < 1. Worked out per tile from the runs
   alone, so the two tiles at a border build the same mouths.
+- **Pinned nodes stay put** (2026-11-23, `ProfileGrader.SmoothThrough`): every pinned node (junctions, joints) is pulled
+  back onto OSM in four rounds and then set exactly; one after the other, a later pin within the 40 m fade moved an earlier
+  one off its node again, so a way ended up to 2.5 m short of the next (a gap across the road).
+- **Side road ends not marked covered** (2026-11-23, `RibbonMesh.EndsOnOtherRoads`): a way's end sample on the carriageway
+  band of a run that outranks it (class, longer way, lower id), not on a bridge or in a tunnel, within 1.5 m of its height,
+  counts as covered for `Mouths`, so a side road graded before the main road came in, or off its height, ends on the main
+  road's edge too. Not where another way goes on from that end within 60° (`GoesOn`: a street split into ways at a crossing
+  is the through road there).
+- **Curves** (2026-11-23, `RibbonMesh.Curves`): where the road turns 10° or more at a sample (radius under ~30 m), up to 3 stations between two
+  samples on the Catmull-Rom curve through them (a roundabout was a 15-gon of 5 m samples); not on a run's end segments
+  nor near a mouth. The car's ground and the carve still follow the 5 m segments (≤ 0.3 m apart on a 12 m roundabout).
 - **Loading view** (`GameController.ParkCamera`): until the car is placed the camera looks at the start pin from 110 m
   south and 45 m over the higher ground of the two (3 km up before the pin's ground is in). It used to sit 6 m over sea
   level, under the ground, where the terrain is not drawn from below.

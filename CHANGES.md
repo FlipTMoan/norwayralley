@@ -1,6 +1,25 @@
 # Changes
 
-_Updated 2026-11-22 (Unity: roads and their lines joined — one surface across every join, junction mouths with kerb radii and a broken edge line, no strips in the sky while loading, the car's roads sooner in town; Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+_Updated 2026-11-23 (Unity: road joins 2 — no gaps after joints next to a junction, side roads end on the main road even when graded before it, round roundabouts; Unity: roads and their lines joined — one surface across every join, junction mouths with kerb radii and a broken edge line, no strips in the sky while loading, the car's roads sooner in town; Unity: OSM roads per 6 km road region from several Overpass servers at once, shown as a joined network; Unity: MY ROUTES — routes made from place names are kept, renamed and deleted in a list, and their 3D world is downloaded and kept for driving offline; Unity: roads continue where the map joins them — link roads, no lost roads in town tiles, short connectors and tunnel mouths drawn; each map service paused on its own; Unity: grass, wildflowers and bushes on the road verges, matched to Norway's bioclimatic regions; street lights from NVDB along the roads; JS game: small corner HUD on phones; Unity: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; road tunnels and avalanche galleries from the map, roads under overpasses carved, ways meeting end to end at one height; the car stays outside houses, trees, posts and rails; full speed on minor roads, gravel max 120 km/h; game renamed Grand Tour Norway; tidy start screen, LOG bar with progress, Esc / MENU; tile seams and streaming frame budget; route map place search; bridges over water in the Unity game)._
+
+## 2026-11-23
+
+### Unity: road joins 2 — joint gaps, side road ends, round curves
+- **Gaps across the road after a joint** (the "joint ribbon gaps" that rose in 33517c5). `ProfileGrader.SmoothThrough` pulled
+  each pinned node (junctions, and now joints) back onto OSM with an offset fading over 40 m, one after the other, so a
+  later pin within 40 m moved an earlier one off its node again. A way graded with a junction just past its joint in the
+  chain context ended 0.1–2.5 m short of the node and the next way started there: a crack of grass across the road. All
+  pins are now pulled in four rounds and then set exactly. Joint gaps > 0.1 m: Lillehammer 150 → 65, Drammen 228 → 142,
+  Sauda 43 → 21, Vinje 7 → 6 (still above c0d2d2b's 35/68/11/3: the rest sit next to junction mouths or are corners).
+- **Side roads graded before the main road** (or off its height) never got `Covered` and ran on into the main road. A way's
+  end on the carriageway band of a road that outranks it now ends on that road's edge in the ribbon all the same
+  (`RibbonMesh.EndsOnOtherRoads`, up to 1.5 m off its height), not where another way goes on from that end (a street split
+  at a crossing stays the through road). Small effect in the survey (z-fight mouths Lillehammer 5815 → 5763, Drammen
+  7071 → 6928); most remaining two-surface mouths are left to the junction mesh plan (`tasks/plan_20261122_smooth_crossings.md`).
+- **Round curves.** Where the road turns 10° or more per 5 m sample (radius under ~30 m), the ribbon gets up to three more stations per sample
+  on a Catmull-Rom curve (`RibbonMesh.Curves`): roundabouts and hairpins no longer look like polygons with kinked edge lines.
+- Tests: `RoadJoinTests` +5 (joint next to a junction ends on the node, side road not marked covered ×2, roundabout follows
+  the circle, crossing of split streets drawn through); EditMode 354 → 359, PlayMode 30.
 
 ## 2026-11-22
 

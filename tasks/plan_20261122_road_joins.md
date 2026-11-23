@@ -99,3 +99,52 @@ junction views are the editor shots (`scratchpad/road-joins/before_after_*.jpg`)
 
 **Shots:** `scratchpad/road-joins/before_after_lillehammer.jpg`, `before_after_drammen.jpg` (town junction, T-junction on
 a main road, joint in a bend, tile edge; same spots before/after), `sky_before_020s.png` vs `chrome_loading_view.jpg`.
+
+## Review 2 (2026-11-23, follow-up: "the streets are still badly joined")
+Scope after the lead's note: the joint-gap regression first, cheap robust mouth fixes, no junction-mouth redesign (that
+follows `plan_20261122_smooth_crossings.md`).
+
+**Causes found:**
+1. *Joint ribbon gaps (regression of 33517c5)*: `ProfileGrader.SmoothThrough` pulled pinned nodes onto OSM one after the
+   other with a 40 m fade; a later pin within 40 m moved an earlier one off its node again. With the chain context a joint
+   is an interior pinned node, so the way graded with a junction just past the joint in its context ended 0.1–2.5 m short
+   of the node and the next way started there (27 of the first 40 gap joints in Lillehammer; found by dumping both ways'
+   end points). Fix: all pins pulled in four rounds, then set exactly.
+2. *Mouths with two surfaces*: grading marks `Covered` only where the main road was graded first and within 0.3 m of its
+   height. `RibbonMesh.EndsOnOtherRoads`: a way end on the carriageway band of a run that outranks it (≤ 1.5 m off its
+   height, no bridge/tunnel) is covered for `Mouths`, except where another way goes on from that end within 60°
+   (`GoesOn`; without it every arm of a crossing of split streets was cut back: bare ground in Drammen, caught in the shots).
+   Effect small: most remaining two-surface mouths are not this case (left to the junction mesh plan).
+3. *Roundabouts polygonal*: yes, the 5 m sample resolution (a 12 m roundabout is a 15-gon). `RibbonMesh.Curves`: up to 3
+   stations per sample on a Catmull-Rom curve where the road turns ≥ 10° per sample; not on run end segments (stations
+   there folded over the mitred neighbour: joint overlaps rose) nor near mouths.
+4. Shallow merges (< 32°) and the jagged oblique roundabout entry: not changed (redesign plan).
+
+**Join survey, 33517c5 → now** (same code paths, `scratchpad/road-joins2/survey_before` → `survey_final2`):
+
+| area | joint gap > 0.1 | joint overlap | joints not joined | dashes broken | border gap | mouths z-fight | side inside | edge across |
+|---|---|---|---|---|---|---|---|---|
+| Lillehammer | 150 → 65 | 277 → 163 | 340 → 202 | 8 → 0 | 53 → 72 | 5815 → 5758 | 1647 → 1546 | 329 → 285 |
+| Drammen | 228 → 142 | 597 → 446 | 702 → 525 | 29 → 5 | 46 → 74 | 7071 → 6916 | 2692 → 2549 | 557 → 482 |
+| Sauda | 43 → 21 | 64 → 18 | 86 → 33 | 11 → 0 | 9 → 12 | 824 → 800 | 252 → 222 | 45 → 36 |
+| Vinje | 7 → 6 | 14 → 5 | 22 → 9 | 4 → 0 | 2 → 6 | 364 → 356 | 118 → 102 | 23 → 23 |
+
+Joint gaps are still above c0d2d2b (35/68/11/3): the remaining ones sit at junction mouths next to the joint (the main
+road's shoulder left out, the side road's end short of the edge), corners > 60°, or are probe artefacts in bends.
+Border gaps rose with `Curves`: the border probes run along the chord mid-segment, where the curved ribbon leaves it
+(believed a survey artefact; not proven). Mouth "gap past the main edge" unchanged within noise.
+
+**Bench** (1920×1080 live, avg ms, `bench_before` → after): Lillehammer chase 7.17 → 7.05, drive 60 s 8.24 → 8.20 (p95
+9.85 → 9.83); Toten chase 6.82 → 6.69. Toten drive (8.16 → 11.70) and a rerun of both (20+ ms everywhere) were taken while
+another user's CPU-bound job (`vocab_probe.py`, 100 % of a core) ran: not valid. The run with the denser 5° curve threshold
+(more vertices than now) measured Toten drive 8.16 → 7.52, Lillehammer 8.24 → 8.16, so within +5 %; tris +15–35 % in the
+curve-heavy views.
+**Car's roads, empty cache (back to back, HEAD then this)**: Lillehammer 17.6 → 14.9 s, Drammen 32.8 → 21.9 s (network
+dominated; the earlier HEAD runs gave 13.8 / 17.8 s). Main thread over the 37–38 Lillehammer tiles: `.ov.ribbon` 939 →
+1127 ms (+5 ms per tile: curve stations, end rule), `.grade.plan` 294 → 363 ms (four pin rounds).
+**Tests:** EditMode 354 → 359, PlayMode 30, all green. WebDev rebuilt (`Build/WebDev`, success). Not checked in Chrome
+this round.
+
+**Open points:** mouth z-fight still ~70 % of mouths (main cause not isolated: e.g. side and main both drawn with no mouth
+found although the end is on the band); shallow merges; oblique entries; border probe vs curved ribbon; the crossing guard
+test does not reproduce the Drammen hole synthetically.

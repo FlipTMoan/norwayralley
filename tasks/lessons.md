@@ -368,3 +368,19 @@
 - "Grading is slow" was 57 % one O(N²) scan (`Dependents`, found by FrameProbe totals); after that the critical path was
   signs placement and frames of 0.3–0.9 s, found only with a per-frame log of the queue (active overlay, what each
   neighbour waits for). Profile totals, then a timeline, before choosing jobs or Burst.
+
+## 2026-11-23 — road joins 2: a fade that undoes the previous pin, a rule that cut every arm, and a survey that measures the polygon
+- `ProfileGrader.SmoothThrough` pulled each pinned node onto OSM with an offset fading over 40 m, one after the other: a
+  later pin within 40 m moved the earlier one off its node again. While only junction nodes were pinned nobody measured
+  it; once the chain context made a joint an interior pinned node, the way graded with a junction just past the joint in
+  its context ended 0.1–2.5 m off the node and the next way started there (the "joint ribbon gaps" of 33517c5). A dump
+  of the two ways' end points at every gap found it in one look; the previous agent's shots and hit lists had not. Rule:
+  when a metric flags a join, print both sides' raw end points before looking at the mesh.
+- A per-way rank rule (a way end on the band of a way that outranks it is a side road) cut *every* arm of a crossing of
+  two split streets back to another arm's edge (Drammen: bare ground in the middle). A rank for mouths must treat two ways
+  that go on from each other at a node as one through road. Look at the before/after shots of every new rule before
+  trusting a survey number that went the right way.
+- A survey that probes along straight rays from the graded polyline counts a ribbon drawn on the smooth curve (stations
+  between the 5 m samples) as a gap or overlap where it leaves the chord: subdividing the curve raised "border gaps"
+  (mid-segment probes) although the shots got rounder. Say which shape a metric measures against.
+- `pkill -f` from a shell whose own command line holds the pattern killed the shell again (exit 144): kill by pid only.
