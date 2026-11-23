@@ -1,6 +1,6 @@
 # Grand Tour Norway — Unity 6 web build
 
-_Updated 2026-11-22 (roads joined: one surface across every join, junction mouths with kerb radii and a broken edge line, centre dashes across joins, a view over the start while loading, the car's roads sooner in town; MY ROUTES: saved routes, downloaded and pinned for offline driving; 2026-11-20: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; solid houses, trees, posts and rails at every placement and spin; gravel roads max 120 km/h, on the road while a wheel is on it; renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
+_Updated 2026-11-23 (install and run on Linux, step by step; 2026-11-22: roads joined: one surface across every join, junction mouths with kerb radii and a broken edge line, centre dashes across joins, a view over the start while loading, the car's roads sooner in town; MY ROUTES: saved routes, downloaded and pinned for offline driving; 2026-11-20: direction arrow on the road ahead, checkered finish gate, ASPHALT / GRAVEL from the drawn road on stages; solid houses, trees, posts and rails at every placement and spin; gravel roads max 120 km/h, on the road while a wheel is on it; renamed to Grand Tour Norway; tidy start screen, log minimised with a progress bar, Esc / MENU back to the start screen; wheelspin and mud off road; car chooser: eight cars incl. two buggies, real top speeds, per-car off-road limit; 2026-11-19: real road signs; help screen, collision log lines, exhaust)._
 
 The Unity rewrite of the browser game, named **Grand Tour Norway** since 2026-11-20 (the JS game keeps the name Retro
 Norway Rally). The rename touched only what the player sees (`productName`, page and start-screen title, the loader,
@@ -10,28 +10,80 @@ settings (localStorage `rally.*`) and the tile cache (IndexedDB `rally-cache`) s
 `~/.config/unity3d/Filip Tobias Moan/Grand Tour Norway/rally-cache` (copy the old folder over to keep it).
 
 The JS original lives in `../legacy-js/` and is still what
-`npm run build` deploys to GitHub Pages; the Unity build is served next to it at
-`/norwayralley/unity/`.
+`npm run build` deploys to GitHub Pages. The Unity build is meant to be served next to it at
+`/norwayralley/unity/`, but that needs the `UNITY_LICENSE` secret (see CI below); until it is added the Unity game
+runs only from a local build (step 4 below).
 
-## Install Unity on Linux
+## Install Unity and run the game on Linux
 
-1. Download Unity Hub for Linux: <https://unity.com/download> (AppImage or the `unityhub` apt/yum
-   repository), sign in, and activate a Personal licence.
-2. In the Hub go to **Installs → Install Editor → Archive**, choose **6000.6.9f1** (the version in
-   `ProjectSettings/ProjectVersion.txt`) and tick the **Web Build Support** module.
-   WebGPU needs no extra module; it is a graphics API choice in Player Settings.
-3. **Projects → Add → Add project from disk** and pick this `unity/` folder. The first open restores
-   the packages in `Packages/manifest.json` (URP, Burst, Mathematics, Collections, Input System,
-   Test Framework, glTFast).
+Tested on Linux Mint 22.1 (Ubuntu 24.04 base); Unity supports Ubuntu 22.04 / 24.04 and their derivatives.
+You need about 15 GB free disk for the editor and the project's `Library/`, a GPU with Vulkan or OpenGL 4.5
+drivers, and Python 3 (to serve the web build).
 
-## Build the bootstrap scene and press Play
+### 1. Install Unity Hub
 
-**Rally → Build Bootstrap Scene** (or headless:
-`unity-editor -batchmode -nographics -projectPath unity -executeMethod Rally.Editor.SceneBuilder.Build -quit`)
-creates the URP asset, volume profile, panel settings, world style with placeholder art, the actor
-capsules, the Porsche prefab from the WoTiger FBX and `Assets/_Rally/Scenes/Rally.unity`, and sets the
-Player Settings (Input System, linear colour). Then press Play: `UseFakeSources` is on, so the first run
-needs no network. Details and the slot reference: `Assets/_Rally/Runtime/Gameplay/SCENE.md`.
+```bash
+wget -qO - https://hub.unity3d.com/linux/keys/public | gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
+sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" > /etc/apt/sources.list.d/unityhub.list'
+sudo apt update && sudo apt install unityhub
+```
+
+Start `unityhub`, sign in with a Unity ID and activate a free **Personal** licence (Preferences → Licenses).
+
+### 2. Install the editor version this project uses
+
+The version is in `ProjectSettings/ProjectVersion.txt`: **6000.6.9f1** (changeset `8c45277fb9c5`). In the Hub:
+**Installs → Install Editor → Archive** → 6000.6.9f1, and tick **Web Build Support**. Or from a terminal:
+
+```bash
+unityhub -- --headless install --version 6000.6.9f1 --changeset 8c45277fb9c5 --module webgl
+```
+
+The editor lands in `~/Unity/Hub/Editor/6000.6.9f1/Editor/Unity`. The commands below call it `$UNITY`:
+
+```bash
+export UNITY=~/Unity/Hub/Editor/6000.6.9f1/Editor/Unity
+```
+
+### 3. Open the project and play in the editor
+
+```bash
+git clone https://github.com/FlipTMoan/norwayralley.git
+cd norwayralley
+```
+
+In the Hub: **Projects → Add → Add project from disk** → the `unity/` folder, then open it. The first open restores
+the packages in `Packages/manifest.json` (URP, Burst, Mathematics, Collections, Input System, Test Framework,
+glTFast) and imports everything; that takes 10–20 minutes once. Open `Assets/_Rally/Scenes/Rally.unity` and press
+**Play**. The scene has `UseFakeSources` on, so this first run needs no network; untick it on the GameController
+to load real Norway (details: `Assets/_Rally/Runtime/Gameplay/SCENE.md`). If the scene is missing or broken,
+**Rally → Build Bootstrap Scene** recreates it (headless: `$UNITY -batchmode -nographics -quit -projectPath . -executeMethod Rally.Editor.SceneBuilder.Build`).
+
+### 4. Build the web version and play it in the browser
+
+This is the real game: live terrain, roads and signs from Kartverket, OSM and NVDB, cached in the browser.
+
+```bash
+cd unity
+$UNITY -batchmode -nographics -quit -projectPath . -executeMethod Rally.Editor.BuildWeb.BuildDevFromMenu -logFile build.log
+cd Build/WebDev && python3 -m http.server 8091
+# open http://localhost:8091/ in Chrome or Edge (WebGPU; Firefox falls back to WebGL 2)
+```
+
+Close the editor first: only one Unity instance may have the project open. The build takes 5–15 minutes; check
+`build.log` if `Build/WebDev` stays empty. **Rally → Build Web (dev, Build/WebDev, symbols)** does the same from the
+editor menu; **Rally → Build Web (Brotli, WebGPU)** / `BuildFromMenu` makes the release build in `Build/Web`. Other
+devices on your network can play at `http://<this machine's IP>:8091/`. Hard-refresh (Ctrl+Shift+R) after a rebuild.
+
+### Troubleshooting
+
+- **"No valid Unity Editor license found"** in batch mode: open the Hub once and activate the Personal licence.
+- **The project opens in Safe Mode:** a compile error; see the Console. Delete `unity/Library/` to force a clean
+  reimport if packages are corrupted.
+- **Another Unity instance is running:** batch commands fail while the editor has the project open; check with
+  `pgrep -a "^Unity"`.
+- **Black or pink world in the browser:** the browser lacks WebGPU and WebGL 2 failed; try current Chrome, and see
+  "WebGPU or WebGL 2?" below.
 
 ## Run the EditMode tests
 
@@ -43,14 +95,14 @@ mirrors, and run the cache LRU and the circuit breaker on a fake clock.
 Headless (what CI does):
 
 ```bash
-unity-editor -batchmode -nographics -projectPath unity -runTests -testPlatform EditMode -testResults results.xml
+$UNITY -batchmode -nographics -projectPath unity -runTests -testPlatform EditMode -testResults results.xml
 ```
 
 The PlayMode smoke test (`Assets/_Rally/Tests/PlayMode`) boots the bootstrap scene offline, starts the
 engine and checks that the car drives; it needs a real GPU, so drop `-nographics` and run it with a display:
 
 ```bash
-unity-editor -batchmode -projectPath unity -runTests -testPlatform PlayMode -testResults results.xml
+$UNITY -batchmode -projectPath unity -runTests -testPlatform PlayMode -testResults results.xml
 ```
 
 ## Build for the web
@@ -58,7 +110,7 @@ unity-editor -batchmode -projectPath unity -runTests -testPlatform PlayMode -tes
 **Rally → Build Web (Brotli, WebGPU)** in the editor menu, or headless:
 
 ```bash
-unity-editor -batchmode -nographics -quit -projectPath unity -executeMethod Rally.Editor.BuildWeb.BuildFromMenu
+$UNITY -batchmode -nographics -quit -projectPath unity -executeMethod Rally.Editor.BuildWeb.BuildFromMenu
 ```
 
 Output goes to `unity/Build/Web`. Work-in-progress builds go to `unity/Build/WebDev` instead (with the wasm function
